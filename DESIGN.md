@@ -9,15 +9,15 @@
 
 ## Purpose
 
-titan-tyr is the data layer for WatcherVault. It serves architecture contract documents stored as markdown files in titan-norganon (the architecture repository), exposes them via a REST API consumed by titan-mimiron (the web UI) and indirectly by titan-algalon (the MCP server), and injects Git version metadata into every response.
+titan-tyr is the data layer for WatcherVault. It serves architecture contract documents stored as markdown files in titan-norgannon (the architecture repository), exposes them via a REST API consumed by titan-mimiron (the web UI) and indirectly by titan-algalon (the MCP server), and injects Git version metadata into every response.
 
-There is no database. titan-norganon is the source of truth. titan-tyr reads from titan-norganon via the **GitHub REST API**. This is the current implementation approach — it will be replaced with a local Git clone in a future iteration when performance or rate limit constraints require it. The abstraction layer between titan-tyr's internal GitHub client and its outward API must be kept clean so this substitution can be made without changing any downstream behaviour.
+There is no database. titan-norgannon is the source of truth. titan-tyr reads from titan-norgannon via the **GitHub REST API**. This is the current implementation approach — it will be replaced with a local Git clone in a future iteration when performance or rate limit constraints require it. The abstraction layer between titan-tyr's internal GitHub client and its outward API must be kept clean so this substitution can be made without changing any downstream behaviour.
 
 ---
 
 ## Architecture Repository Structure
 
-titan-tyr reads from titan-norganon via the GitHub API. The repository follows this layout — titan-tyr must understand this structure to build the environment index correctly:
+titan-tyr reads from titan-norgannon via the GitHub API. The repository follows this layout — titan-tyr must understand this structure to build the environment index correctly:
 
 ```
 icd-docs/
@@ -59,11 +59,11 @@ When building the index for a given environment, titan-tyr merges
 
 ## GitHub API Access
 
-titan-tyr communicates with titan-norganon exclusively via the GitHub REST API. All file reads, version metadata, and write operations go through this API.
+titan-tyr communicates with titan-norgannon exclusively via the GitHub REST API. All file reads, version metadata, and write operations go through this API.
 
 ### Authentication
 
-titan-tyr requires a GitHub Personal Access Token (PAT) or GitHub App installation token with `contents:read` permission on titan-norganon, and `contents:write` for branch creation via `POST /api/files`.
+titan-tyr requires a GitHub Personal Access Token (PAT) or GitHub App installation token with `contents:read` permission on titan-norgannon, and `contents:write` for branch creation via `POST /api/files`.
 
 Configure via environment variable: `GITHUB_TOKEN`. This must never be hardcoded or logged.
 
@@ -71,37 +71,37 @@ Configure via environment variable: `GITHUB_TOKEN`. This must never be hardcoded
 
 **Get file content and metadata:**
 ```
-GET https://api.github.com/repos/{org}/titan-norganon/contents/{path}?ref=main
+GET https://api.github.com/repos/{org}/titan-norgannon/contents/{path}?ref=main
 ```
 Returns the file content (base64 encoded), the blob SHA, and the `last_modified` header. Decode content with `base64.b64decode(response['content'])`.
 
 **List directory contents:**
 ```
-GET https://api.github.com/repos/{org}/titan-norganon/contents/{dir-path}?ref=main
+GET https://api.github.com/repos/{org}/titan-norgannon/contents/{dir-path}?ref=main
 ```
 Returns an array of file and directory entries with `name`, `path`, `type` (`file` or `dir`), and `sha`.
 
 **Get commit history for a file:**
 ```
-GET https://api.github.com/repos/{org}/titan-norganon/commits?path={file-path}&sha=main&per_page=20
+GET https://api.github.com/repos/{org}/titan-norgannon/commits?path={file-path}&sha=main&per_page=20
 ```
 Returns an array of commits. Each entry has `sha`, `commit.author.date`, `commit.author.name`, and `commit.message`.
 
 **Create or update a file on a branch:**
 ```
-PUT https://api.github.com/repos/{org}/titan-norganon/contents/{path}
+PUT https://api.github.com/repos/{org}/titan-norgannon/contents/{path}
 ```
 Body requires `message` (commit message), `content` (base64 encoded), `branch` (branch name), and `sha` (current blob SHA if updating an existing file).
 
 **Create a branch:**
 ```
-POST https://api.github.com/repos/{org}/titan-norganon/git/refs
+POST https://api.github.com/repos/{org}/titan-norgannon/git/refs
 ```
 Body: `{ "ref": "refs/heads/{branch-name}", "sha": "{main-head-sha}" }`
 
 Get main HEAD SHA first with:
 ```
-GET https://api.github.com/repos/{org}/titan-norganon/git/ref/heads/main
+GET https://api.github.com/repos/{org}/titan-norgannon/git/ref/heads/main
 ```
 
 ### Rate Limits
@@ -117,10 +117,10 @@ The GitHub API allows 5000 requests per hour for authenticated requests. This is
 
 Without a local clone and webhook, titan-tyr uses a **polling approach**:
 
-- On startup, build the full index by walking the titan-norganon directory tree via the GitHub API
+- On startup, build the full index by walking the titan-norgannon directory tree via the GitHub API
 - Poll the main branch HEAD SHA every 60 seconds:
   ```
-  GET https://api.github.com/repos/{org}/titan-norganon/git/ref/heads/main
+  GET https://api.github.com/repos/{org}/titan-norgannon/git/ref/heads/main
   ```
 - If the HEAD SHA has changed since the last poll, rebuild the index
 - The index rebuild fetches only the directory listings (cheap); individual file content is fetched on demand and cached by ETag
@@ -144,7 +144,7 @@ version = match.group(1) if match else "unknown"
 
 **Last modified** — the date of the most recent commit touching this file. Retrieved from the commits API:
 ```
-GET /repos/{org}/titan-norganon/commits?path={path}&sha=main&per_page=1
+GET /repos/{org}/titan-norgannon/commits?path={path}&sha=main&per_page=1
 ```
 Use `commits[0].commit.author.date`.
 
@@ -239,7 +239,7 @@ Returns `404` with JSON body if the GitHub API returns 404:
 Returns the commit history for a specific file. Sourced from the GitHub commits API:
 
 ```
-GET /repos/{org}/titan-norganon/commits?path=icd-docs/{path}&sha=main&per_page=20
+GET /repos/{org}/titan-norgannon/commits?path=icd-docs/{path}&sha=main&per_page=20
 ```
 
 ```json
@@ -276,13 +276,13 @@ Substring match across element names and contract content in the given environme
 
 ### `POST /api/files/:path`
 
-Creates or updates a contract file on a new branch in titan-norganon. Never writes to main directly.
+Creates or updates a contract file on a new branch in titan-norgannon. Never writes to main directly.
 
 Procedure:
-1. Fetch the current main HEAD SHA via `GET /repos/{org}/titan-norganon/git/ref/heads/main`
-2. Create a new branch: `POST /repos/{org}/titan-norganon/git/refs` with `ref: refs/heads/agent/{name}-{date}` and the HEAD SHA
+1. Fetch the current main HEAD SHA via `GET /repos/{org}/titan-norgannon/git/ref/heads/main`
+2. Create a new branch: `POST /repos/{org}/titan-norgannon/git/refs` with `ref: refs/heads/agent/{name}-{date}` and the HEAD SHA
 3. If updating an existing file, fetch the current blob SHA for the file first (required by GitHub API)
-4. Write the file: `PUT /repos/{org}/titan-norganon/contents/icd-docs/{path}` with the branch name, base64-encoded content, and blob SHA if updating
+4. Write the file: `PUT /repos/{org}/titan-norgannon/contents/icd-docs/{path}` with the branch name, base64-encoded content, and blob SHA if updating
 
 Validate the path is within `icd-docs/` before writing (prevent path traversal).
 
@@ -363,7 +363,7 @@ class LocalGitBackend:
 
 ## CLAUDE.md Requirement
 
-titan-tyr must include a `CLAUDE.md` and `.mcp.json` wiring it to titan-algalon. Agents working on the API must consult the WatcherVault architecture contracts in titan-norganon before changing any endpoint that titan-mimiron or titan-algalon depends on.
+titan-tyr must include a `CLAUDE.md` and `.mcp.json` wiring it to titan-algalon. Agents working on the API must consult the WatcherVault architecture contracts in titan-norgannon before changing any endpoint that titan-mimiron or titan-algalon depends on.
 
 ---
 
@@ -371,6 +371,6 @@ titan-tyr must include a `CLAUDE.md` and `.mcp.json` wiring it to titan-algalon.
 
 1. Agree `/api/index` response shape with titan-mimiron developer before implementing
 2. Authentication — does titan-tyr itself require auth from callers, or is it behind a network boundary?
-3. Whether titan-algalon calls titan-tyr's REST API or reads titan-norganon directly
+3. Whether titan-algalon calls titan-tyr's REST API or reads titan-norgannon directly
 4. GitHub token management — PAT or GitHub App? PATs are simpler but expire; GitHub Apps rotate automatically. Choose before starting.
 5. Rate limit headroom — if multiple agents and the UI are calling titan-tyr simultaneously, model the expected request volume against the 5000/hour limit before launch

@@ -3,7 +3,7 @@
 > WatcherVault REST API — a Git-backed contract file server with environment-aware indexing.
 
 titan-tyr is the data layer for **WatcherVault**. It serves architecture
-contract documents (markdown) stored in [`titan-norganon`][norganon] and
+contract documents (markdown) stored in [`titan-norgannon`][norgannon] and
 exposes them via a REST API. It injects Git version metadata (semantic
 version, blob SHA, last-modified date) into every response so consumers
 always know exactly which revision they are looking at.
@@ -13,7 +13,7 @@ It is consumed by:
 - **[titan-mimiron][mimiron]** — the WatcherVault web UI
 - **[titan-algalon][algalon]** — the WatcherVault MCP server
 
-There is no database. titan-norganon is the source of truth.
+There is no database. titan-norgannon is the source of truth.
 
 ---
 
@@ -22,13 +22,13 @@ There is no database. titan-norganon is the source of truth.
 ```
 ┌──────────────┐         ┌────────────┐        ┌──────────────────┐
 │ titan-mimiron│ ──────▶ │            │ ─────▶ │ GitHub API       │
-│ titan-algalon│         │ titan-tyr  │        │ titan-norganon   │
+│ titan-algalon│         │ titan-tyr  │        │ titan-norgannon   │
 └──────────────┘ ◀────── │            │ ◀───── │ (contracts repo) │
                          └────────────┘        └──────────────────┘
                             REST/JSON              GitHub REST
 ```
 
-- titan-tyr reads contracts from titan-norganon via the **GitHub REST API**
+- titan-tyr reads contracts from titan-norgannon via the **GitHub REST API**
 - An in-memory index is built on startup and refreshed every 60 s by
   polling the main branch HEAD SHA
 - Per-file responses are cached using GitHub's `ETag` /
@@ -64,7 +64,7 @@ Set via environment variables:
 
 | Variable       | Required | Description                                                                |
 | -------------- | -------- | -------------------------------------------------------------------------- |
-| `GITHUB_TOKEN` | yes      | PAT or GitHub App installation token with `contents:read` + `contents:write` on titan-norganon |
+| `GITHUB_TOKEN` | yes      | PAT or GitHub App installation token with `contents:read` + `contents:write` on titan-norgannon |
 
 `GITHUB_TOKEN` must never be hardcoded or logged.
 
@@ -72,7 +72,7 @@ Set via environment variables:
 
 ## Architecture repository layout
 
-titan-tyr expects titan-norganon to follow this structure:
+titan-tyr expects titan-norgannon to follow this structure:
 
 ```
 icd-docs/
@@ -103,6 +103,6 @@ Pre-implementation — see the **Open Questions** section of
 - [AGENTS.md](./AGENTS.md) — operating rules for AI coding agents
   working in this repo
 
-[norganon]: https://github.com/Westfall-io/titan-norganon
+[norgannon]: https://github.com/Westfall-io/titan-norgannon
 [mimiron]:  https://github.com/Westfall-io/titan-mimiron
 [algalon]:  https://github.com/Westfall-io/titan-algalon
