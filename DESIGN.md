@@ -51,14 +51,17 @@ CREATE TABLE software (
 );
 
 CREATE TABLE software_versions (
-  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  software_id  UUID NOT NULL REFERENCES software(id) ON DELETE CASCADE,
-  version      INT  NOT NULL,
-  markdown     TEXT NOT NULL,
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (software_id, version)
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  software_id   UUID NOT NULL REFERENCES software(id) ON DELETE CASCADE,
+  version_major INT  NOT NULL CHECK (version_major >= 0),
+  version_minor INT  NOT NULL CHECK (version_minor >= 0),
+  version_patch INT  NOT NULL CHECK (version_patch >= 0),
+  markdown      TEXT NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (software_id, version_major, version_minor, version_patch)
 );
-CREATE INDEX ON software_versions (software_id, version DESC);
+CREATE INDEX ON software_versions
+  (software_id, version_major DESC, version_minor DESC, version_patch DESC);
 
 CREATE TABLE contracts (
   id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -70,15 +73,19 @@ CREATE TABLE contracts (
 );
 
 CREATE TABLE contract_versions (
-  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  contract_id  UUID NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
-  version      INT  NOT NULL,
-  markdown     TEXT NOT NULL,
-  status       TEXT NOT NULL CHECK (status IN ('active', 'proposal')),
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (contract_id, version)
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  contract_id   UUID NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+  version_major INT  NOT NULL CHECK (version_major >= 0),
+  version_minor INT  NOT NULL CHECK (version_minor >= 0),
+  version_patch INT  NOT NULL CHECK (version_patch >= 0),
+  markdown      TEXT NOT NULL,
+  status        TEXT NOT NULL CHECK (status IN ('active', 'proposal')),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  accepted_at   TIMESTAMPTZ,                  -- set only when a proposal is promoted to active
+  UNIQUE (contract_id, version_major, version_minor, version_patch)
 );
-CREATE INDEX ON contract_versions (contract_id, version DESC);
+CREATE INDEX ON contract_versions
+  (contract_id, version_major DESC, version_minor DESC, version_patch DESC);
 CREATE INDEX ON contract_versions (contract_id, status);
 ```
 
@@ -88,18 +95,41 @@ superseded, …) and `ALTER TYPE` is half-supported and irreversible —
 `TEXT + CHECK` lets us add or remove values with a single migration that
 drops and recreates the constraint.
 
-### Version assignment
+### Versioning scheme
 
-`version` is a 1-based integer scoped to its parent
-(`software_id` or `contract_id`). Each insert grabs the parent row with
-`SELECT … FOR UPDATE`, computes `MAX(version) + 1`, and inserts under
-that lock. This keeps numbering monotonic without a sequence per parent.
+Versions are **caller-supplied semver** of the form `MAJOR.MINOR.PATCH`,
+stored as three integer columns. Convention follows
+[semver.org](https://semver.org/):
+
+- **MAJOR** — breaking change to the contract or software interface.
+- **MINOR** — backwards-compatible addition.
+- **PATCH** — backwards-compatible fix or clarification (typos,
+  rewording, examples).
+
+The server cannot infer the *meaning* of a change — only the caller
+knows the intent — so the version is supplied by the caller on every
+write. The server validates only the mechanics:
+
+1. **Format** — must match `^\d+\.\d+\.\d+$` (no pre-release suffixes
+   or build metadata in this cut).
+2. **Strictly greater than the current latest** — including both
+   `active` and `proposal` rows for that parent. The comparison is the
+   standard semver tuple ordering: `(major, minor, patch)` lex compare.
+3. **Initial version** — if omitted on `POST /software` or
+   `POST /contracts`, defaults to `1.0.0`. May be overridden (e.g. to
+   `0.1.0` for a pre-stable release).
+
+The write happens under `SELECT … FOR UPDATE` on the parent row to
+serialise concurrent writers and ensure the "strictly greater" check
+cannot race.
 
 ### "Latest" semantics
 
-- **Software** — `MAX(version)` per `software_id`.
-- **Contract (active)** — most recent `contract_versions` row with
-  `status='active'`. There is always at most one, by construction.
+- **Software** — row with the highest `(version_major, version_minor,
+  version_patch)` per `software_id`.
+- **Contract (active)** — highest version among `contract_versions`
+  rows with `status='active'`. There is always at most one, by
+  construction.
 - **Contract proposals** — every `contract_versions` row with
   `status='proposal'` that is newer than the current active version.
 
@@ -142,21 +172,24 @@ Request:
 {
   "name":     "payments-service",
   "repo_uri": "https://github.com/example/payments-service",
-  "markdown": "# payments-service\n..."
+  "markdown": "# payments-service\n...",
+  "version":  "1.0.0"
 }
 ```
+
+`version` is optional and defaults to `"1.0.0"`.
 
 Response `201`:
 ```json
 {
   "id":      "12c3a4b5-...",
   "name":    "payments-service",
-  "version": 1
+  "version": "1.0.0"
 }
 ```
 
-Atomic: inserts `software` and `software_versions` (version 1) in one
-transaction. `409 Conflict` if `name` is already taken.
+Atomic: inserts `software` and `software_versions` in one transaction.
+`409 Conflict` if `name` is already taken.
 
 #### `GET /software/{name}` — latest description
 
@@ -166,7 +199,7 @@ Returns software metadata + the latest `software_versions` row.
   "id":         "12c3a4b5-...",
   "name":       "payments-service",
   "repo_uri":   "https://github.com/example/payments-service",
-  "version":    3,
+  "version":    "2.1.0",
   "markdown":   "# payments-service\n...",
   "updated_at": "2026-04-29T14:30:00Z"
 }
@@ -176,12 +209,22 @@ Returns software metadata + the latest `software_versions` row.
 
 Request:
 ```json
-{ "markdown": "# payments-service\n..." }
+{
+  "version":  "2.1.0",
+  "markdown": "# payments-service\n..."
+}
 ```
+
+`version` is required and must be strictly greater than the latest
+existing version for this software (semver tuple comparison).
+
+Errors:
+- `409 Conflict` if `version` is not strictly greater than the latest.
+- `422 Unprocessable Entity` if `version` is malformed.
 
 Response `200`:
 ```json
-{ "name": "payments-service", "version": 4 }
+{ "name": "payments-service", "version": "2.1.0" }
 ```
 
 #### `GET /software/{name}/contracts` — all contracts touching this software
@@ -197,7 +240,7 @@ counterparty, each with its latest active version.
       "id":           "ab12cd34-...",
       "owner":        "payments-service",
       "counterparty": "orders-service",
-      "version":      2,
+      "version":      "1.2.0",
       "markdown":     "...",
       "updated_at":   "2026-04-15T09:14:00Z"
     },
@@ -205,7 +248,7 @@ counterparty, each with its latest active version.
       "id":           "cd34ef56-...",
       "owner":        "ledger-service",
       "counterparty": "payments-service",
-      "version":      1,
+      "version":      "1.0.0",
       "markdown":     "...",
       "updated_at":   "2026-04-02T11:00:00Z"
     }
@@ -222,9 +265,12 @@ Request:
 {
   "owner_software":        "payments-service",
   "counterparty_software": "orders-service",
-  "markdown":              "..."
+  "markdown":              "...",
+  "version":               "1.0.0"
 }
 ```
+
+`version` is optional and defaults to `"1.0.0"`.
 
 Response `201`:
 ```json
@@ -232,7 +278,7 @@ Response `201`:
   "contract_id":  "ab12cd34-...",
   "owner":        "payments-service",
   "counterparty": "orders-service",
-  "version":      1,
+  "version":      "1.0.0",
   "status":       "active"
 }
 ```
@@ -254,7 +300,7 @@ named pieces of software, in either direction. Zero, one, or two results.
       "contract_id":  "ab12cd34-...",
       "owner":        "payments-service",
       "counterparty": "orders-service",
-      "version":      2,
+      "version":      "1.2.0",
       "markdown":     "...",
       "updated_at":   "2026-04-15T09:14:00Z"
     }
@@ -272,17 +318,26 @@ Returns the most recent `status='active'` version of that contract.
 
 Request:
 ```json
-{ "markdown": "..." }
+{
+  "version":  "1.3.0",
+  "markdown": "..."
+}
 ```
 
-Inserts a new `contract_versions` row with `status='proposal'` and the
-next version number. Multiple proposals can coexist.
+`version` is required and must be strictly greater than the latest
+existing version on this contract (active or proposal). Multiple
+proposals can coexist as long as each picks a higher version than the
+last.
+
+Errors:
+- `409 Conflict` if `version` is not strictly greater than the latest.
+- `422 Unprocessable Entity` if `version` is malformed.
 
 Response `201`:
 ```json
 {
   "contract_id": "ab12cd34-...",
-  "version":     4,
+  "version":     "1.3.0",
   "status":      "proposal"
 }
 ```
@@ -295,34 +350,35 @@ version.
 ```json
 {
   "contract_id":    "ab12cd34-...",
-  "active_version": 3,
+  "active_version": "1.2.0",
   "proposals": [
-    { "version": 4, "markdown": "...", "created_at": "..." },
-    { "version": 5, "markdown": "...", "created_at": "..." }
+    { "version": "1.3.0", "markdown": "...", "created_at": "..." },
+    { "version": "2.0.0", "markdown": "...", "created_at": "..." }
   ]
 }
 ```
 
 #### `POST /contracts/{contract_id}/proposals/{version}/accept` — promote a proposal to active
 
-Server-side, in one transaction:
-1. Read the proposal row at `(contract_id, version)`. Reject if not
-   `status='proposal'`.
-2. Insert a new `contract_versions` row with the **next** version
-   number, `status='active'`, and `markdown` copied from the accepted
-   proposal.
-3. Leave the original proposal row in place as history.
+The path `{version}` is the semver string of the proposal to accept,
+e.g. `1.3.0`.
 
-Why copy rather than flip the status in place: this keeps the proposal's
-creation time distinct from the acceptance event, and keeps the "latest
-active" query trivially correct (`MAX(version) WHERE status='active'`).
+Server-side, in one transaction:
+1. Locate the row at `(contract_id, version)`. Reject if not
+   `status='proposal'`.
+2. `UPDATE` it in place: set `status='active'` and
+   `accepted_at = now()`.
+
+The version the caller proposed *is* the version that becomes active —
+no renumbering on acceptance. Creation time is preserved in
+`created_at`; the acceptance event is recorded in `accepted_at`.
 
 Response `200`:
 ```json
 {
-  "contract_id":                   "ab12cd34-...",
-  "promoted_from_proposal_version": 4,
-  "new_active_version":             6
+  "contract_id":        "ab12cd34-...",
+  "active_version":     "1.3.0",
+  "accepted_at":        "2026-04-29T15:00:00Z"
 }
 ```
 
@@ -501,3 +557,7 @@ changes, and constraint tightening on populated tables.
    model (per-caller identity, authorisation rules, key rotation) is
    deferred to a future capability update and is its own design
    conversation.
+5. **Pre-release versions** — `1.0.0-rc1`, `1.0.0+build.42`, etc. are
+   not supported in this cut (the format regex is strict
+   `MAJOR.MINOR.PATCH`). Add when there's a real use case for staging
+   a contract before it goes live.
