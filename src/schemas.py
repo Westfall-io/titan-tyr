@@ -39,6 +39,17 @@ def _validate_https_url_optional(v: str | None) -> str | None:
     return v
 
 
+def _validate_repo_uri_on_update(v: str | None) -> str | None:
+    # repo_uri is required at registration and cannot be cleared. Omit the
+    # field on PUT to leave it unchanged; explicit null and empty string
+    # both 422.
+    if v is None:
+        raise ValueError("repo_uri may not be null on update; omit the field to leave it unchanged")
+    if not v:
+        raise ValueError("repo_uri may not be empty")
+    return v
+
+
 # ---------- Software ----------
 
 
@@ -62,9 +73,11 @@ class SoftwareCreateResponse(BaseModel):
 class SoftwareUpdate(BaseModel):
     markdown: str
     version: str
+    repo_uri: str | None = None
     issue_tracker_uri: str | None = None
 
     _v = field_validator("version")(_validate_stable)
+    _r = field_validator("repo_uri")(_validate_repo_uri_on_update)
     _it = field_validator("issue_tracker_uri")(_validate_https_url_optional)
 
 

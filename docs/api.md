@@ -170,6 +170,7 @@ curl -H 'Authorization: Bearer sysmlv2' \
      -d '{
        "version": "2.1.0",
        "markdown": "...",
+       "repo_uri": "https://github.com/example/payments-service-renamed",
        "issue_tracker_uri": "https://linear.app/example/team/PAY"
      }' \
      http://localhost:8000/software/payments-service
@@ -178,13 +179,19 @@ curl -H 'Authorization: Bearer sysmlv2' \
 `version` is required, must be plain `MAJOR.MINOR.PATCH`, and must be
 strictly greater than the latest existing version for this software.
 
-`issue_tracker_uri` is optional with **PATCH semantics**:
+`repo_uri` and `issue_tracker_uri` are optional with **PATCH semantics**.
+The two fields share the same shape; the only difference is that
+`repo_uri` is required at registration and may not be cleared.
 
-| Sent in body                           | Effect                                                |
-| -------------------------------------- | ----------------------------------------------------- |
-| Field omitted                          | Existing tracker URI is left unchanged.               |
-| `"issue_tracker_uri": "https://..."`   | Replaces the stored value (must be a valid `https://` URL). |
-| `"issue_tracker_uri": null`            | Clears the stored value back to `null`.               |
+| Field               | Omitted from body         | `"...": "value"`                | `"...": null`                 |
+| ------------------- | ------------------------- | ------------------------------- | ----------------------------- |
+| `repo_uri`          | Existing value unchanged. | Replaces stored value.          | **422** — cannot clear.       |
+| `issue_tracker_uri` | Existing value unchanged. | Replaces stored value (https-only). | Clears stored value to `null`. |
+
+`repo_uri` accepts any non-empty string (HTTPS URLs, SSH form like
+`git@github.com:owner/repo.git`, etc.) — the API does not enforce a
+URL grammar on it. `issue_tracker_uri` is strictly validated as
+`https://` with a host.
 
 `200` response:
 ```json
@@ -194,8 +201,8 @@ strictly greater than the latest existing version for this software.
 Errors:
 - `404 Not Found` — software not registered.
 - `409 Conflict` — `version` is not strictly greater than the latest.
-- `422 Unprocessable Entity` — malformed `version`, or
-  `issue_tracker_uri` not a valid `https://` URL.
+- `422 Unprocessable Entity` — malformed `version`, `repo_uri` set to
+  null or empty string, or `issue_tracker_uri` not a valid `https://` URL.
 
 ### `GET /software/{name}/contracts` — every contract touching this software
 

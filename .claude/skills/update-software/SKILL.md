@@ -128,20 +128,21 @@ the user needs guidance on what a section *means*, that guidance lives
 in the template body's instructional blockquotes — read them, follow
 them, strip them on POST.
 
-### 5. Optional: update issue_tracker_uri
+### 5. Optional: update row-level metadata (repo_uri, issue_tracker_uri)
 
-`PUT /software/{name}` accepts an optional `issue_tracker_uri` field
-with **PATCH semantics**:
+`PUT /software/{name}` accepts two optional row-level metadata fields
+with **PATCH semantics**. Same shape; the only difference is that
+`repo_uri` is required at registration and may not be cleared.
 
-| Sent in body                           | Effect                                           |
-| -------------------------------------- | ------------------------------------------------ |
-| Field omitted                          | Existing tracker is left unchanged.              |
-| `"issue_tracker_uri": "https://..."`   | Replaces the stored value (must be valid https). |
-| `"issue_tracker_uri": null`            | Clears the stored value back to `null`.          |
+| Field               | Omitted                   | `"...": "value"`                | `"...": null`             |
+| ------------------- | ------------------------- | ------------------------------- | ------------------------- |
+| `repo_uri`          | Existing value unchanged. | Replaces stored value.          | **422** — cannot clear.   |
+| `issue_tracker_uri` | Existing value unchanged. | Replaces stored value (https-only). | Clears stored value.   |
 
-Ask the user only if they have a reason to change it (moved trackers,
-adopted Jira, etc.). Otherwise omit the field. Validation is identical
-to `/register-software`: strict `https://` URL with a host.
+Ask the user only if they have a reason to change either (repo
+renamed/moved, adopted Jira/Linear, etc.). Otherwise omit. Validation:
+`repo_uri` accepts any non-empty string (HTTPS, SSH form, etc.);
+`issue_tracker_uri` is strictly `https://` with a host.
 
 ### 6. Choose a new software version
 
@@ -182,6 +183,7 @@ import json, pathlib
 print(json.dumps({
     'version': 'X.Y.Z',
     'markdown': pathlib.Path('.scratch/update-body.md').read_text(),
+    # 'repo_uri': 'https://...',           # uncomment to replace; null/empty 422
     # 'issue_tracker_uri': 'https://...',  # uncomment to set, or null to clear
 }))
 " > .scratch/update-body.json

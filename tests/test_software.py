@@ -107,6 +107,62 @@ class TestUpdate:
         assert r.status_code == 422
 
 
+class TestRepoUriOnUpdate:
+    async def test_put_sets_repo_uri(self, client):
+        await _register(client, name="r-set", repo="https://example.com/before")
+        r = await client.put(
+            "/software/r-set",
+            json={
+                "version": "1.1.0",
+                "markdown": "m",
+                "repo_uri": "https://example.com/after",
+            },
+        )
+        assert r.status_code == 200
+        body = (await client.get("/software/r-set")).json()
+        assert body["repo_uri"] == "https://example.com/after"
+
+    async def test_put_without_repo_uri_leaves_existing(self, client):
+        await _register(client, name="r-leave", repo="https://example.com/keep")
+        r = await client.put(
+            "/software/r-leave",
+            json={"version": "1.1.0", "markdown": "m"},
+        )
+        assert r.status_code == 200
+        body = (await client.get("/software/r-leave")).json()
+        assert body["repo_uri"] == "https://example.com/keep"
+
+    async def test_put_explicit_null_rejected(self, client):
+        await _register(client, name="r-null")
+        r = await client.put(
+            "/software/r-null",
+            json={"version": "1.1.0", "markdown": "m", "repo_uri": None},
+        )
+        assert r.status_code == 422
+
+    async def test_put_empty_string_rejected(self, client):
+        await _register(client, name="r-empty")
+        r = await client.put(
+            "/software/r-empty",
+            json={"version": "1.1.0", "markdown": "m", "repo_uri": ""},
+        )
+        assert r.status_code == 422
+
+    async def test_put_ssh_form_repo_uri_accepted(self, client):
+        await _register(client, name="r-ssh")
+        r = await client.put(
+            "/software/r-ssh",
+            json={
+                "version": "1.1.0",
+                "markdown": "m",
+                "repo_uri": "git@github.com:example/r-ssh.git",
+            },
+        )
+        assert r.status_code == 200
+        body = (await client.get("/software/r-ssh")).json()
+        assert body["repo_uri"] == "git@github.com:example/r-ssh.git"
+
+
 class TestIssueTrackerUri:
     async def test_register_without_tracker_returns_null(self, client):
         await _register(client, name="no-tracker")

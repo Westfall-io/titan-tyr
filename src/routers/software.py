@@ -117,8 +117,11 @@ async def update_software(
                 detail=f"Version {new_version} is not strictly greater than the current latest {latest_v}",
             )
 
-    # PATCH semantics: an absent issue_tracker_uri leaves the row unchanged.
-    # An explicit null clears it; an explicit string updates it.
+    # PATCH semantics on row-level metadata fields. Absent = unchanged.
+    # repo_uri rejects null at the schema layer (required, can't be cleared);
+    # issue_tracker_uri allows null to clear.
+    if "repo_uri" in payload.model_fields_set:
+        software.repo_uri = payload.repo_uri
     if "issue_tracker_uri" in payload.model_fields_set:
         software.issue_tracker_uri = payload.issue_tracker_uri
 
