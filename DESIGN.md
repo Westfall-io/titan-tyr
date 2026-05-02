@@ -10,10 +10,9 @@
 
 titan-tyr is a graph database, exposed as a REST API, that records the
 software running in a system and the interface contracts between those
-pieces of software. Software-developer agents register themselves and
-the software they own; they then register contracts that describe how
-their software interfaces with other software, and propose changes to
-contracts that already exist.
+pieces of software. Callers register software, register interface
+contracts that describe how one piece of software interfaces with
+another, and propose changes to contracts that already exist.
 
 - **Nodes** — registered software.
 - **Edges** — interface contracts between two software nodes.
@@ -22,8 +21,10 @@ Both nodes and edges carry a markdown body. All markdown is **versioned
 append-only** in the database. By default, only the latest version is
 returned on read.
 
-This is a deliberately small first cut. There is no Git integration, no
-file system, no external repository — Postgres is the source of truth.
+This is a deliberately small first cut. There is no per-caller identity
+and no Git integration — Postgres is the source of truth, and a single
+shared password gates the API. A real authentication and authorisation
+model will land in a future capability update.
 
 ---
 
@@ -31,40 +32,30 @@ file system, no external repository — Postgres is the source of truth.
 
 ### Concepts
 
-| Concept       | Stored as                                 | Notes                                        |
-| ------------- | ----------------------------------------- | -------------------------------------------- |
-| Agent         | row in `agents`                           | The registering identity. Holds an API key. |
-| Software node | row in `software` + N `software_versions` | Owned by exactly one agent.                  |
-| Contract edge | row in `contracts` + N `contract_versions` | Directed: `owner_software → counterparty_software`. |
-| Proposal      | a `contract_versions` row with `status='proposal'` | Lives on the edge until accepted or superseded. |
+| Concept       | Stored as                                          | Notes                                               |
+| ------------- | -------------------------------------------------- | --------------------------------------------------- |
+| Software node | row in `software` + N `software_versions`          | Identified by unique name.                          |
+| Contract edge | row in `contracts` + N `contract_versions`         | Directed: `owner_software → counterparty_software`. |
+| Proposal      | a `contract_versions` row with `status='proposal'` | Lives on the edge until accepted or superseded.     |
 
 ### Schema
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS pgcrypto;  -- gen_random_uuid()
 
-CREATE TABLE agents (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name          TEXT NOT NULL,
-  api_key_hash  TEXT NOT NULL UNIQUE,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
 CREATE TABLE software (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name            TEXT NOT NULL UNIQUE,
-  repo_uri        TEXT NOT NULL,
-  owner_agent_id  UUID NOT NULL REFERENCES agents(id),
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        TEXT NOT NULL UNIQUE,
+  repo_uri    TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE software_versions (
-  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  software_id         UUID NOT NULL REFERENCES software(id) ON DELETE CASCADE,
-  version             INT  NOT NULL,
-  markdown            TEXT NOT NULL,
-  created_by_agent_id UUID NOT NULL REFERENCES agents(id),
-  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  software_id  UUID NOT NULL REFERENCES software(id) ON DELETE CASCADE,
+  version      INT  NOT NULL,
+  markdown     TEXT NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (software_id, version)
 );
 CREATE INDEX ON software_versions (software_id, version DESC);
@@ -79,13 +70,12 @@ CREATE TABLE contracts (
 );
 
 CREATE TABLE contract_versions (
-  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  contract_id         UUID NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
-  version             INT  NOT NULL,
-  markdown            TEXT NOT NULL,
-  status              TEXT NOT NULL CHECK (status IN ('active', 'proposal')),
-  created_by_agent_id UUID NOT NULL REFERENCES agents(id),
-  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  contract_id  UUID NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+  version      INT  NOT NULL,
+  markdown     TEXT NOT NULL,
+  status       TEXT NOT NULL CHECK (status IN ('active', 'proposal')),
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (contract_id, version)
 );
 CREATE INDEX ON contract_versions (contract_id, version DESC);
@@ -117,96 +107,72 @@ that lock. This keeps numbering monotonic without a sequence per parent.
 
 ## Authentication
 
-API-key bearer tokens.
+> **Placeholder.** The shared password `sysmlv2` gates every endpoint.
+> A real auth model — per-caller identity, fine-grained authorisation,
+> rotation, audit — will land in a future capability update. Treat the
+> current scheme as throwaway.
 
-- On `POST /agents`, the server generates a random key, returns it
-  **once** in the response body, and stores only `sha256(key)` in
-  `agents.api_key_hash`.
-- All subsequent requests authenticate via
-  `Authorization: Bearer <key>`. The server hashes the presented key
-  and looks it up in `agents.api_key_hash`.
-- Lost keys cannot be recovered — the agent must re-register.
-
-All write endpoints require auth. Read endpoints also require auth in
-this first cut (see Open Questions).
-
-### Authorisation rules
-
-| Action                                  | Allowed agent                                          |
-| --------------------------------------- | ------------------------------------------------------ |
-| Update a software description           | Owner agent of that software                           |
-| Register a new contract                 | Owner agent of the *owner* software                    |
-| Propose a contract change               | Owner agent of *either* the owner or counterparty software |
-| Accept a proposal                       | Owner agent of the *owner* software                    |
+The password is sent as `Authorization: Bearer sysmlv2`. Anything else
+returns `401 Unauthorized`. There is no notion of "who" made a request,
+so there are no per-caller authorisation rules: any authenticated
+caller can perform any action.
 
 ---
 
 ## Endpoints
 
 All paths are relative to the API root. JSON request/response unless
-otherwise noted.
+otherwise noted. Every endpoint requires the bearer password above.
 
 ### Templates
 
 Static markdown files served from `templates/` on disk.
 
-| Method | Path                   | Returns                                       |
-| ------ | ---------------------- | --------------------------------------------- |
-| GET    | `/templates/software`  | `text/markdown` — template for software descriptions |
-| GET    | `/templates/contract`  | `text/markdown` — template for interface contracts   |
+| Method | Path                  | Returns                                              |
+| ------ | --------------------- | ---------------------------------------------------- |
+| GET    | `/templates/software` | `text/markdown` — template for software descriptions |
+| GET    | `/templates/contract` | `text/markdown` — template for interface contracts   |
 
-### Agents
+### Software
 
-#### `POST /agents` — register an agent + initial software
+#### `POST /software` — register a new software node
 
 Request:
 ```json
 {
-  "agent_name": "payments-team-bot",
-  "software": {
-    "name": "payments-service",
-    "repo_uri": "https://github.com/example/payments-service",
-    "markdown": "# payments-service\n..."
-  }
+  "name":     "payments-service",
+  "repo_uri": "https://github.com/example/payments-service",
+  "markdown": "# payments-service\n..."
 }
 ```
 
 Response `201`:
 ```json
 {
-  "agent_id": "8f1b2c3d-...",
-  "api_key": "tk_live_...",
-  "software": {
-    "id": "12c3a4b5-...",
-    "name": "payments-service",
-    "version": 1
-  }
+  "id":      "12c3a4b5-...",
+  "name":    "payments-service",
+  "version": 1
 }
 ```
 
-Atomic: inserts `agents`, `software`, `software_versions` (version 1) in
-one transaction. `api_key` is shown once and never returned again.
-
-### Software
+Atomic: inserts `software` and `software_versions` (version 1) in one
+transaction. `409 Conflict` if `name` is already taken.
 
 #### `GET /software/{name}` — latest description
 
 Returns software metadata + the latest `software_versions` row.
 ```json
 {
-  "id": "12c3a4b5-...",
-  "name": "payments-service",
-  "repo_uri": "https://github.com/example/payments-service",
-  "owner_agent_id": "8f1b2c3d-...",
-  "version": 3,
-  "markdown": "# payments-service\n...",
+  "id":         "12c3a4b5-...",
+  "name":       "payments-service",
+  "repo_uri":   "https://github.com/example/payments-service",
+  "version":    3,
+  "markdown":   "# payments-service\n...",
   "updated_at": "2026-04-29T14:30:00Z"
 }
 ```
 
 #### `PUT /software/{name}` — append a new description version
-
-Auth: owner agent of the software.
 
 Request:
 ```json
@@ -228,20 +194,20 @@ counterparty, each with its latest active version.
   "software": "payments-service",
   "contracts": [
     {
-      "id": "ab12cd34-...",
-      "owner": "payments-service",
+      "id":           "ab12cd34-...",
+      "owner":        "payments-service",
       "counterparty": "orders-service",
-      "version": 2,
-      "markdown": "...",
-      "updated_at": "2026-04-15T09:14:00Z"
+      "version":      2,
+      "markdown":     "...",
+      "updated_at":   "2026-04-15T09:14:00Z"
     },
     {
-      "id": "cd34ef56-...",
-      "owner": "ledger-service",
+      "id":           "cd34ef56-...",
+      "owner":        "ledger-service",
       "counterparty": "payments-service",
-      "version": 1,
-      "markdown": "...",
-      "updated_at": "2026-04-02T11:00:00Z"
+      "version":      1,
+      "markdown":     "...",
+      "updated_at":   "2026-04-02T11:00:00Z"
     }
   ]
 }
@@ -250,8 +216,6 @@ counterparty, each with its latest active version.
 ### Contracts
 
 #### `POST /contracts` — register a new interface contract
-
-Auth: owner agent of the named owner software.
 
 Request:
 ```json
@@ -265,11 +229,11 @@ Request:
 Response `201`:
 ```json
 {
-  "contract_id": "ab12cd34-...",
+  "contract_id":  "ab12cd34-...",
   "owner":        "payments-service",
   "counterparty": "orders-service",
-  "version": 1,
-  "status":  "active"
+  "version":      1,
+  "status":       "active"
 }
 ```
 
@@ -287,12 +251,12 @@ named pieces of software, in either direction. Zero, one, or two results.
 {
   "results": [
     {
-      "contract_id": "ab12cd34-...",
+      "contract_id":  "ab12cd34-...",
       "owner":        "payments-service",
       "counterparty": "orders-service",
-      "version": 2,
-      "markdown": "...",
-      "updated_at": "2026-04-15T09:14:00Z"
+      "version":      2,
+      "markdown":     "...",
+      "updated_at":   "2026-04-15T09:14:00Z"
     }
   ]
 }
@@ -306,8 +270,6 @@ Returns the most recent `status='active'` version of that contract.
 
 #### `POST /contracts/{contract_id}/proposals` — propose a new contract body
 
-Auth: owner agent of *either* the owner or counterparty software.
-
 Request:
 ```json
 { "markdown": "..." }
@@ -320,9 +282,8 @@ Response `201`:
 ```json
 {
   "contract_id": "ab12cd34-...",
-  "version": 4,
-  "status":  "proposal",
-  "created_by_agent_id": "..."
+  "version":     4,
+  "status":      "proposal"
 }
 ```
 
@@ -333,18 +294,16 @@ version.
 
 ```json
 {
-  "contract_id": "ab12cd34-...",
+  "contract_id":    "ab12cd34-...",
   "active_version": 3,
   "proposals": [
-    { "version": 4, "markdown": "...", "created_by_agent_id": "...", "created_at": "..." },
-    { "version": 5, "markdown": "...", "created_by_agent_id": "...", "created_at": "..." }
+    { "version": 4, "markdown": "...", "created_at": "..." },
+    { "version": 5, "markdown": "...", "created_at": "..." }
   ]
 }
 ```
 
 #### `POST /contracts/{contract_id}/proposals/{version}/accept` — promote a proposal to active
-
-Auth: owner agent of the owner software.
 
 Server-side, in one transaction:
 1. Read the proposal row at `(contract_id, version)`. Reject if not
@@ -355,16 +314,15 @@ Server-side, in one transaction:
 3. Leave the original proposal row in place as history.
 
 Why copy rather than flip the status in place: this keeps the proposal's
-authorship + creation time distinct from the acceptance event, and
-keeps the "latest active" query trivially correct (`MAX(version) WHERE
-status='active'`).
+creation time distinct from the acceptance event, and keeps the "latest
+active" query trivially correct (`MAX(version) WHERE status='active'`).
 
 Response `200`:
 ```json
 {
-  "contract_id": "ab12cd34-...",
+  "contract_id":                   "ab12cd34-...",
   "promoted_from_proposal_version": 4,
-  "new_active_version": 6
+  "new_active_version":             6
 }
 ```
 
@@ -378,7 +336,7 @@ templates/
   contract.md         ← served by GET /templates/contract
 ```
 
-These are the canonical formats agents are expected to produce. Their
+These are the canonical formats callers are expected to produce. Their
 exact content is out of scope for this design — they will evolve
 without breaking the API.
 
@@ -391,11 +349,10 @@ src/
   main.py             FastAPI app, lifecycle, router wiring
   config.py           Settings via pydantic-settings
   db.py               Async SQLAlchemy engine + session factory + MetaData naming convention
-  auth.py             API-key bearer dependency
+  auth.py             Bearer-password dependency (placeholder)
   models.py           SQLAlchemy ORM models
   schemas.py          Pydantic request/response models
   routers/
-    agents.py
     software.py
     contracts.py
     proposals.py
@@ -426,10 +383,14 @@ pyproject.toml
 
 ## Configuration
 
-| Env var          | Purpose                                                                |
-| ---------------- | ---------------------------------------------------------------------- |
-| `DATABASE_URL`   | Postgres DSN, e.g. `postgresql+asyncpg://user:pw@host:5432/titan_tyr`  |
-| `API_KEY_PREFIX` | Display prefix for issued keys (default `tk_live_`)                    |
+| Env var        | Purpose                                                               |
+| -------------- | --------------------------------------------------------------------- |
+| `DATABASE_URL` | Postgres DSN, e.g. `postgresql+asyncpg://user:pw@host:5432/titan_tyr` |
+
+The bearer password is the literal string `sysmlv2`, hardcoded in
+`src/auth.py` as a placeholder. It will be removed when real auth lands
+— do not promote it to a config value, since that risks it lingering
+past the auth rework.
 
 ---
 
@@ -528,17 +489,15 @@ changes, and constraint tightening on populated tables.
 
 ## Open questions
 
-1. **Read auth** — should `GET` endpoints require an API key, or be
-   open within an internal network?
-2. **Multi-software agents** — the schema permits one agent to own
-   many software nodes, but only `POST /agents` seeds one. Add a
-   separate `POST /software` for an existing agent to register
-   additional software?
-3. **Proposal rejection** — accepting a proposal is defined; explicit
+1. **Proposal rejection** — accepting a proposal is defined; explicit
    rejection is not. Do we need a status for "rejected" / "withdrawn",
    or is leaving stale proposals on the edge acceptable?
-4. **Contract direction** — the model treats `(A→B)` and `(B→A)` as
-   distinct contracts. Confirm this matches how agents think about
+2. **Contract direction** — the model treats `(A→B)` and `(B→A)` as
+   distinct contracts. Confirm this matches how callers think about
    interfaces, or collapse to undirected.
-5. **Search by content** — full-text search over markdown bodies is
+3. **Search by content** — full-text search over markdown bodies is
    not in this cut. Add when a real use case appears.
+4. **Real auth** — the placeholder password is throwaway. The real auth
+   model (per-caller identity, authorisation rules, key rotation) is
+   deferred to a future capability update and is its own design
+   conversation.
