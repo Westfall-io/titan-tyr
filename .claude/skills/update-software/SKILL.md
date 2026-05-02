@@ -126,6 +126,22 @@ Apply the same generic fill rules as `/register-software`:
    have real content for them.
 5. Don't invent H2 structure.
 
+**Always re-stamp on structural migration.** If you're moving the
+body's shape onto a newer template version (anything beyond pure
+content edits), update the stamp
+`<!-- template: software@X.Y.Z -->` to the active template version
+*even though it's already a literal value*. The
+substitute-`<template-version>` rule from `/register-software` only
+fires on registration, when the stamp is still a placeholder. On
+update the stamp is already a literal version string baked in at the
+last write — no `<...>` to substitute. If you don't re-type it, the
+stamp will silently lie about which template the body matches, and
+the next `/update-software` run will mis-detect drift in step 3.
+
+Conversely, on a **content-only** edit (no structural reshape), keep
+the stamp as-is. The body still matches the template version stamped
+on it; that's the whole point of the stamp.
+
 The skill does not carry template-specific knowledge beyond this. If
 the user needs guidance on what a section *means*, that guidance lives
 in the template body's instructional blockquotes — read them, follow
@@ -177,8 +193,21 @@ re-shaped.
 ### 7. Preview before submitting
 
 Show the user **the full new body** plus the version about to be
-submitted. Ask "ready to update?" Do not PUT until the user confirms.
-Iterate if they want changes.
+submitted. Also surface the **stamp value** explicitly alongside the
+**active template version**, so any mismatch is visible at the
+confirmation gate:
+
+> Stamp: `software@<X.Y.Z>` (active template: `<X.Y.Z>`)
+
+If those two don't match, call it out before asking to proceed —
+either the user intended a content-only edit and the mismatch is
+pre-existing drift left from a prior bad update (file an issue
+against the prior body, then either keep the mismatch or correct it
+now), or the user intended a structural migration and forgot to
+re-stamp (loop back to step 4).
+
+Ask "ready to update?" Do not PUT until the user confirms. Iterate if
+they want changes.
 
 ### 8. Submit
 
