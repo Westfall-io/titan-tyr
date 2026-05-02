@@ -21,6 +21,28 @@ at `/docs` and `/redoc` when the API is running.
   `-rcN` suffix.
 - Errors are returned as `{"detail": "..."}` per FastAPI convention.
 
+### CORS
+
+The API serves CORS-permissive responses to browser clients, but only
+for an allow-listed set of origins:
+
+- `https://digitalforge.app` (apex)
+- `https://*.digitalforge.app` (any subdomain)
+- `http://localhost` and `https://localhost` on any port (local dev)
+
+For an allowed `Origin`, every endpoint reflects the origin in
+`Access-Control-Allow-Origin`. `Access-Control-Allow-Methods` covers
+`GET`, `POST`, and `PUT`; `Access-Control-Allow-Headers` covers
+`Authorization` and `Content-Type`. Preflight `OPTIONS` requests are
+handled — they don't `405`.
+
+For a non-allow-listed `Origin`, the API still serves the response
+(CORS is a browser-side enforcement), but no
+`Access-Control-Allow-Origin` is sent, so browsers block the response.
+
+The bearer token travels in the `Authorization` header, not as a
+cookie, so `Access-Control-Allow-Credentials` is not set.
+
 ### Listing pagination
 
 `GET /software`, `GET /contracts` (list mode), and
@@ -53,12 +75,12 @@ No `Authorization` header required — orchestrators don't carry one.
 
 `200` response when the API can reach Postgres:
 ```json
-{ "status": "ok", "version": "0.7.0", "db": "reachable" }
+{ "status": "ok", "version": "0.7.1", "db": "reachable" }
 ```
 
 `503` response when the DB query fails:
 ```json
-{ "status": "degraded", "version": "0.7.0", "db": "unreachable" }
+{ "status": "degraded", "version": "0.7.1", "db": "unreachable" }
 ```
 
 `version` is the running titan-tyr package version (resolved from
