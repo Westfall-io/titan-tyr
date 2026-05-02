@@ -78,14 +78,12 @@ CREATE TABLE contracts (
   CHECK  (owner_software_id <> counterparty_software_id)
 );
 
-CREATE TYPE contract_status AS ENUM ('active', 'proposal');
-
 CREATE TABLE contract_versions (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   contract_id         UUID NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
   version             INT  NOT NULL,
   markdown            TEXT NOT NULL,
-  status              contract_status NOT NULL,
+  status              TEXT NOT NULL CHECK (status IN ('active', 'proposal')),
   created_by_agent_id UUID NOT NULL REFERENCES agents(id),
   created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (contract_id, version)
@@ -93,6 +91,12 @@ CREATE TABLE contract_versions (
 CREATE INDEX ON contract_versions (contract_id, version DESC);
 CREATE INDEX ON contract_versions (contract_id, status);
 ```
+
+`status` is a `TEXT` column with a `CHECK` constraint, not a Postgres
+`ENUM`. The set of allowed values will evolve (rejected, withdrawn,
+superseded, …) and `ALTER TYPE` is half-supported and irreversible —
+`TEXT + CHECK` lets us add or remove values with a single migration that
+drops and recreates the constraint.
 
 ### Version assignment
 
@@ -386,7 +390,7 @@ without breaking the API.
 src/
   main.py             FastAPI app, lifecycle, router wiring
   config.py           Settings via pydantic-settings
-  db.py               Async SQLAlchemy engine + session factory
+  db.py               Async SQLAlchemy engine + session factory + MetaData naming convention
   auth.py             API-key bearer dependency
   models.py           SQLAlchemy ORM models
   schemas.py          Pydantic request/response models
@@ -399,7 +403,10 @@ src/
 templates/
   software.md
   contract.md
-alembic/              Migrations
+alembic/
+  env.py              Wired to src.models.Base.metadata for autogenerate
+  versions/           Migration scripts
+alembic.ini
 tests/
 pyproject.toml
 ```
@@ -423,6 +430,99 @@ pyproject.toml
 | ---------------- | ---------------------------------------------------------------------- |
 | `DATABASE_URL`   | Postgres DSN, e.g. `postgresql+asyncpg://user:pw@host:5432/titan_tyr`  |
 | `API_KEY_PREFIX` | Display prefix for issued keys (default `tk_live_`)                    |
+
+---
+
+## Migrations
+
+Schema is expected to evolve frequently, so migrations are treated as a
+first-class concern rather than an afterthought.
+
+### Tooling
+
+**Alembic** with autogenerate. ORM models in `src/models.py` are the
+single source of truth; the SQL DDL shown earlier in this document is
+illustrative only — the canonical schema is whatever Alembic has
+applied.
+
+### SQLAlchemy naming convention
+
+`src/db.py` defines a `MetaData` with an explicit
+`naming_convention` and all ORM models bind to it:
+
+```python
+from sqlalchemy import MetaData
+from sqlalchemy.orm import DeclarativeBase
+
+NAMING_CONVENTION = {
+    "ix":  "ix_%(table_name)s_%(column_0_N_name)s",
+    "uq":  "uq_%(table_name)s_%(column_0_N_name)s",
+    "ck":  "ck_%(table_name)s_%(constraint_name)s",
+    "fk":  "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk":  "pk_%(table_name)s",
+}
+
+class Base(DeclarativeBase):
+    metadata = MetaData(naming_convention=NAMING_CONVENTION)
+```
+
+Without this, autogenerate produces hash-suffixed constraint names that
+differ between machines and Postgres versions, causing spurious diffs
+on every run and making `downgrade()` fragile. Set this on the very
+first migration — retrofitting later requires a rename migration for
+every existing constraint.
+
+### Migration runtime
+
+Migrations run as a **separate step before the API starts**, never as
+part of FastAPI startup:
+
+- **Local dev** — `alembic upgrade head` via a `make migrate` target.
+- **Containers** — a dedicated `migrate` command in the image
+  (`alembic upgrade head`), invoked as a Kubernetes Job / init
+  container / Compose dependency. The API container runs only after
+  the migrate step exits 0.
+- **Rollback** — `downgrade()` is implemented for every migration but
+  not relied on for production recovery; production rollback is
+  forward-only via a new migration. Downgrades exist for local dev
+  iteration.
+
+### CI gate
+
+CI runs `alembic check` against the model metadata to fail any PR
+where the ORM and migrations have diverged. This catches the common
+mistake of editing `src/models.py` without generating a corresponding
+migration.
+
+CI also runs `alembic upgrade head && alembic downgrade base &&
+alembic upgrade head` against an ephemeral Postgres to confirm
+migrations are reversible end-to-end.
+
+### Schema vs data migrations
+
+Alembic handles both, but they have different review bars:
+
+- **Schema-only** (add column, add index, drop unused table) — routine,
+  reviewed for correctness only.
+- **Data migrations** (backfill a new column, transform existing rows)
+  — must use bulk SQL (`op.execute(...)`), never the ORM, because the
+  ORM in a migration script reflects the *current* model, not the
+  schema at the migration's point in history. Large backfills go in
+  separate migration files from the DDL change so they can be batched
+  or run out-of-band.
+
+### Expand / contract for breaking changes
+
+For column renames or type changes, use the three-deploy pattern rather
+than a single destructive migration:
+
+1. **Expand** — add the new column nullable; write to both old and new.
+2. **Backfill + cut over** — populate the new column for existing rows;
+   switch reads to the new column.
+3. **Contract** — drop the old column.
+
+This is overkill for additive changes; reserve it for renames, type
+changes, and constraint tightening on populated tables.
 
 ---
 
