@@ -1,376 +1,444 @@
-# titan-tyr — Developer Brief
-## WatcherVault REST API
+# titan-tyr — Design
 
 **Repository:** titan-tyr
-**Capability:** WatcherVault
-**Role:** Backend — Git-backed contract file server with environment-aware indexing
+**Role:** REST API for registering software, registering interface contracts between software, and proposing changes to those contracts.
+**Stack:** FastAPI + PostgreSQL.
 
 ---
 
 ## Purpose
 
-titan-tyr is the data layer for WatcherVault. It serves architecture contract documents stored as markdown files in titan-norgannon (the architecture repository), exposes them via a REST API consumed by titan-mimiron (the web UI) and indirectly by titan-algalon (the MCP server), and injects Git version metadata into every response.
+titan-tyr is a graph database, exposed as a REST API, that records the
+software running in a system and the interface contracts between those
+pieces of software. Software-developer agents register themselves and
+the software they own; they then register contracts that describe how
+their software interfaces with other software, and propose changes to
+contracts that already exist.
 
-There is no database. titan-norgannon is the source of truth. titan-tyr reads from titan-norgannon via the **GitHub REST API**. This is the current implementation approach — it will be replaced with a local Git clone in a future iteration when performance or rate limit constraints require it. The abstraction layer between titan-tyr's internal GitHub client and its outward API must be kept clean so this substitution can be made without changing any downstream behaviour.
+- **Nodes** — registered software.
+- **Edges** — interface contracts between two software nodes.
 
----
+Both nodes and edges carry a markdown body. All markdown is **versioned
+append-only** in the database. By default, only the latest version is
+returned on read.
 
-## Architecture Repository Structure
-
-titan-tyr reads from titan-norgannon via the GitHub API. The repository follows this layout — titan-tyr must understand this structure to build the environment index correctly:
-
-```
-icd-docs/
-  common/                          ← type definitions (read-only)
-    parts/
-    ports/
-    interfaces/
-    connections/
-
-  instances/
-    common/                        ← environment-agnostic elements
-      parts/                       ← SoftwarePart, ImagePart instances
-      interfaces/                  ← Interaction Interface contracts
-      connections/
-
-    local/                         ← local development model
-      model.md
-      parts/                       ← ContainerPart, ComposePart instances
-      interfaces/                  ← Binding Interface contracts
-      connections/
-
-    staging/
-      model.md
-      parts/
-      interfaces/
-      connections/
-
-    production/
-      model.md
-      parts/                       ← PodPart instances
-      interfaces/
-      connections/
-```
-
-When building the index for a given environment, titan-tyr merges
-`instances/common/` with `instances/{env}/` to produce the complete model.
+This is a deliberately small first cut. There is no Git integration, no
+file system, no external repository — Postgres is the source of truth.
 
 ---
 
-## GitHub API Access
+## Data model
 
-titan-tyr communicates with titan-norgannon exclusively via the GitHub REST API. All file reads, version metadata, and write operations go through this API.
+### Concepts
 
-### Authentication
+| Concept       | Stored as                                 | Notes                                        |
+| ------------- | ----------------------------------------- | -------------------------------------------- |
+| Agent         | row in `agents`                           | The registering identity. Holds an API key. |
+| Software node | row in `software` + N `software_versions` | Owned by exactly one agent.                  |
+| Contract edge | row in `contracts` + N `contract_versions` | Directed: `owner_software → counterparty_software`. |
+| Proposal      | a `contract_versions` row with `status='proposal'` | Lives on the edge until accepted or superseded. |
 
-titan-tyr requires a GitHub Personal Access Token (PAT) or GitHub App installation token with `contents:read` permission on titan-norgannon, and `contents:write` for branch creation via `POST /api/files`.
+### Schema
 
-Configure via environment variable: `GITHUB_TOKEN`. This must never be hardcoded or logged.
+```sql
+CREATE EXTENSION IF NOT EXISTS pgcrypto;  -- gen_random_uuid()
 
-### Required GitHub API Calls
+CREATE TABLE agents (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name          TEXT NOT NULL,
+  api_key_hash  TEXT NOT NULL UNIQUE,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
-**Get file content and metadata:**
+CREATE TABLE software (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name            TEXT NOT NULL UNIQUE,
+  repo_uri        TEXT NOT NULL,
+  owner_agent_id  UUID NOT NULL REFERENCES agents(id),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE software_versions (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  software_id         UUID NOT NULL REFERENCES software(id) ON DELETE CASCADE,
+  version             INT  NOT NULL,
+  markdown            TEXT NOT NULL,
+  created_by_agent_id UUID NOT NULL REFERENCES agents(id),
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (software_id, version)
+);
+CREATE INDEX ON software_versions (software_id, version DESC);
+
+CREATE TABLE contracts (
+  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_software_id        UUID NOT NULL REFERENCES software(id),
+  counterparty_software_id UUID NOT NULL REFERENCES software(id),
+  created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (owner_software_id, counterparty_software_id),
+  CHECK  (owner_software_id <> counterparty_software_id)
+);
+
+CREATE TYPE contract_status AS ENUM ('active', 'proposal');
+
+CREATE TABLE contract_versions (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  contract_id         UUID NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+  version             INT  NOT NULL,
+  markdown            TEXT NOT NULL,
+  status              contract_status NOT NULL,
+  created_by_agent_id UUID NOT NULL REFERENCES agents(id),
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (contract_id, version)
+);
+CREATE INDEX ON contract_versions (contract_id, version DESC);
+CREATE INDEX ON contract_versions (contract_id, status);
 ```
-GET https://api.github.com/repos/{org}/titan-norgannon/contents/{path}?ref=main
-```
-Returns the file content (base64 encoded), the blob SHA, and the `last_modified` header. Decode content with `base64.b64decode(response['content'])`.
 
-**List directory contents:**
-```
-GET https://api.github.com/repos/{org}/titan-norgannon/contents/{dir-path}?ref=main
-```
-Returns an array of file and directory entries with `name`, `path`, `type` (`file` or `dir`), and `sha`.
+### Version assignment
 
-**Get commit history for a file:**
-```
-GET https://api.github.com/repos/{org}/titan-norgannon/commits?path={file-path}&sha=main&per_page=20
-```
-Returns an array of commits. Each entry has `sha`, `commit.author.date`, `commit.author.name`, and `commit.message`.
+`version` is a 1-based integer scoped to its parent
+(`software_id` or `contract_id`). Each insert grabs the parent row with
+`SELECT … FOR UPDATE`, computes `MAX(version) + 1`, and inserts under
+that lock. This keeps numbering monotonic without a sequence per parent.
 
-**Create or update a file on a branch:**
-```
-PUT https://api.github.com/repos/{org}/titan-norgannon/contents/{path}
-```
-Body requires `message` (commit message), `content` (base64 encoded), `branch` (branch name), and `sha` (current blob SHA if updating an existing file).
+### "Latest" semantics
 
-**Create a branch:**
-```
-POST https://api.github.com/repos/{org}/titan-norgannon/git/refs
-```
-Body: `{ "ref": "refs/heads/{branch-name}", "sha": "{main-head-sha}" }`
-
-Get main HEAD SHA first with:
-```
-GET https://api.github.com/repos/{org}/titan-norgannon/git/ref/heads/main
-```
-
-### Rate Limits
-
-The GitHub API allows 5000 requests per hour for authenticated requests. This is sufficient for current usage but must be managed carefully:
-
-- **Cache aggressively** — the index is built once and held in memory. Individual file fetches are cached with the `ETag` / `If-None-Match` mechanism.
-- **ETags** — store the `ETag` response header on every file fetch. On subsequent fetches, send `If-None-Match: {etag}`. GitHub returns `304 Not Modified` (free, not counted against content rate limit) if the file has not changed.
-- **Respect `X-RateLimit-Remaining`** — check this header on every response. If it falls below 100, log a warning. If it reaches 0, return `503` to callers with a `Retry-After` header.
-- **Avoid recursive directory walks at request time** — the index must be built on startup and on a polling interval, not on every incoming API request.
-
-### Keeping the Index Current
-
-Without a local clone and webhook, titan-tyr uses a **polling approach**:
-
-- On startup, build the full index by walking the titan-norgannon directory tree via the GitHub API
-- Poll the main branch HEAD SHA every 60 seconds:
-  ```
-  GET https://api.github.com/repos/{org}/titan-norgannon/git/ref/heads/main
-  ```
-- If the HEAD SHA has changed since the last poll, rebuild the index
-- The index rebuild fetches only the directory listings (cheap); individual file content is fetched on demand and cached by ETag
-
-This replaces the webhook and `git pull` approach used in the local-clone model.
+- **Software** — `MAX(version)` per `software_id`.
+- **Contract (active)** — most recent `contract_versions` row with
+  `status='active'`. There is always at most one, by construction.
+- **Contract proposals** — every `contract_versions` row with
+  `status='proposal'` that is newer than the current active version.
 
 ---
 
-## Versioning
+## Authentication
 
-Every contract response carries three version signals. titan-tyr populates two of them at serve time — the semantic version is already in the document body.
+API-key bearer tokens.
 
-**Semantic version** — parse from document body after fetching file content:
-```python
-import re
-match = re.search(r'\*\*Version:\*\*\s*([\d\.]+)', content)
-version = match.group(1) if match else "unknown"
-```
+- On `POST /agents`, the server generates a random key, returns it
+  **once** in the response body, and stores only `sha256(key)` in
+  `agents.api_key_hash`.
+- All subsequent requests authenticate via
+  `Authorization: Bearer <key>`. The server hashes the presented key
+  and looks it up in `agents.api_key_hash`.
+- Lost keys cannot be recovered — the agent must re-register.
 
-**Git SHA** — the blob SHA returned by the GitHub Contents API response field `sha`. This is the blob hash of the file, equivalent to `git rev-parse HEAD:{path}`.
+All write endpoints require auth. Read endpoints also require auth in
+this first cut (see Open Questions).
 
-**Last modified** — the date of the most recent commit touching this file. Retrieved from the commits API:
-```
-GET /repos/{org}/titan-norgannon/commits?path={path}&sha=main&per_page=1
-```
-Use `commits[0].commit.author.date`.
+### Authorisation rules
 
-titan-tyr injects these into the document before returning it by replacing the placeholder text `[populated by backend]` in the `**Git SHA:**` and `**Last modified:**` lines. It also returns them as response headers.
+| Action                                  | Allowed agent                                          |
+| --------------------------------------- | ------------------------------------------------------ |
+| Update a software description           | Owner agent of that software                           |
+| Register a new contract                 | Owner agent of the *owner* software                    |
+| Propose a contract change               | Owner agent of *either* the owner or counterparty software |
+| Accept a proposal                       | Owner agent of the *owner* software                    |
 
 ---
 
-## API Endpoints
+## Endpoints
 
-### `GET /api/environments`
+All paths are relative to the API root. JSON request/response unless
+otherwise noted.
 
-Lists available environment models. titan-tyr determines available environments by listing the directories under `icd-docs/instances/` via the GitHub API and filtering out `common/`. Each environment's `model.md` is fetched to extract version and metadata.
+### Templates
+
+Static markdown files served from `templates/` on disk.
+
+| Method | Path                   | Returns                                       |
+| ------ | ---------------------- | --------------------------------------------- |
+| GET    | `/templates/software`  | `text/markdown` — template for software descriptions |
+| GET    | `/templates/contract`  | `text/markdown` — template for interface contracts   |
+
+### Agents
+
+#### `POST /agents` — register an agent + initial software
+
+Request:
+```json
+{
+  "agent_name": "payments-team-bot",
+  "software": {
+    "name": "payments-service",
+    "repo_uri": "https://github.com/example/payments-service",
+    "markdown": "# payments-service\n..."
+  }
+}
+```
+
+Response `201`:
+```json
+{
+  "agent_id": "8f1b2c3d-...",
+  "api_key": "tk_live_...",
+  "software": {
+    "id": "12c3a4b5-...",
+    "name": "payments-service",
+    "version": 1
+  }
+}
+```
+
+Atomic: inserts `agents`, `software`, `software_versions` (version 1) in
+one transaction. `api_key` is shown once and never returned again.
+
+### Software
+
+#### `GET /software/{name}` — latest description
+
+Returns software metadata + the latest `software_versions` row.
+```json
+{
+  "id": "12c3a4b5-...",
+  "name": "payments-service",
+  "repo_uri": "https://github.com/example/payments-service",
+  "owner_agent_id": "8f1b2c3d-...",
+  "version": 3,
+  "markdown": "# payments-service\n...",
+  "updated_at": "2026-04-29T14:30:00Z"
+}
+```
+
+#### `PUT /software/{name}` — append a new description version
+
+Auth: owner agent of the software.
+
+Request:
+```json
+{ "markdown": "# payments-service\n..." }
+```
+
+Response `200`:
+```json
+{ "name": "payments-service", "version": 4 }
+```
+
+#### `GET /software/{name}/contracts` — all contracts touching this software
+
+Returns every contract where this software is either owner or
+counterparty, each with its latest active version.
 
 ```json
 {
-  "environments": [
+  "software": "payments-service",
+  "contracts": [
     {
-      "id": "local",
-      "path": "instances/local/model.md",
-      "version": "1.0.0",
-      "sha": "a1b2c3d4...",
-      "lastModified": "2025-04-20T10:00:00Z"
+      "id": "ab12cd34-...",
+      "owner": "payments-service",
+      "counterparty": "orders-service",
+      "version": 2,
+      "markdown": "...",
+      "updated_at": "2026-04-15T09:14:00Z"
+    },
+    {
+      "id": "cd34ef56-...",
+      "owner": "ledger-service",
+      "counterparty": "payments-service",
+      "version": 1,
+      "markdown": "...",
+      "updated_at": "2026-04-02T11:00:00Z"
     }
   ]
 }
 ```
 
-### `GET /api/index?env={environment}`
+### Contracts
 
-Returns the complete merged model for the specified environment.
-Merges `instances/common/` with `instances/{env}/`.
-Default env: `local`.
+#### `POST /contracts` — register a new interface contract
 
+Auth: owner agent of the named owner software.
+
+Request:
 ```json
 {
-  "environment": "local",
-  "generatedAt": "2025-04-29T14:30:00Z",
-  "elements": [
-    {
-      "id": "payments-service",
-      "type": "SoftwarePart",
-      "name": "payments-service",
-      "path": "instances/common/parts/payments-service.md",
-      "version": "3.1.0",
-      "sha": "a1b2c3d4...",
-      "lastModified": "2025-04-01T09:14:00Z",
-      "owner": "payments-team",
-      "layer": "common",
-      "connections": [
-        {
-          "to": "iface-orders-payments",
-          "edgeType": "interaction-interface",
-          "direction": "in",
-          "label": "REST POST",
-          "version": "1.2.0"
-        }
-      ]
-    }
-  ]
+  "owner_software":        "payments-service",
+  "counterparty_software": "orders-service",
+  "markdown":              "..."
 }
 ```
 
-**`layer`** — `"common"` if from `instances/common/`, `"env"` if from the environment folder. Used by titan-mimiron to determine which graph view an element belongs to.
-
-**`edgeType`** — one of: `interaction-interface`, `binding-interface`, `connection`.
-
-Agree the full response shape with titan-mimiron before implementing — this is the primary interface between the two repos.
-
-### `GET /api/files/:path`
-
-Returns the raw markdown content of the file at `{path}` relative to `icd-docs/`, with Git fields injected.
-
-titan-tyr fetches the file from the GitHub Contents API, decodes the base64 content, parses the semantic version from the body, retrieves the last-modified date from the commits API, and injects all three version values into the document before returning it.
-
-Cache the response using the GitHub-returned `ETag`. On subsequent calls for the same path, send `If-None-Match` and serve from cache on `304`.
-
-Response headers:
-```
-Content-Type: text/plain
-X-Contract-Version: 3.1.0
-X-Git-SHA: a1b2c3d4e5f6...
-X-Git-Last-Modified: 2025-04-29T14:23:00Z
-```
-
-Returns `404` with JSON body if the GitHub API returns 404:
-```json
-{ "error": "File not found", "path": "instances/common/parts/payments-service.md" }
-```
-
-### `GET /api/history/:path`
-
-Returns the commit history for a specific file. Sourced from the GitHub commits API:
-
-```
-GET /repos/{org}/titan-norgannon/commits?path=icd-docs/{path}&sha=main&per_page=20
-```
-
+Response `201`:
 ```json
 {
-  "path": "instances/common/interfaces/iface-orders-payments.md",
-  "history": [
-    {
-      "sha": "a1b2c3d4...",
-      "date": "2025-04-01T09:14:00Z",
-      "author": "orders-team-bot",
-      "message": "Propose metadata.channel field (Open Proposals)"
-    }
-  ]
+  "contract_id": "ab12cd34-...",
+  "owner":        "payments-service",
+  "counterparty": "orders-service",
+  "version": 1,
+  "status":  "active"
 }
+```
 
-### `GET /api/search?q={query}&env={environment}`
+Errors:
+- `409 Conflict` if a contract already exists for that ordered pair.
+  Use proposals to change it.
+- `404 Not Found` if either software is unknown.
 
-Substring match across element names and contract content in the given environment.
+#### `GET /contracts?owner={a}&counterparty={b}` — search contracts between two software
+
+Returns the active version of any contract that exists between the two
+named pieces of software, in either direction. Zero, one, or two results.
 
 ```json
 {
-  "query": "payment",
-  "environment": "local",
   "results": [
     {
-      "id": "payments-service",
-      "type": "SoftwarePart",
-      "path": "instances/common/parts/payments-service.md",
-      "matchContext": "...handles payment capture and refunds..."
+      "contract_id": "ab12cd34-...",
+      "owner":        "payments-service",
+      "counterparty": "orders-service",
+      "version": 2,
+      "markdown": "...",
+      "updated_at": "2026-04-15T09:14:00Z"
     }
   ]
 }
 ```
 
-### `POST /api/files/:path`
+#### `GET /contracts/{contract_id}` — latest active version of a contract
 
-Creates or updates a contract file on a new branch in titan-norgannon. Never writes to main directly.
+Returns the most recent `status='active'` version of that contract.
 
-Procedure:
-1. Fetch the current main HEAD SHA via `GET /repos/{org}/titan-norgannon/git/ref/heads/main`
-2. Create a new branch: `POST /repos/{org}/titan-norgannon/git/refs` with `ref: refs/heads/agent/{name}-{date}` and the HEAD SHA
-3. If updating an existing file, fetch the current blob SHA for the file first (required by GitHub API)
-4. Write the file: `PUT /repos/{org}/titan-norgannon/contents/icd-docs/{path}` with the branch name, base64-encoded content, and blob SHA if updating
+### Proposals
 
-Validate the path is within `icd-docs/` before writing (prevent path traversal).
+#### `POST /contracts/{contract_id}/proposals` — propose a new contract body
 
+Auth: owner agent of *either* the owner or counterparty software.
+
+Request:
+```json
+{ "markdown": "..." }
+```
+
+Inserts a new `contract_versions` row with `status='proposal'` and the
+next version number. Multiple proposals can coexist.
+
+Response `201`:
 ```json
 {
-  "path": "instances/local/interfaces/binding-payments.md",
-  "written": true,
-  "branch": "agent/update-binding-payments-20250429",
-  "sha": "c3d4e5f6..."
+  "contract_id": "ab12cd34-...",
+  "version": 4,
+  "status":  "proposal",
+  "created_by_agent_id": "..."
 }
 ```
 
-### `GET /api/health`
+#### `GET /contracts/{contract_id}/proposals` — list open proposals
+
+Returns every proposal-status version newer than the current active
+version.
 
 ```json
-{ "status": "ok", "githubRateLimitRemaining": 4823, "indexLastBuilt": "2025-04-29T14:28:00Z" }
+{
+  "contract_id": "ab12cd34-...",
+  "active_version": 3,
+  "proposals": [
+    { "version": 4, "markdown": "...", "created_by_agent_id": "...", "created_at": "..." },
+    { "version": 5, "markdown": "...", "created_by_agent_id": "...", "created_at": "..." }
+  ]
+}
 ```
 
-The `githubRateLimitRemaining` value surfaces the most recent `X-RateLimit-Remaining` header received from the GitHub API. This allows operators to monitor rate limit consumption without inspecting logs.
+#### `POST /contracts/{contract_id}/proposals/{version}/accept` — promote a proposal to active
 
----
+Auth: owner agent of the owner software.
 
-## Parsing Contract Metadata
+Server-side, in one transaction:
+1. Read the proposal row at `(contract_id, version)`. Reject if not
+   `status='proposal'`.
+2. Insert a new `contract_versions` row with the **next** version
+   number, `status='active'`, and `markdown` copied from the accepted
+   proposal.
+3. Leave the original proposal row in place as history.
 
-Parse the document header block (before the first `##` heading):
+Why copy rather than flip the status in place: this keeps the proposal's
+authorship + creation time distinct from the acceptance event, and
+keeps the "latest active" query trivially correct (`MAX(version) WHERE
+status='active'`).
 
-```python
-import re
-
-def parse_metadata(content: str) -> dict:
-    meta = {}
-    header = content.split('\n## ')[0]
-
-    name_match = re.search(r'^# (.+)$', header, re.MULTILINE)
-    if name_match:
-        meta['name'] = name_match.group(1).strip()
-
-    for match in re.finditer(r'\*\*(\w[\w\s]+):\*\*\s*(.+)', header):
-        key = match.group(1).strip().lower().replace(' ', '_')
-        meta[key] = match.group(2).strip()
-
-    return meta
-```
-
-Parse connections from the `## Ports` and `## Connections` table sections.
-
----
-
-## Technology
-
-**Python + FastAPI** recommended:
-- FastAPI for REST endpoints
-- `httpx` or `PyGithub` for GitHub API calls — `PyGithub` provides a typed client and handles token refresh; `httpx` is lower-level but more explicit
-- In-memory dict for index cache and ETag cache — no database required
-- `asyncio` background task for the 60-second HEAD SHA poll
-
-### Abstraction Requirement
-
-All GitHub API interactions must be isolated behind a `RepositoryBackend` interface or equivalent abstraction layer. The rest of titan-tyr must not call the GitHub API directly — it calls the backend interface. This makes the future switch to a local Git clone a single-file change rather than a codebase-wide refactor.
-
-```python
-class RepositoryBackend(Protocol):
-    async def get_file(self, path: str) -> FileResult: ...
-    async def list_directory(self, path: str) -> list[DirEntry]: ...
-    async def get_history(self, path: str, limit: int) -> list[Commit]: ...
-    async def write_file(self, path: str, content: str, message: str) -> WriteResult: ...
-
-class GitHubBackend:
-    """Current implementation — reads from GitHub API."""
-    ...
-
-class LocalGitBackend:
-    """Future implementation — reads from local clone."""
-    ...
+Response `200`:
+```json
+{
+  "contract_id": "ab12cd34-...",
+  "promoted_from_proposal_version": 4,
+  "new_active_version": 6
+}
 ```
 
 ---
 
-## CLAUDE.md Requirement
+## Templates on disk
 
-titan-tyr must include a `CLAUDE.md` and `.mcp.json` wiring it to titan-algalon. Agents working on the API must consult the WatcherVault architecture contracts in titan-norgannon before changing any endpoint that titan-mimiron or titan-algalon depends on.
+```
+templates/
+  software.md         ← served by GET /templates/software
+  contract.md         ← served by GET /templates/contract
+```
+
+These are the canonical formats agents are expected to produce. Their
+exact content is out of scope for this design — they will evolve
+without breaking the API.
 
 ---
 
-## Open Questions
+## Project layout
 
-1. Agree `/api/index` response shape with titan-mimiron developer before implementing
-2. Authentication — does titan-tyr itself require auth from callers, or is it behind a network boundary?
-3. Whether titan-algalon calls titan-tyr's REST API or reads titan-norgannon directly
-4. GitHub token management — PAT or GitHub App? PATs are simpler but expire; GitHub Apps rotate automatically. Choose before starting.
-5. Rate limit headroom — if multiple agents and the UI are calling titan-tyr simultaneously, model the expected request volume against the 5000/hour limit before launch
+```
+src/
+  main.py             FastAPI app, lifecycle, router wiring
+  config.py           Settings via pydantic-settings
+  db.py               Async SQLAlchemy engine + session factory
+  auth.py             API-key bearer dependency
+  models.py           SQLAlchemy ORM models
+  schemas.py          Pydantic request/response models
+  routers/
+    agents.py
+    software.py
+    contracts.py
+    proposals.py
+    templates.py
+templates/
+  software.md
+  contract.md
+alembic/              Migrations
+tests/
+pyproject.toml
+```
+
+---
+
+## Tech stack
+
+- **Python 3.12+**
+- **FastAPI** — routing, validation, OpenAPI
+- **SQLAlchemy 2.x (async)** + **asyncpg** — Postgres access
+- **Alembic** — schema migrations
+- **pydantic-settings** — environment-driven config
+- **uv** — dependency + venv management
+
+---
+
+## Configuration
+
+| Env var          | Purpose                                                                |
+| ---------------- | ---------------------------------------------------------------------- |
+| `DATABASE_URL`   | Postgres DSN, e.g. `postgresql+asyncpg://user:pw@host:5432/titan_tyr`  |
+| `API_KEY_PREFIX` | Display prefix for issued keys (default `tk_live_`)                    |
+
+---
+
+## Open questions
+
+1. **Read auth** — should `GET` endpoints require an API key, or be
+   open within an internal network?
+2. **Multi-software agents** — the schema permits one agent to own
+   many software nodes, but only `POST /agents` seeds one. Add a
+   separate `POST /software` for an existing agent to register
+   additional software?
+3. **Proposal rejection** — accepting a proposal is defined; explicit
+   rejection is not. Do we need a status for "rejected" / "withdrawn",
+   or is leaving stale proposals on the edge acceptable?
+4. **Contract direction** — the model treats `(A→B)` and `(B→A)` as
+   distinct contracts. Confirm this matches how agents think about
+   interfaces, or collapse to undirected.
+5. **Search by content** — full-text search over markdown bodies is
+   not in this cut. Add when a real use case appears.
