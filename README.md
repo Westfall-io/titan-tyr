@@ -67,6 +67,32 @@ DATABASE_URL='postgresql+asyncpg://titan:titan@localhost:5432/titan_tyr' \
 curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/software
 ```
 
+## Run from Docker
+
+```sh
+docker build -t titan-tyr:0.1.0 .
+```
+
+The image runs as a non-root `app` user, exposes port 8000, and bundles
+both `uvicorn` (default `CMD`) and `alembic` (override `CMD` to use it).
+Per [`DESIGN.md`](./DESIGN.md#migrations), migrations run as a separate
+step *before* the API container starts:
+
+```sh
+# 1. Apply migrations (one-shot)
+docker run --rm \
+  -e DATABASE_URL='postgresql+asyncpg://titan:titan@host.docker.internal:5432/titan_tyr' \
+  titan-tyr:0.1.0 alembic upgrade head
+
+# 2. Serve the API
+docker run --rm -p 8000:8000 \
+  -e DATABASE_URL='postgresql+asyncpg://titan:titan@host.docker.internal:5432/titan_tyr' \
+  titan-tyr:0.1.0
+```
+
+(In Compose / Kubernetes, the migrate step is a `depends_on` job or an
+init container; the API container only starts once it exits 0.)
+
 ## Authentication
 
 > **Placeholder.** A single shared bearer token (`sysmlv2`) gates every
