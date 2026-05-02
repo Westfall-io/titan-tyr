@@ -78,14 +78,20 @@ CREATE TABLE contract_versions (
   version_major INT  NOT NULL CHECK (version_major >= 0),
   version_minor INT  NOT NULL CHECK (version_minor >= 0),
   version_patch INT  NOT NULL CHECK (version_patch >= 0),
+  prerelease    TEXT          CHECK (prerelease ~ '^rc\d+$'),  -- NULL = stable; e.g. 'rc1', 'rc2'
   markdown      TEXT NOT NULL,
   status        TEXT NOT NULL CHECK (status IN ('active', 'proposal')),
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  accepted_at   TIMESTAMPTZ,                  -- set only when a proposal is promoted to active
-  UNIQUE (contract_id, version_major, version_minor, version_patch)
+  accepted_at   TIMESTAMPTZ,                  -- set when a proposal is promoted to active
+  promoted_from_prerelease TEXT,              -- on stable-active rows promoted from an RC, the RC suffix
+  UNIQUE NULLS NOT DISTINCT
+    (contract_id, version_major, version_minor, version_patch, prerelease),
+  CHECK (status = 'active' OR prerelease IS NULL OR prerelease ~ '^rc\d+$'),
+  CHECK (status = 'proposal' OR prerelease IS NULL)  -- active rows are always stable
 );
 CREATE INDEX ON contract_versions
-  (contract_id, version_major DESC, version_minor DESC, version_patch DESC);
+  (contract_id, version_major DESC, version_minor DESC, version_patch DESC,
+   prerelease DESC NULLS FIRST);
 CREATE INDEX ON contract_versions (contract_id, status);
 ```
 
@@ -110,11 +116,15 @@ The server cannot infer the *meaning* of a change — only the caller
 knows the intent — so the version is supplied by the caller on every
 write. The server validates only the mechanics:
 
-1. **Format** — must match `^\d+\.\d+\.\d+$` (no pre-release suffixes
-   or build metadata in this cut).
+1. **Format** — must match `^\d+\.\d+\.\d+(-rc\d+)?$`. The `-rcN`
+   suffix is allowed only on contract proposals (see Pre-release
+   versions below); software versions and stable contract versions
+   must be plain `MAJOR.MINOR.PATCH`.
 2. **Strictly greater than the current latest** — including both
-   `active` and `proposal` rows for that parent. The comparison is the
-   standard semver tuple ordering: `(major, minor, patch)` lex compare.
+   `active` and `proposal` rows for that parent. Comparison is semver
+   tuple ordering: `(major, minor, patch)` first, then a stable
+   version is greater than any pre-release at the same triple
+   (`1.3.0 > 1.3.0-rc2 > 1.3.0-rc1`).
 3. **Initial version** — if omitted on `POST /software` or
    `POST /contracts`, defaults to `1.0.0`. May be overridden (e.g. to
    `0.1.0` for a pre-stable release).
@@ -123,15 +133,45 @@ The write happens under `SELECT … FOR UPDATE` on the parent row to
 serialise concurrent writers and ensure the "strictly greater" check
 cannot race.
 
+### Pre-release versions (RCs)
+
+Contract **proposals** may carry a `-rcN` suffix
+(e.g. `1.3.0-rc1`, `1.3.0-rc2`) to stage iterations of a target
+version before promoting it to a stable active release. This is the
+only place the suffix is allowed:
+
+- **Software versions** — never carry a suffix.
+- **Active contract versions** — never carry a suffix
+  (enforced by `CHECK (status = 'proposal' OR prerelease IS NULL)`).
+- **Contract proposals** — may carry `-rcN` or be a plain
+  `MAJOR.MINOR.PATCH`.
+
+When a proposal is accepted, the server creates a new stable active
+row at the plain `MAJOR.MINOR.PATCH` (suffix stripped). The original
+RC row is left in place as `status='proposal'` for posterity — RC
+history is preserved indefinitely. See the accept endpoint below.
+
+**Visibility rule.** RC-suffixed versions appear *only* in responses
+from proposal-specific endpoints (`POST /contracts/{id}/proposals`,
+`GET /contracts/{id}/proposals`, `POST /contracts/{id}/proposals/{version}/accept`).
+All other endpoints — `GET /contracts/{id}`, `GET /contracts?…`,
+`GET /software/{name}/contracts` — return only stable versions and
+never expose a `-rcN` suffix in any response field.
+
 ### "Latest" semantics
 
 - **Software** — row with the highest `(version_major, version_minor,
   version_patch)` per `software_id`.
 - **Contract (active)** — highest version among `contract_versions`
   rows with `status='active'`. There is always at most one, by
-  construction.
+  construction. Active rows never carry a `prerelease`.
 - **Contract proposals** — every `contract_versions` row with
   `status='proposal'` that is newer than the current active version.
+  Includes both stable proposals and RC iterations.
+- **Contract latest-of-anything** (used internally for the
+  strictly-greater check on writes) — `MAX` over all rows for the
+  contract under semver ordering, treating `prerelease IS NULL` as
+  greater than any non-null at the same triple.
 
 ---
 
@@ -319,15 +359,17 @@ Returns the most recent `status='active'` version of that contract.
 Request:
 ```json
 {
-  "version":  "1.3.0",
+  "version":  "1.3.0-rc1",
   "markdown": "..."
 }
 ```
 
-`version` is required and must be strictly greater than the latest
-existing version on this contract (active or proposal). Multiple
-proposals can coexist as long as each picks a higher version than the
-last.
+`version` is required, must match `^\d+\.\d+\.\d+(-rc\d+)?$`, and must
+be strictly greater than the latest existing version on this contract
+(across both active rows and prior proposals, applying semver
+pre-release ordering). Multiple proposals can coexist — including a
+sequence of RCs leading to a stable proposal — as long as each picks a
+higher version than the last.
 
 Errors:
 - `409 Conflict` if `version` is not strictly greater than the latest.
@@ -337,7 +379,7 @@ Response `201`:
 ```json
 {
   "contract_id": "ab12cd34-...",
-  "version":     "1.3.0",
+  "version":     "1.3.0-rc1",
   "status":      "proposal"
 }
 ```
@@ -345,42 +387,68 @@ Response `201`:
 #### `GET /contracts/{contract_id}/proposals` — list open proposals
 
 Returns every proposal-status version newer than the current active
-version.
+version, including any RC iterations.
 
 ```json
 {
   "contract_id":    "ab12cd34-...",
   "active_version": "1.2.0",
   "proposals": [
-    { "version": "1.3.0", "markdown": "...", "created_at": "..." },
-    { "version": "2.0.0", "markdown": "...", "created_at": "..." }
+    { "version": "1.3.0-rc1", "markdown": "...", "created_at": "..." },
+    { "version": "1.3.0-rc2", "markdown": "...", "created_at": "..." },
+    { "version": "2.0.0",     "markdown": "...", "created_at": "..." }
   ]
 }
 ```
 
 #### `POST /contracts/{contract_id}/proposals/{version}/accept` — promote a proposal to active
 
-The path `{version}` is the semver string of the proposal to accept,
-e.g. `1.3.0`.
+The path `{version}` is the full semver string of the proposal to
+accept, e.g. `1.3.0` or `1.3.0-rc2`.
 
-Server-side, in one transaction:
-1. Locate the row at `(contract_id, version)`. Reject if not
-   `status='proposal'`.
-2. `UPDATE` it in place: set `status='active'` and
-   `accepted_at = now()`.
+The acceptance behaviour depends on whether the proposal is stable or
+an RC:
 
-The version the caller proposed *is* the version that becomes active —
-no renumbering on acceptance. Creation time is preserved in
-`created_at`; the acceptance event is recorded in `accepted_at`.
+**Stable proposal (no `-rcN` suffix)** — the row is flipped in place:
+`UPDATE … SET status='active', accepted_at=now()`. The caller's
+proposed version *is* the new active version.
 
-Response `200`:
+**RC proposal (`-rcN` suffix)** — a new stable active row is created
+at `MAJOR.MINOR.PATCH` (suffix stripped). The new row's `markdown` is
+copied from the accepted RC; `status='active'`; `accepted_at=now()`;
+`promoted_from_prerelease` records the RC suffix that was promoted
+(e.g. `'rc2'`). The original RC row is left in place as
+`status='proposal'` for posterity. Any earlier RC rows for the same
+target version (`1.3.0-rc1`, etc.) also remain in place — they will
+no longer appear in the proposals listing because they are now
+older than the active version.
+
+Both paths run in a single transaction.
+
+Response `200` (stable accept):
 ```json
 {
-  "contract_id":        "ab12cd34-...",
-  "active_version":     "1.3.0",
-  "accepted_at":        "2026-04-29T15:00:00Z"
+  "contract_id":            "ab12cd34-...",
+  "promoted_from_version":  "1.3.0",
+  "active_version":         "1.3.0",
+  "accepted_at":            "2026-04-29T15:00:00Z"
 }
 ```
+
+Response `200` (RC accept):
+```json
+{
+  "contract_id":            "ab12cd34-...",
+  "promoted_from_version":  "1.3.0-rc2",
+  "active_version":         "1.3.0",
+  "accepted_at":            "2026-04-29T15:00:00Z"
+}
+```
+
+`promoted_from_version` is the only field in the entire API outside
+the proposal-specific endpoints that may legitimately echo back an
+RC string — and it appears here only because this endpoint *is* a
+proposal endpoint.
 
 ---
 
@@ -557,7 +625,7 @@ changes, and constraint tightening on populated tables.
    model (per-caller identity, authorisation rules, key rotation) is
    deferred to a future capability update and is its own design
    conversation.
-5. **Pre-release versions** — `1.0.0-rc1`, `1.0.0+build.42`, etc. are
-   not supported in this cut (the format regex is strict
-   `MAJOR.MINOR.PATCH`). Add when there's a real use case for staging
-   a contract before it goes live.
+5. **Pre-release grammar** — only `-rcN` is supported on contract
+   proposals. Other semver pre-release labels (`-alpha.1`, `-beta.2`,
+   etc.) and build metadata (`+build.42`) are not. Add if a real use
+   case appears.
