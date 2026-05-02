@@ -1,36 +1,93 @@
-# Interface Contract: <owner> → <counterparty>
+# <interface-name>
 
-**Owner:** <owner-software-name>
-**Counterparty:** <counterparty-software-name>
-**Version:** 1.0.0
+**Protocol:** <REST | Kafka | gRPC | GraphQL | JDBC | Webhook | Custom>
+**Owner software:** <owner-name> port <port-name>
+**Counterparty software:** <counterparty-name> port <port-name>
 
-## Purpose
+> An interface contract carries data between two Software nodes. It is
+> the binding agreement on what is exchanged — protocol, schema, error
+> handling. Environment-agnostic: no hostnames, no listening ports, no
+> addresses.
+>
+> Note: titan-tyr stores `owner_software`, `counterparty_software`, and
+> `version` separately on the API request — those JSON fields are
+> canonical. The header above is for human readers; do not rely on it
+> as machine-readable metadata.
 
-One paragraph describing the interface this contract governs and the
-behaviour both sides commit to.
+## What this interface carries
+
+One to two sentences. What data flows here, and what business or
+technical purpose does the exchange serve?
 
 ## Provider obligations
 
-What the **owner** software promises to do or expose.
+Binding commitments of the **owner** software. Each item is a
+commitment, not a description.
 
 - ...
 
 ## Consumer obligations
 
-What the **counterparty** software promises to do or assume.
+Binding commitments of the **counterparty** software.
 
 - ...
 
-## Data shape
+## Schema
 
-The exact structure of any data exchanged across the interface
-(request/response schemas, message envelopes, table layouts, etc.).
+What this section contains depends on the protocol:
 
-## Failure modes
+| Protocol  | Schema should contain                                                              |
+| --------- | ---------------------------------------------------------------------------------- |
+| REST      | Path, HTTP method, request fields, response fields, status codes                   |
+| Kafka     | Topic, message fields, partition key, delivery guarantee, consumer group           |
+| gRPC      | Service, method, request message fields, response message fields                   |
+| GraphQL   | Operation name, query / mutation fields, response fields                           |
+| JDBC      | Schema, table or view, access type, connection constraints                         |
+| Webhook   | Endpoint path, payload fields, signature verification, retry expectations          |
 
-How the interface behaves on errors, retries, partial failures, and
-backpressure.
+### Request / message
+
+| Field   | Type   | Required | Description     |
+| ------- | ------ | -------- | --------------- |
+| <field> | <type> | <yes/no> | <description>   |
+
+### Response (if applicable)
+
+| Field   | Type   | Required | Description     |
+| ------- | ------ | -------- | --------------- |
+| <field> | <type> | <yes/no> | <description>   |
+
+### Errors (if applicable)
+
+| Code / condition | Meaning   | Consumer action          |
+| ---------------- | --------- | ------------------------ |
+| <code>           | <meaning> | <retry / fail / ignore>  |
+
+## Change protocol
+
+Propose a change by registering a new proposal:
+
+```
+POST /contracts/{contract_id}/proposals
+{ "version": "1.X.0-rcN", "markdown": "..." }
+```
+
+Iterate on `-rcN` versions until both sides agree, then propose the
+stable `1.X.0`. The **owner software** accepts the proposal:
+
+```
+POST /contracts/{contract_id}/proposals/{version}/accept
+```
+
+Acceptance flips the status to `active` and (for RCs) creates a new
+stable active version. All RCs and superseded proposals are preserved
+in titan-tyr for posterity.
+
+Breaking changes (`MAJOR` bump) need an explicit migration window —
+record it in the proposal's markdown so accepting the proposal locks
+in the cutover plan.
 
 ## Notes
 
-Anything that does not fit cleanly above.
+Anything not captured above — known gaps, unresolved questions,
+context worth preserving.
