@@ -157,6 +157,9 @@ auto-available in Claude Code when run from this repo. Invoke with
 
 - `/register-software` — walk through registering a software node
   against a running titan-tyr.
+- `/register-contract` — register a new interface contract between two
+  software nodes already in titan-tyr. Picks the owner and counterparty
+  via `?match=`, fills the contract template, POSTs to `/contracts`.
 - `/update-software` — append a new version to a registered software
   node. Detects template-version drift and helps migrate.
 - `/learn-software` — look up everything titan-tyr knows about a

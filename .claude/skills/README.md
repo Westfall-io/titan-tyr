@@ -6,6 +6,7 @@ when you run it from the titan-tyr repo root. Type `/<skill-name>` to invoke.
 | Skill                                                            | What it does                                                          |
 | ---------------------------------------------------------------- | --------------------------------------------------------------------- |
 | [`register-software`](./register-software/SKILL.md)               | Register a software node with a running titan-tyr instance.           |
+| [`register-contract`](./register-contract/SKILL.md)               | Register a new interface contract between two software nodes already in titan-tyr. Picks owner+counterparty via `?match=`, fills the contract template, POSTs to `/contracts`. |
 | [`update-software`](./update-software/SKILL.md)                   | Append a new version to an already-registered software node. Detects template-version drift and helps migrate. |
 | [`learn-software`](./learn-software/SKILL.md)                     | Look up everything titan-tyr knows about a registered software node — description, ticket-filing target, contracts. Read-only; returns structured JSON. |
 | [`find-software`](./find-software/SKILL.md)                       | Resolve a colloquial label or partial name (e.g. "front end") to a canonical software slug via `?match=`. Read-only; returns structured JSON. |
