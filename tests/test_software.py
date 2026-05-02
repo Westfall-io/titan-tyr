@@ -107,6 +107,115 @@ class TestUpdate:
         assert r.status_code == 422
 
 
+class TestIssueTrackerUri:
+    async def test_register_without_tracker_returns_null(self, client):
+        await _register(client, name="no-tracker")
+        body = (await client.get("/software/no-tracker")).json()
+        assert body["issue_tracker_uri"] is None
+
+    async def test_register_with_tracker(self, client):
+        r = await client.post(
+            "/software",
+            json={
+                "name": "with-tracker",
+                "repo_uri": "https://example.com/repo",
+                "issue_tracker_uri": "https://example.atlassian.net/browse/PROJ",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 201
+        body = (await client.get("/software/with-tracker")).json()
+        assert body["issue_tracker_uri"] == "https://example.atlassian.net/browse/PROJ"
+
+    async def test_register_rejects_http_scheme(self, client):
+        r = await client.post(
+            "/software",
+            json={
+                "name": "http-tracker",
+                "repo_uri": "https://example.com/repo",
+                "issue_tracker_uri": "http://example.com/issues",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 422
+
+    async def test_register_rejects_garbage(self, client):
+        r = await client.post(
+            "/software",
+            json={
+                "name": "junk-tracker",
+                "repo_uri": "https://example.com/repo",
+                "issue_tracker_uri": "not a url",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 422
+
+    async def test_put_sets_tracker(self, client):
+        await _register(client, name="put-set")
+        r = await client.put(
+            "/software/put-set",
+            json={
+                "version": "1.1.0",
+                "markdown": "m",
+                "issue_tracker_uri": "https://linear.app/team/X",
+            },
+        )
+        assert r.status_code == 200
+        body = (await client.get("/software/put-set")).json()
+        assert body["issue_tracker_uri"] == "https://linear.app/team/X"
+
+    async def test_put_without_tracker_leaves_existing(self, client):
+        r0 = await client.post(
+            "/software",
+            json={
+                "name": "put-leave",
+                "repo_uri": "https://example.com/repo",
+                "issue_tracker_uri": "https://example.com/before",
+                "markdown": "m",
+            },
+        )
+        assert r0.status_code == 201
+        r = await client.put(
+            "/software/put-leave",
+            json={"version": "1.1.0", "markdown": "m2"},
+        )
+        assert r.status_code == 200
+        body = (await client.get("/software/put-leave")).json()
+        assert body["issue_tracker_uri"] == "https://example.com/before"
+
+    async def test_put_explicit_null_clears_tracker(self, client):
+        r0 = await client.post(
+            "/software",
+            json={
+                "name": "put-clear",
+                "repo_uri": "https://example.com/repo",
+                "issue_tracker_uri": "https://example.com/before",
+                "markdown": "m",
+            },
+        )
+        assert r0.status_code == 201
+        r = await client.put(
+            "/software/put-clear",
+            json={"version": "1.1.0", "markdown": "m2", "issue_tracker_uri": None},
+        )
+        assert r.status_code == 200
+        body = (await client.get("/software/put-clear")).json()
+        assert body["issue_tracker_uri"] is None
+
+    async def test_put_rejects_http_scheme(self, client):
+        await _register(client, name="put-http")
+        r = await client.put(
+            "/software/put-http",
+            json={
+                "version": "1.1.0",
+                "markdown": "m",
+                "issue_tracker_uri": "http://example.com/issues",
+            },
+        )
+        assert r.status_code == 422
+
+
 class TestSoftwareContracts:
     async def test_lists_contracts_in_both_directions(self, client):
         await _register(client, name="a")

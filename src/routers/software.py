@@ -49,7 +49,11 @@ async def register_software(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Software {payload.name!r} already exists",
         )
-    software = Software(name=payload.name, repo_uri=payload.repo_uri)
+    software = Software(
+        name=payload.name,
+        repo_uri=payload.repo_uri,
+        issue_tracker_uri=payload.issue_tracker_uri,
+    )
     session.add(software)
     await session.flush()
     sv = SoftwareVersion(
@@ -82,6 +86,7 @@ async def get_software(
         id=software.id,
         name=software.name,
         repo_uri=software.repo_uri,
+        issue_tracker_uri=software.issue_tracker_uri,
         version=str(version),
         markdown=latest.markdown,
         updated_at=latest.created_at,
@@ -111,6 +116,11 @@ async def update_software(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Version {new_version} is not strictly greater than the current latest {latest_v}",
             )
+
+    # PATCH semantics: an absent issue_tracker_uri leaves the row unchanged.
+    # An explicit null clears it; an explicit string updates it.
+    if "issue_tracker_uri" in payload.model_fields_set:
+        software.issue_tracker_uri = payload.issue_tracker_uri
 
     sv = SoftwareVersion(
         software_id=software.id,

@@ -30,6 +30,7 @@ class Software(Base):
     )
     name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     repo_uri: Mapped[str] = mapped_column(String, nullable=False)
+    issue_tracker_uri: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

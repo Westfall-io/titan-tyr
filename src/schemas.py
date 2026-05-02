@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -27,16 +28,29 @@ def _validate_any(v: str) -> str:
     return v
 
 
+def _validate_https_url_optional(v: str | None) -> str | None:
+    if v is None:
+        return v
+    parsed = urlparse(v)
+    if parsed.scheme != "https":
+        raise ValueError("must be an https:// URL")
+    if not parsed.netloc:
+        raise ValueError("must include a host")
+    return v
+
+
 # ---------- Software ----------
 
 
 class SoftwareCreate(BaseModel):
     name: str = Field(min_length=1)
     repo_uri: str = Field(min_length=1)
+    issue_tracker_uri: str | None = None
     markdown: str
     version: str = "1.0.0"
 
     _v = field_validator("version")(_validate_stable)
+    _it = field_validator("issue_tracker_uri")(_validate_https_url_optional)
 
 
 class SoftwareCreateResponse(BaseModel):
@@ -48,8 +62,10 @@ class SoftwareCreateResponse(BaseModel):
 class SoftwareUpdate(BaseModel):
     markdown: str
     version: str
+    issue_tracker_uri: str | None = None
 
     _v = field_validator("version")(_validate_stable)
+    _it = field_validator("issue_tracker_uri")(_validate_https_url_optional)
 
 
 class SoftwareUpdateResponse(BaseModel):
@@ -63,6 +79,7 @@ class SoftwareDetail(BaseModel):
     id: uuid.UUID
     name: str
     repo_uri: str
+    issue_tracker_uri: str | None
     version: str
     markdown: str
     updated_at: datetime

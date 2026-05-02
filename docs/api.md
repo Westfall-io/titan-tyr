@@ -109,6 +109,7 @@ curl -H 'Authorization: Bearer sysmlv2' \
      -d '{
        "name": "payments-service",
        "repo_uri": "https://github.com/example/payments-service",
+       "issue_tracker_uri": "https://example.atlassian.net/browse/PAY",
        "markdown": "# payments-service\n...",
        "version": "1.0.0"
      }' \
@@ -118,6 +119,13 @@ curl -H 'Authorization: Bearer sysmlv2' \
 `version` is optional and defaults to `"1.0.0"`. It must be plain
 `MAJOR.MINOR.PATCH` — software does not support `-rcN` suffixes.
 
+`issue_tracker_uri` is **optional**. When set it is the canonical
+"where to file a ticket against this software" URL — useful for teams
+on Jira, Linear, or any tracker that isn't `<repo_uri>/issues`. When
+absent, consumers should fall back to inferring GitHub Issues from
+`repo_uri`. Validation: must be a well-formed `https://` URL with a
+host (no `http://`, no `mailto:`, no bare paths).
+
 `201` response:
 ```json
 { "id": "12c3a4b5-...", "name": "payments-service", "version": "1.0.0" }
@@ -125,7 +133,8 @@ curl -H 'Authorization: Bearer sysmlv2' \
 
 Errors:
 - `409 Conflict` — name already taken.
-- `422 Unprocessable Entity` — malformed `version` (or `-rcN` suffix).
+- `422 Unprocessable Entity` — malformed `version` (or `-rcN` suffix),
+  or `issue_tracker_uri` not a valid `https://` URL.
 
 ### `GET /software/{name}` — latest description
 
@@ -140,11 +149,15 @@ curl -H 'Authorization: Bearer sysmlv2' \
   "id": "12c3a4b5-...",
   "name": "payments-service",
   "repo_uri": "https://github.com/example/payments-service",
+  "issue_tracker_uri": "https://example.atlassian.net/browse/PAY",
   "version": "2.1.0",
   "markdown": "# payments-service\n...",
   "updated_at": "2026-04-29T14:30:00Z"
 }
 ```
+
+`issue_tracker_uri` is `null` when the software was registered without
+one (consumers fall back to GitHub Issues inference from `repo_uri`).
 
 `404` if the named software does not exist.
 
@@ -154,12 +167,24 @@ curl -H 'Authorization: Bearer sysmlv2' \
 curl -H 'Authorization: Bearer sysmlv2' \
      -H 'Content-Type: application/json' \
      -X PUT \
-     -d '{ "version": "2.1.0", "markdown": "..." }' \
+     -d '{
+       "version": "2.1.0",
+       "markdown": "...",
+       "issue_tracker_uri": "https://linear.app/example/team/PAY"
+     }' \
      http://localhost:8000/software/payments-service
 ```
 
 `version` is required, must be plain `MAJOR.MINOR.PATCH`, and must be
 strictly greater than the latest existing version for this software.
+
+`issue_tracker_uri` is optional with **PATCH semantics**:
+
+| Sent in body                           | Effect                                                |
+| -------------------------------------- | ----------------------------------------------------- |
+| Field omitted                          | Existing tracker URI is left unchanged.               |
+| `"issue_tracker_uri": "https://..."`   | Replaces the stored value (must be a valid `https://` URL). |
+| `"issue_tracker_uri": null`            | Clears the stored value back to `null`.               |
 
 `200` response:
 ```json
@@ -169,7 +194,8 @@ strictly greater than the latest existing version for this software.
 Errors:
 - `404 Not Found` — software not registered.
 - `409 Conflict` — `version` is not strictly greater than the latest.
-- `422 Unprocessable Entity` — malformed `version`.
+- `422 Unprocessable Entity` — malformed `version`, or
+  `issue_tracker_uri` not a valid `https://` URL.
 
 ### `GET /software/{name}/contracts` — every contract touching this software
 
