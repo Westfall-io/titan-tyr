@@ -1,0 +1,328 @@
+# API reference
+
+This document is the practical, example-driven reference for every
+endpoint titan-tyr exposes. For the underlying design (data model,
+schema, versioning rules), see [`DESIGN.md`](../DESIGN.md).
+
+The OpenAPI schema is also served live at `/openapi.json` and rendered
+at `/docs` and `/redoc` when the API is running.
+
+---
+
+## Conventions
+
+- All paths are JSON request / JSON response **except** the two
+  `/templates/*` endpoints, which return `text/markdown`.
+- Every endpoint requires `Authorization: Bearer sysmlv2`. Missing or
+  wrong tokens get `401`.
+- Versions are semver strings. Software and stable contract versions
+  are `MAJOR.MINOR.PATCH`. Contract proposals may additionally carry an
+  `-rcN` suffix.
+- Errors are returned as `{"detail": "..."}` per FastAPI convention.
+
+---
+
+## Templates
+
+### `GET /templates/software`
+
+Returns the markdown template a caller fills in when registering
+software.
+
+```sh
+curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/software
+```
+
+Response: `text/markdown` body.
+
+### `GET /templates/contract`
+
+Same, for interface contracts.
+
+---
+
+## Software
+
+### `POST /software` — register a new software node
+
+```sh
+curl -H 'Authorization: Bearer sysmlv2' \
+     -H 'Content-Type: application/json' \
+     -d '{
+       "name": "payments-service",
+       "repo_uri": "https://github.com/example/payments-service",
+       "markdown": "# payments-service\n...",
+       "version": "1.0.0"
+     }' \
+     http://localhost:8000/software
+```
+
+`version` is optional and defaults to `"1.0.0"`. It must be plain
+`MAJOR.MINOR.PATCH` — software does not support `-rcN` suffixes.
+
+`201` response:
+```json
+{ "id": "12c3a4b5-...", "name": "payments-service", "version": "1.0.0" }
+```
+
+Errors:
+- `409 Conflict` — name already taken.
+- `422 Unprocessable Entity` — malformed `version` (or `-rcN` suffix).
+
+### `GET /software/{name}` — latest description
+
+```sh
+curl -H 'Authorization: Bearer sysmlv2' \
+     http://localhost:8000/software/payments-service
+```
+
+`200` response:
+```json
+{
+  "id": "12c3a4b5-...",
+  "name": "payments-service",
+  "repo_uri": "https://github.com/example/payments-service",
+  "version": "2.1.0",
+  "markdown": "# payments-service\n...",
+  "updated_at": "2026-04-29T14:30:00Z"
+}
+```
+
+`404` if the named software does not exist.
+
+### `PUT /software/{name}` — append a new version
+
+```sh
+curl -H 'Authorization: Bearer sysmlv2' \
+     -H 'Content-Type: application/json' \
+     -X PUT \
+     -d '{ "version": "2.1.0", "markdown": "..." }' \
+     http://localhost:8000/software/payments-service
+```
+
+`version` is required, must be plain `MAJOR.MINOR.PATCH`, and must be
+strictly greater than the latest existing version for this software.
+
+`200` response:
+```json
+{ "name": "payments-service", "version": "2.1.0" }
+```
+
+Errors:
+- `404 Not Found` — software not registered.
+- `409 Conflict` — `version` is not strictly greater than the latest.
+- `422 Unprocessable Entity` — malformed `version`.
+
+### `GET /software/{name}/contracts` — every contract touching this software
+
+Returns each contract where this software appears as either owner or
+counterparty, with that contract's latest active version.
+
+```sh
+curl -H 'Authorization: Bearer sysmlv2' \
+     http://localhost:8000/software/payments-service/contracts
+```
+
+`200` response:
+```json
+{
+  "software": "payments-service",
+  "contracts": [
+    {
+      "id": "ab12cd34-...",
+      "owner": "payments-service",
+      "counterparty": "orders-service",
+      "version": "1.2.0",
+      "markdown": "...",
+      "updated_at": "2026-04-15T09:14:00Z"
+    }
+  ]
+}
+```
+
+---
+
+## Contracts
+
+### `POST /contracts` — register a new interface contract
+
+```sh
+curl -H 'Authorization: Bearer sysmlv2' \
+     -H 'Content-Type: application/json' \
+     -d '{
+       "owner_software": "payments-service",
+       "counterparty_software": "orders-service",
+       "markdown": "...",
+       "version": "1.0.0"
+     }' \
+     http://localhost:8000/contracts
+```
+
+`version` is optional and defaults to `"1.0.0"`. Must be plain
+`MAJOR.MINOR.PATCH`.
+
+`201` response:
+```json
+{
+  "contract_id": "ab12cd34-...",
+  "owner": "payments-service",
+  "counterparty": "orders-service",
+  "version": "1.0.0",
+  "status": "active"
+}
+```
+
+Errors:
+- `404 Not Found` — either software is unknown.
+- `409 Conflict` — a contract from `owner_software` to
+  `counterparty_software` already exists. To change it, use
+  `POST /contracts/{contract_id}/proposals`.
+- `422 Unprocessable Entity` — `owner_software == counterparty_software`,
+  or malformed `version`.
+
+### `GET /contracts?owner={a}&counterparty={b}` — search by software pair
+
+Returns the active contract(s) between the two software nodes, in
+either direction. Zero, one, or two results.
+
+```sh
+curl -H 'Authorization: Bearer sysmlv2' \
+     'http://localhost:8000/contracts?owner=payments-service&counterparty=orders-service'
+```
+
+`200` response (e.g. when only `payments → orders` exists):
+```json
+{
+  "results": [
+    {
+      "contract_id": "ab12cd34-...",
+      "owner": "payments-service",
+      "counterparty": "orders-service",
+      "version": "1.2.0",
+      "markdown": "...",
+      "updated_at": "2026-04-15T09:14:00Z"
+    }
+  ]
+}
+```
+
+`404` if either software does not exist.
+
+### `GET /contracts/{contract_id}` — latest active contract by id
+
+```sh
+curl -H 'Authorization: Bearer sysmlv2' \
+     http://localhost:8000/contracts/ab12cd34-1234-1234-1234-1234567890ab
+```
+
+Returns the latest `status='active'` version.
+
+`404` if the contract does not exist or has no active version yet.
+
+---
+
+## Proposals
+
+Proposals are the only place the API exposes RC-suffixed versions —
+all other endpoints return only stable `MAJOR.MINOR.PATCH`.
+
+### `POST /contracts/{contract_id}/proposals` — propose a new contract body
+
+```sh
+curl -H 'Authorization: Bearer sysmlv2' \
+     -H 'Content-Type: application/json' \
+     -d '{ "version": "1.3.0-rc1", "markdown": "..." }' \
+     http://localhost:8000/contracts/ab12cd34-.../proposals
+```
+
+`version` is required, must match `MAJOR.MINOR.PATCH` or
+`MAJOR.MINOR.PATCH-rcN`, and must be strictly greater than any
+existing version on this contract — including any prior proposals,
+under semver ordering (a stable version beats any RC at the same triple,
+RC numbers compare numerically).
+
+`201` response:
+```json
+{ "contract_id": "ab12cd34-...", "version": "1.3.0-rc1", "status": "proposal" }
+```
+
+Errors:
+- `404 Not Found` — contract does not exist.
+- `409 Conflict` — `version` is not strictly greater than the latest.
+- `422 Unprocessable Entity` — malformed `version`.
+
+### `GET /contracts/{contract_id}/proposals` — list open proposals
+
+Returns every proposal-status version newer than the current active
+version. Older proposals (now superseded by an accepted version) are
+preserved in the database but excluded from this listing.
+
+```sh
+curl -H 'Authorization: Bearer sysmlv2' \
+     http://localhost:8000/contracts/ab12cd34-.../proposals
+```
+
+`200` response:
+```json
+{
+  "contract_id": "ab12cd34-...",
+  "active_version": "1.2.0",
+  "proposals": [
+    { "version": "1.3.0-rc1", "markdown": "...", "created_at": "..." },
+    { "version": "1.3.0-rc2", "markdown": "...", "created_at": "..." },
+    { "version": "2.0.0",     "markdown": "...", "created_at": "..." }
+  ]
+}
+```
+
+### `POST /contracts/{contract_id}/proposals/{version}/accept` — promote a proposal
+
+The path `{version}` is the full semver string of the proposal,
+e.g. `1.3.0` or `1.3.0-rc2`.
+
+Two acceptance paths:
+
+**Stable proposal** — the proposal row is flipped in place
+(`status='proposal'` → `status='active'`, `accepted_at = now()`). The
+proposed version *is* the new active version.
+
+**RC proposal** — a new stable active row is created at
+`MAJOR.MINOR.PATCH` (suffix stripped) with `markdown` copied from the
+RC. The original RC row stays as `status='proposal'` for posterity.
+Any earlier RCs of the same target version also remain in place.
+
+```sh
+curl -X POST -H 'Authorization: Bearer sysmlv2' \
+     http://localhost:8000/contracts/ab12cd34-.../proposals/1.3.0-rc2/accept
+```
+
+`200` response:
+```json
+{
+  "contract_id": "ab12cd34-...",
+  "promoted_from_version": "1.3.0-rc2",
+  "active_version": "1.3.0",
+  "accepted_at": "2026-04-29T15:00:00Z"
+}
+```
+
+Errors:
+- `404 Not Found` — contract or proposal does not exist.
+- `409 Conflict` — the version is not in `proposal` status (e.g.
+  already accepted), or you are accepting an RC whose stable target
+  already exists.
+- `422 Unprocessable Entity` — malformed version in the path.
+
+---
+
+## Status codes used
+
+| Code | When                                                   |
+| ---- | ------------------------------------------------------ |
+| 200  | Successful read or in-place mutation.                  |
+| 201  | Successful create.                                     |
+| 401  | Missing or wrong bearer token.                         |
+| 404  | Named resource does not exist.                         |
+| 405  | Method not allowed on this path.                       |
+| 409  | Caller-supplied state conflicts with what is stored.   |
+| 422  | Request body / path failed validation.                 |
