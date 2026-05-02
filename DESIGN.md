@@ -36,7 +36,8 @@ model will land in a future capability update.
 | ------------- | -------------------------------------------------- | --------------------------------------------------- |
 | Software node | row in `software` + N `software_versions`          | Identified by unique name.                          |
 | Contract edge | row in `contracts` + N `contract_versions`         | Directed: `owner_software → counterparty_software`. |
-| Proposal      | a `contract_versions` row with `status='proposal'` | Lives on the edge until accepted or superseded.     |
+| Template      | row in `templates` + N `template_versions`         | Two singletons keyed by `kind ∈ {software, contract}`. Served by `GET /templates/{kind}`. |
+| Proposal      | a `contract_versions` or `template_versions` row with `status='proposal'` | Lives on its parent until accepted or superseded.   |
 
 ### Schema
 
@@ -93,7 +94,41 @@ CREATE INDEX ON contract_versions
   (contract_id, version_major DESC, version_minor DESC, version_patch DESC,
    prerelease DESC NULLS FIRST);
 CREATE INDEX ON contract_versions (contract_id, status);
+
+CREATE TABLE templates (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  kind        TEXT NOT NULL UNIQUE CHECK (kind IN ('software', 'contract')),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE template_versions (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  template_id   UUID NOT NULL REFERENCES templates(id) ON DELETE CASCADE,
+  version_major INT  NOT NULL CHECK (version_major >= 0),
+  version_minor INT  NOT NULL CHECK (version_minor >= 0),
+  version_patch INT  NOT NULL CHECK (version_patch >= 0),
+  prerelease    TEXT          CHECK (prerelease ~ '^rc\d+$'),
+  markdown      TEXT NOT NULL,
+  status        TEXT NOT NULL CHECK (status IN ('active', 'proposal')),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  accepted_at   TIMESTAMPTZ,
+  promoted_from_prerelease TEXT,
+  CHECK (status = 'proposal' OR prerelease IS NULL)
+);
+CREATE UNIQUE INDEX
+  ON template_versions (template_id, version_major, version_minor, version_patch, prerelease)
+  NULLS NOT DISTINCT;
+CREATE INDEX ON template_versions
+  (template_id, version_major DESC, version_minor DESC, version_patch DESC,
+   prerelease DESC NULLS FIRST);
+CREATE INDEX ON template_versions (template_id, status);
 ```
+
+The two `templates` rows (`kind='software'` and `kind='contract'`) are
+seeded by the initial-templates migration. The `template_versions`
+schema is structurally identical to `contract_versions` — same
+proposal/RC machinery, same accept-time invariants — because templates
+are mutated through the same propose-then-accept flow.
 
 `status` is a `TEXT` column with a `CHECK` constraint, not a Postgres
 `ENUM`. The set of allowed values will evolve (rejected, withdrawn,
@@ -196,12 +231,71 @@ otherwise noted. Every endpoint requires the bearer password above.
 
 ### Templates
 
-Static markdown files served from `templates/` on disk.
+Templates are stored in Postgres as versioned markdown, exactly like
+contracts — same propose/accept/RC machinery. There are exactly two
+templates, identified by `kind ∈ {software, contract}`. The initial
+v1.0.0 of each is seeded by the templates migration.
 
-| Method | Path                  | Returns                                              |
-| ------ | --------------------- | ---------------------------------------------------- |
-| GET    | `/templates/software` | `text/markdown` — template for software descriptions |
-| GET    | `/templates/contract` | `text/markdown` — template for interface contracts   |
+#### `GET /templates/{kind}` — latest active template
+
+Returns the latest stable active version as `text/markdown`. RC
+suffixes are never returned here — same visibility rule that contracts
+follow.
+
+`404` if `kind` is not one of `software`, `contract`.
+
+#### `POST /templates/{kind}/proposals` — propose a change
+
+Request:
+```json
+{ "version": "1.1.0-rc1", "markdown": "..." }
+```
+
+Same rules as contract proposals: `version` may carry a `-rcN` suffix,
+must match `^\d+\.\d+\.\d+(-rc\d+)?$`, must be strictly greater than
+the latest existing version on this template (semver tuple ordering;
+stable beats RC at the same triple).
+
+Response `201`:
+```json
+{ "kind": "software", "version": "1.1.0-rc1", "status": "proposal" }
+```
+
+#### `GET /templates/{kind}/proposals` — list open proposals
+
+Returns every proposal-status version newer than the current active
+version, including RCs.
+
+```json
+{
+  "kind": "software",
+  "active_version": "1.0.0",
+  "proposals": [
+    { "version": "1.1.0-rc1", "markdown": "...", "created_at": "..." },
+    { "version": "1.1.0",     "markdown": "...", "created_at": "..." }
+  ]
+}
+```
+
+#### `POST /templates/{kind}/proposals/{version}/accept` — promote to active
+
+Same two acceptance paths as contracts:
+
+- **Stable proposal** — flipped in place; the proposed version *is*
+  the new active version.
+- **RC proposal** — a new stable active row is created at
+  `MAJOR.MINOR.PATCH` (suffix stripped); the original RC row stays as
+  `status='proposal'` for posterity.
+
+Response `200`:
+```json
+{
+  "kind": "software",
+  "promoted_from_version": "1.1.0-rc2",
+  "active_version": "1.1.0",
+  "accepted_at": "2026-04-29T15:00:00Z"
+}
+```
 
 ### Software
 
@@ -452,20 +546,6 @@ proposal endpoint.
 
 ---
 
-## Templates on disk
-
-```
-templates/
-  software.md         ← served by GET /templates/software
-  contract.md         ← served by GET /templates/contract
-```
-
-These are the canonical formats callers are expected to produce. Their
-exact content is out of scope for this design — they will evolve
-without breaking the API.
-
----
-
 ## Project layout
 
 ```
@@ -474,23 +554,28 @@ src/
   config.py           Settings via pydantic-settings
   db.py               Async SQLAlchemy engine + session factory + MetaData naming convention
   auth.py             Bearer-password dependency (placeholder)
-  models.py           SQLAlchemy ORM models
+  models.py           SQLAlchemy ORM models (software, contracts, templates, *_versions)
   schemas.py          Pydantic request/response models
+  versioning.py       Semver parse / compare / format
   routers/
     software.py
     contracts.py
     proposals.py
-    templates.py
-templates/
-  software.md
-  contract.md
+    templates.py      Templates + template proposals
 alembic/
   env.py              Wired to src.models.Base.metadata for autogenerate
-  versions/           Migration scripts
+  versions/
+    0001_initial.py   software + contracts + *_versions
+    0002_templates.py templates + template_versions, seeded with v1.0.0
 alembic.ini
 tests/
 pyproject.toml
 ```
+
+Template content is **not** maintained as files on disk — the v1.0.0
+markdown is embedded in `0002_templates.py` and seeded once. After
+that, every change goes through the proposal + accept flow described
+under Endpoints → Templates.
 
 ---
 

@@ -30,7 +30,6 @@ WORKDIR /app
 COPY --chown=app:app src ./src
 COPY --chown=app:app alembic ./alembic
 COPY --chown=app:app alembic.ini ./
-COPY --chown=app:app templates ./templates
 
 USER app
 EXPOSE 8000

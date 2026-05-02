@@ -70,7 +70,7 @@ def upgrade() -> None:
             "version_major",
             "version_minor",
             "version_patch",
-            name="uq_software_versions_software_id_version_major_version_minor_version_patch",
+            name="uq_software_versions_version",
         ),
         sa.CheckConstraint("version_major >= 0", name="ck_software_versions_version_major_nonneg"),
         sa.CheckConstraint("version_minor >= 0", name="ck_software_versions_version_minor_nonneg"),

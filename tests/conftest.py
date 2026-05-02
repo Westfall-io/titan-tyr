@@ -14,6 +14,10 @@ from src import db as db_module
 from src.auth import PASSWORD
 from src.db import Base
 from src.main import create_app
+from src.models import Template, TemplateVersion
+
+SEED_SOFTWARE_TEMPLATE = "# software template seed\n\n## Purpose\nseed body\n"
+SEED_CONTRACT_TEMPLATE = "# contract template seed\n\n## Provider obligations\nseed body\n"
 
 
 def _container_dsn() -> str:
@@ -58,6 +62,28 @@ async def db_session(engine) -> AsyncIterator[AsyncSession]:
         await conn.run_sync(Base.metadata.create_all)
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with sessionmaker() as session:
+        # Seed the two templates with placeholder v1.0.0 active rows so that
+        # GET /templates/{kind} works out of the box, mirroring what migration
+        # 0002 does in production.
+        for kind, markdown in (
+            ("software", SEED_SOFTWARE_TEMPLATE),
+            ("contract", SEED_CONTRACT_TEMPLATE),
+        ):
+            tpl = Template(kind=kind)
+            session.add(tpl)
+            await session.flush()
+            session.add(
+                TemplateVersion(
+                    template_id=tpl.id,
+                    version_major=1,
+                    version_minor=0,
+                    version_patch=0,
+                    prerelease=None,
+                    markdown=markdown,
+                    status="active",
+                )
+            )
+        await session.commit()
         yield session
 
 

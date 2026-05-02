@@ -36,7 +36,11 @@ proposal ──▶│ POST /…/proposals     POST /…/{ver}/accept       │
   validated for format and strict-greater-than-latest. The server
   refuses to interpret what a bump *means* — only the caller knows.
 - **RC pre-release support** (`1.3.0-rc1`, `1.3.0-rc2`, …) on contract
-  proposals, with full history preserved on acceptance.
+  and template proposals, with full history preserved on acceptance.
+- **Templates are versioned and proposable too.** The `software` and
+  `contract` markdown templates served by the API live in Postgres
+  alongside everything else, mutated through the same propose/accept
+  flow.
 - **First-class migrations.** Alembic with autogenerate, a `MetaData`
   naming convention so diffs stay reproducible, and a CI policy of
   running `alembic check` against the model.
@@ -124,8 +128,7 @@ module directly. To use an existing Postgres instead, set
 
 ```
 src/                FastAPI app, ORM models, schemas, routers, semver
-templates/          Static markdown served by /templates/*
-alembic/            Migrations (initial schema in versions/0001_initial.py)
+alembic/            Migrations (0001 = schema, 0002 = templates + seed)
 tests/              Pytest + testcontainers
 docs/               getting-started, api reference (also see DESIGN.md)
 ```

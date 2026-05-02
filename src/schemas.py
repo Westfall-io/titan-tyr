@@ -157,3 +157,38 @@ class ProposalAcceptResponse(BaseModel):
     promoted_from_version: str
     active_version: str
     accepted_at: datetime
+
+
+# ---------- Template proposals ----------
+
+
+class TemplateProposalCreate(BaseModel):
+    markdown: str
+    version: str
+
+    _v = field_validator("version")(_validate_any)
+
+
+class TemplateProposalCreateResponse(BaseModel):
+    kind: str
+    version: str
+    status: str
+
+
+class TemplateProposalEntry(BaseModel):
+    version: str
+    markdown: str
+    created_at: datetime
+
+
+class TemplateProposalListResponse(BaseModel):
+    kind: str
+    active_version: str | None
+    proposals: list[TemplateProposalEntry]
+
+
+class TemplateProposalAcceptResponse(BaseModel):
+    kind: str
+    promoted_from_version: str
+    active_version: str
+    accepted_at: datetime

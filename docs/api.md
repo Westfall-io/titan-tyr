@@ -24,20 +24,78 @@ at `/docs` and `/redoc` when the API is running.
 
 ## Templates
 
-### `GET /templates/software`
+The two templates (`software`, `contract`) live in Postgres as
+versioned markdown. They are mutated through the same propose/accept
+flow as contracts — see Proposals below for the full RC behaviour, the
+shape carries over here unchanged.
 
-Returns the markdown template a caller fills in when registering
-software.
+### `GET /templates/{kind}` — latest active template
 
 ```sh
 curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/software
 ```
 
-Response: `text/markdown` body.
+`kind` ∈ `{software, contract}`. Response is `text/markdown` of the
+latest stable active version. RC-suffixed versions are never returned
+here.
 
-### `GET /templates/contract`
+`404` if `kind` is unknown.
 
-Same, for interface contracts.
+### `POST /templates/{kind}/proposals` — propose a change
+
+```sh
+curl -H 'Authorization: Bearer sysmlv2' \
+     -H 'Content-Type: application/json' \
+     -d '{ "version": "1.1.0-rc1", "markdown": "..." }' \
+     http://localhost:8000/templates/software/proposals
+```
+
+Same rules as contract proposals: required `version` matching
+`^\d+\.\d+\.\d+(-rc\d+)?$`, strictly greater than the latest existing
+version on this template.
+
+`201` response:
+```json
+{ "kind": "software", "version": "1.1.0-rc1", "status": "proposal" }
+```
+
+### `GET /templates/{kind}/proposals` — list open proposals
+
+```sh
+curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/software/proposals
+```
+
+```json
+{
+  "kind": "software",
+  "active_version": "1.0.0",
+  "proposals": [
+    { "version": "1.1.0-rc1", "markdown": "...", "created_at": "..." },
+    { "version": "1.1.0",     "markdown": "...", "created_at": "..." }
+  ]
+}
+```
+
+### `POST /templates/{kind}/proposals/{version}/accept` — promote
+
+```sh
+curl -X POST -H 'Authorization: Bearer sysmlv2' \
+     http://localhost:8000/templates/software/proposals/1.1.0-rc2/accept
+```
+
+Stable proposal → flipped in place. RC proposal → new stable active
+row created at the stripped version; the RC row stays as proposal for
+posterity.
+
+`200` response:
+```json
+{
+  "kind": "software",
+  "promoted_from_version": "1.1.0-rc2",
+  "active_version": "1.1.0",
+  "accepted_at": "2026-04-29T15:00:00Z"
+}
+```
 
 ---
 
