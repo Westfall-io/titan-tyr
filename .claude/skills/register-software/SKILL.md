@@ -46,15 +46,16 @@ curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" "$TITAN_TYR_URL/templates/
 
 ### 2. Gather the inputs
 
-The `POST /software` body needs four fields. Confirm each with the user before
-the request — don't invent values:
+The `POST /software` body has these fields. Confirm each with the user
+before the request — don't invent values:
 
-| Field      | Source                                                                                    |
-| ---------- | ----------------------------------------------------------------------------------------- |
-| `name`     | Unique identifier for this software in titan-tyr. Ask the user; suggest the repo name.    |
-| `repo_uri` | Git URL. Read from `git config --get remote.origin.url` if available; confirm with user.  |
-| `markdown` | The filled-in software template body (see step 3).                                        |
-| `version`  | Optional; defaults to `"1.0.0"`. Ask only if the user has a reason to start at something else. |
+| Field               | Source                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------ |
+| `name`              | Unique identifier for this software in titan-tyr. Ask the user; suggest the repo name.     |
+| `repo_uri`          | Git URL. Read from `git config --get remote.origin.url` if available; confirm with user.   |
+| `issue_tracker_uri` | Optional. Where to file tickets if not the repo's default Issues tracker. Ask only if the user uses Jira/Linear/etc.; otherwise omit and consumers fall back to `<repo_uri>/issues`. Must be a valid `https://` URL — the API rejects `http://` and malformed values with 422. |
+| `markdown`          | The filled-in software template body (see step 3).                                         |
+| `version`           | Optional; defaults to `"1.0.0"`. Ask only if the user has a reason to start at something else. |
 
 ### 3. Fetch the template
 

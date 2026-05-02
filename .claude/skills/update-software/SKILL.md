@@ -128,7 +128,22 @@ the user needs guidance on what a section *means*, that guidance lives
 in the template body's instructional blockquotes — read them, follow
 them, strip them on POST.
 
-### 5. Choose a new software version
+### 5. Optional: update issue_tracker_uri
+
+`PUT /software/{name}` accepts an optional `issue_tracker_uri` field
+with **PATCH semantics**:
+
+| Sent in body                           | Effect                                           |
+| -------------------------------------- | ------------------------------------------------ |
+| Field omitted                          | Existing tracker is left unchanged.              |
+| `"issue_tracker_uri": "https://..."`   | Replaces the stored value (must be valid https). |
+| `"issue_tracker_uri": null`            | Clears the stored value back to `null`.          |
+
+Ask the user only if they have a reason to change it (moved trackers,
+adopted Jira, etc.). Otherwise omit the field. Validation is identical
+to `/register-software`: strict `https://` URL with a host.
+
+### 6. Choose a new software version
 
 The new version must be **strictly greater** than the current one and
 plain `MAJOR.MINOR.PATCH` (no `-rcN` — software does not support
@@ -148,16 +163,17 @@ Pure template migration with no real content change is usually a
 PATCH bump — the software didn't change, the documentation just got
 re-shaped.
 
-### 6. Preview before submitting
+### 7. Preview before submitting
 
 Show the user **the full new body** plus the version about to be
 submitted. Ask "ready to update?" Do not PUT until the user confirms.
 Iterate if they want changes.
 
-### 7. Submit
+### 8. Submit
 
 Same scratch-file convention as the other skills — JSON via tool, not
-shell heredocs:
+shell heredocs. Include `issue_tracker_uri` in the dict only if the
+user wants to change it (per step 5):
 
 ```sh
 mkdir -p .scratch
@@ -166,6 +182,7 @@ import json, pathlib
 print(json.dumps({
     'version': 'X.Y.Z',
     'markdown': pathlib.Path('.scratch/update-body.md').read_text(),
+    # 'issue_tracker_uri': 'https://...',  # uncomment to set, or null to clear
 }))
 " > .scratch/update-body.json
 
@@ -176,7 +193,7 @@ curl -fsS -X PUT \
      "$TITAN_TYR_URL/software/{name}"
 ```
 
-### 8. Report
+### 9. Report
 
 On `200`, summarise:
 
