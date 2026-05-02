@@ -54,6 +54,7 @@ before the request — don't invent values:
 | `name`              | Unique identifier for this software in titan-tyr. Ask the user; suggest the repo name.     |
 | `repo_uri`          | Git URL. Read from `git config --get remote.origin.url` if available; confirm with user.   |
 | `issue_tracker_uri` | Optional. Where to file tickets if not the repo's default Issues tracker. Ask only if the user uses Jira/Linear/etc.; otherwise omit and consumers fall back to `<repo_uri>/issues`. Must be a valid `https://` URL — the API rejects `http://` and malformed values with 422. |
+| `aliases`           | Optional list of colloquial labels other agents may use to refer to this software (`payments`, `billing`, `front end`, `前端`). Used by `GET /software?match=<query>` for fuzzy lookup. Ask the user if there are common nicknames the canonical slug would miss; otherwise omit (defaults to `[]`). Per-entry rules: 1–128 chars, no control chars or newlines, Unicode allowed; case is preserved on storage; case-insensitive dedupe within a single payload. Cross-software collisions are allowed by design. |
 | `markdown`          | The filled-in software template body (see step 3).                                         |
 | `version`           | Optional; defaults to `"1.0.0"`. Ask only if the user has a reason to start at something else. |
 
@@ -133,6 +134,7 @@ import json, pathlib
 print(json.dumps({
     'name': 'payments-service',
     'repo_uri': 'https://github.com/example/payments-service',
+    # 'aliases': ['payments', 'billing'],   # uncomment if the user gave any
     'markdown': pathlib.Path('.scratch/body.md').read_text(),
     'version': '1.0.0',
 }))

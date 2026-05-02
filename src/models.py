@@ -14,7 +14,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.db import Base
@@ -31,6 +31,11 @@ class Software(Base):
     name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     repo_uri: Mapped[str] = mapped_column(String, nullable=False)
     issue_tracker_uri: Mapped[str | None] = mapped_column(String, nullable=True)
+    aliases: Mapped[list[str]] = mapped_column(
+        ARRAY(String),
+        nullable=False,
+        server_default=text("'{}'::text[]"),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

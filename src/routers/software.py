@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import or_, select, tuple_
+from sqlalchemy import func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth import require_password
@@ -48,6 +48,7 @@ async def _latest_software_version(session: AsyncSession, software_id) -> Softwa
 async def list_software(
     after: str | None = Query(default=None),
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    match: str | None = Query(default=None, max_length=128),
     session: AsyncSession = Depends(get_session),
 ) -> SoftwareListResponse:
     limit = validate_limit(limit)
@@ -75,11 +76,28 @@ async def list_software(
         Software.name,
         Software.repo_uri,
         Software.issue_tracker_uri,
+        Software.aliases,
         latest_versions.c.sv_major,
         latest_versions.c.sv_minor,
         latest_versions.c.sv_patch,
         latest_versions.c.sv_created_at,
     ).join(latest_versions, Software.id == latest_versions.c.sv_software_id)
+
+    if match is not None:
+        # Case-insensitive substring match against name OR any alias. The U+001F
+        # separator can't appear inside an alias (control chars are banned at
+        # validation), so flattening the array for ILIKE is unambiguous.
+        # Escape ILIKE wildcards in user input so "100%" searches literally.
+        escaped = match.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
+        stmt = stmt.where(
+            or_(
+                Software.name.ilike(pattern, escape="\\"),
+                func.array_to_string(Software.aliases, "\x1f").ilike(
+                    pattern, escape="\\"
+                ),
+            )
+        )
 
     if after is not None:
         cursor_t, cursor_id = decode_cursor(after)
@@ -99,13 +117,14 @@ async def list_software(
     items: list[SoftwareListItem] = []
     last_t = None
     last_id = None
-    for sw_id, sw_name, sw_repo, sw_tracker, vmaj, vmin, vpat, vts in rows:
+    for sw_id, sw_name, sw_repo, sw_tracker, sw_aliases, vmaj, vmin, vpat, vts in rows:
         items.append(
             SoftwareListItem(
                 id=sw_id,
                 name=sw_name,
                 repo_uri=sw_repo,
                 issue_tracker_uri=sw_tracker,
+                aliases=list(sw_aliases or []),
                 version=str(Version(vmaj, vmin, vpat)),
                 updated_at=vts,
             )
@@ -134,6 +153,7 @@ async def register_software(
         name=payload.name,
         repo_uri=payload.repo_uri,
         issue_tracker_uri=payload.issue_tracker_uri,
+        aliases=payload.aliases,
     )
     session.add(software)
     await session.flush()
@@ -168,6 +188,7 @@ async def get_software(
         name=software.name,
         repo_uri=software.repo_uri,
         issue_tracker_uri=software.issue_tracker_uri,
+        aliases=list(software.aliases or []),
         version=str(version),
         markdown=latest.markdown,
         updated_at=latest.created_at,
@@ -200,11 +221,14 @@ async def update_software(
 
     # PATCH semantics on row-level metadata fields. Absent = unchanged.
     # repo_uri rejects null at the schema layer (required, can't be cleared);
-    # issue_tracker_uri allows null to clear.
+    # issue_tracker_uri allows null to clear; aliases treats null as clear
+    # (collapse to []).
     if "repo_uri" in payload.model_fields_set:
         software.repo_uri = payload.repo_uri
     if "issue_tracker_uri" in payload.model_fields_set:
         software.issue_tracker_uri = payload.issue_tracker_uri
+    if "aliases" in payload.model_fields_set:
+        software.aliases = payload.aliases or []
 
     sv = SoftwareVersion(
         software_id=software.id,

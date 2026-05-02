@@ -69,7 +69,7 @@ DATABASE_URL='postgresql+asyncpg://titan:titan@localhost:5432/titan_tyr' \
 ```sh
 # Smoke test (no auth required — the /health endpoint is the orchestrator probe)
 curl http://localhost:8000/health
-# → {"status":"ok","version":"0.4.0","db":"reachable"}
+# → {"status":"ok","version":"0.7.0","db":"reachable"}
 
 # Sanity check on the auth path
 curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/software
@@ -78,7 +78,7 @@ curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/software
 ## Run from Docker
 
 ```sh
-docker build -t titan-tyr:0.1.0 .
+docker build -t titan-tyr:0.7.0 .
 ```
 
 The image runs as a non-root `app` user, exposes port 8000, and bundles
@@ -90,12 +90,12 @@ step *before* the API container starts:
 # 1. Apply migrations (one-shot)
 docker run --rm \
   -e DATABASE_URL='postgresql+asyncpg://titan:titan@host.docker.internal:5432/titan_tyr' \
-  titan-tyr:0.1.0 alembic upgrade head
+  titan-tyr:0.7.0 alembic upgrade head
 
 # 2. Serve the API
 docker run --rm -p 8000:8000 \
   -e DATABASE_URL='postgresql+asyncpg://titan:titan@host.docker.internal:5432/titan_tyr' \
-  titan-tyr:0.1.0
+  titan-tyr:0.7.0
 ```
 
 (In Compose / Kubernetes, the migrate step is a `depends_on` job or an
@@ -162,6 +162,9 @@ auto-available in Claude Code when run from this repo. Invoke with
 - `/learn-software` — look up everything titan-tyr knows about a
   registered software node (description, ticket-filing target,
   contracts). Read-only; returns structured JSON.
+- `/find-software` — resolve a colloquial label or partial name
+  ("front end", "billing") to a canonical software slug via
+  `GET /software?match=`. Read-only.
 - `/propose-template-change` — draft and POST a proposal to update the
   `software` or `contract` template. Does not auto-accept.
 - `/accept-template-proposal` — promote an open template proposal to

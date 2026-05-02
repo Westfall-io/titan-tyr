@@ -65,6 +65,36 @@ def _validate_repo_uri_on_update(v: str | None) -> str | None:
     return v
 
 
+# Aliases are colloquial labels ("front end" → admin-ui). Per #13: 1-128 chars
+# after trim, reject control chars / newlines, allow Unicode (so "前端" works),
+# case-preserved on storage and case-insensitive on lookup. Per-payload dedupe
+# is case-insensitive ("Foo" and "foo" collapse). No cross-software uniqueness.
+_ALIAS_BAD_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _validate_aliases(v: list[str] | None) -> list[str] | None:
+    if v is None:
+        return v
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw in v:
+        if not isinstance(raw, str):
+            raise ValueError("each alias must be a string")
+        s = raw.strip()
+        if not s:
+            raise ValueError("alias may not be empty or whitespace-only")
+        if len(s) > 128:
+            raise ValueError("alias may not exceed 128 characters")
+        if _ALIAS_BAD_CHARS.search(s):
+            raise ValueError("alias may not contain control characters or newlines")
+        key = s.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(s)
+    return cleaned
+
+
 # ---------- Software ----------
 
 
@@ -72,12 +102,14 @@ class SoftwareCreate(BaseModel):
     name: str = Field(min_length=1)
     repo_uri: str = Field(min_length=1)
     issue_tracker_uri: str | None = None
+    aliases: list[str] = Field(default_factory=list)
     markdown: str
     version: str = "1.0.0"
 
     _v = field_validator("version")(_validate_stable)
     _n = field_validator("name")(_validate_software_name)
     _it = field_validator("issue_tracker_uri")(_validate_https_url_optional)
+    _a = field_validator("aliases")(_validate_aliases)
 
 
 class SoftwareCreateResponse(BaseModel):
@@ -91,10 +123,12 @@ class SoftwareUpdate(BaseModel):
     version: str
     repo_uri: str | None = None
     issue_tracker_uri: str | None = None
+    aliases: list[str] | None = None
 
     _v = field_validator("version")(_validate_stable)
     _r = field_validator("repo_uri")(_validate_repo_uri_on_update)
     _it = field_validator("issue_tracker_uri")(_validate_https_url_optional)
+    _a = field_validator("aliases")(_validate_aliases)
 
 
 class SoftwareUpdateResponse(BaseModel):
@@ -109,6 +143,7 @@ class SoftwareDetail(BaseModel):
     name: str
     repo_uri: str
     issue_tracker_uri: str | None
+    aliases: list[str]
     version: str
     markdown: str
     updated_at: datetime
@@ -119,6 +154,7 @@ class SoftwareListItem(BaseModel):
     name: str
     repo_uri: str
     issue_tracker_uri: str | None
+    aliases: list[str]
     version: str
     updated_at: datetime
 

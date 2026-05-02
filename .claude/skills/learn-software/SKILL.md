@@ -1,6 +1,6 @@
 ---
 name: learn-software
-description: Look up everything titan-tyr knows about a registered software node — its description, version, where to file tickets, and any contracts touching it. Use when an agent needs to understand another software before acting (filing a bug against it, integrating with it, summarising a conversation involving it). Returns structured JSON. Distinct from /find-software (the discovery flow when the target name isn't known yet — out of scope for v1).
+description: Look up everything titan-tyr knows about a registered software node — its description, aliases, version, where to file tickets, and any contracts touching it. Use when an agent needs to understand another software before acting (filing a bug against it, integrating with it, summarising a conversation involving it). Returns structured JSON. Distinct from /find-software (the discovery flow when the target name isn't known yet).
 ---
 
 # learn-software
@@ -37,9 +37,9 @@ Don't guess. Don't default to localhost silently.
 | `caller` | no       | The software the requesting agent represents. When provided, contracts are filtered to caller↔target. When absent, every contract touching `target` is returned. |
 
 `/learn-software` does **not** do interactive discovery. If the agent
-doesn't know which canonical name to ask for, that's `/find-software`'s
-job (a sibling skill — out of scope for this v1 and gated on the
-aliases work in #13).
+doesn't know which canonical name to ask for, call `/find-software`
+first — it uses `GET /software?match=<query>` to resolve a colloquial
+label to a canonical slug, then hand the slug to `/learn-software`.
 
 ## Workflow
 
@@ -116,6 +116,7 @@ precedence.
     "name": "<target>",
     "repo_uri": "...",
     "issue_tracker_uri": null,
+    "aliases": ["payments", "billing"],
     "version": "1.2.0",
     "updated_at": "2026-04-29T14:30:00Z",
     "markdown": "..."
@@ -147,34 +148,34 @@ Field notes:
 - `truncated` is `true` when there were more contracts than the v1
   fetch surfaced (more than 100 touching the target). v2 would page.
 
-### 6. Unknown target — substring suggestions
+### 6. Unknown target — server-side fuzzy lookup
 
-When step 2 returns `404`, the skill helps the caller correct course:
+When step 2 returns `404`, ask the API to fuzzy-resolve. `?match=`
+substring-matches against name **and** aliases (case-insensitive),
+catching both typos (`payment` → `payments-service`) and colloquial
+labels (`front end` → `admin-ui`):
 
 ```sh
 curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
-  "$TITAN_TYR_URL/software?limit=100"
+  "$TITAN_TYR_URL/software?match=$target&limit=100"
 ```
 
-Build a substring match (case-insensitive) of `target` against each
-returned `name`. If hits exist, return them as `suggestions`. If no
-hits and the total registered count is small (≤10), return all names
-as suggestions so the agent can see what *is* registered. Otherwise
-return an empty list.
+Return each hit's `name` and `aliases` as `suggestions`. If `?match=`
+returns nothing and the registered population is small (≤10 total —
+re-fetch with no `match=` to count), return every registered name so
+the agent sees what *is* there. Otherwise return an empty list.
 
 ```json
 {
   "status": "not_found",
   "target": "<target>",
-  "suggestions": ["admin-ui", "user-ui"],
-  "hint": "No software named '<target>' is registered. Run /register-software to add it, or call /find-software for an interactive resolution flow."
+  "suggestions": [
+    {"name": "admin-ui", "aliases": ["front end"]},
+    {"name": "user-ui", "aliases": []}
+  ],
+  "hint": "No software named '<target>' is registered. The closest matches by name or alias are listed in `suggestions`. Pick one and call /learn-software again, or call /register-software to add it."
 }
 ```
-
-Substring matching catches typos and partial-name queries
-(`ui` → `admin-ui`, `customer-ui`). It does **not** catch colloquial
-mappings like `front end → admin-ui` — that requires aliases (tracked
-in #13). When the alias work lands, this step grows an alias check.
 
 ## Caller-side composition notes
 
@@ -208,10 +209,9 @@ A common composition:
   Safe to call as often as the calling agent likes; titan-tyr is local
   infrastructure and the calls are cheap. (No caching in v1; revisit
   if hot paths emerge.)
-- The unknown-target substring lookup is intentionally simple. Real
-  resolution (colloquial → canonical name) lands when aliases do
-  (#13) — at that point this skill grows an alias check, and a sibling
-  `/find-software` skill provides the interactive disambiguation flow.
+- The unknown-target lookup uses the server's `?match=` endpoint so
+  alias resolution lives in one place (the API) and stays consistent
+  across `/learn-software`, `/find-software`, and any other consumer.
 - Counterparty fan-out (fetching the *other* software's full
   description for each contract) is out of scope for v1. The contract
   entries carry the counterparty's name — call `/learn-software` again

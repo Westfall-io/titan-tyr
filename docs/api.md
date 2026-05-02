@@ -53,12 +53,12 @@ No `Authorization` header required — orchestrators don't carry one.
 
 `200` response when the API can reach Postgres:
 ```json
-{ "status": "ok", "version": "0.4.0", "db": "reachable" }
+{ "status": "ok", "version": "0.7.0", "db": "reachable" }
 ```
 
 `503` response when the DB query fails:
 ```json
-{ "status": "degraded", "version": "0.4.0", "db": "unreachable" }
+{ "status": "degraded", "version": "0.7.0", "db": "unreachable" }
 ```
 
 `version` is the running titan-tyr package version (resolved from
@@ -188,6 +188,7 @@ curl -H 'Authorization: Bearer sysmlv2' \
       "name": "payments-service",
       "repo_uri": "https://github.com/example/payments-service",
       "issue_tracker_uri": null,
+      "aliases": ["payments", "billing"],
       "version": "2.1.0",
       "updated_at": "2026-04-29T14:30:00Z"
     },
@@ -196,6 +197,7 @@ curl -H 'Authorization: Bearer sysmlv2' \
       "name": "orders-service",
       "repo_uri": "https://github.com/example/orders-service",
       "issue_tracker_uri": "https://example.atlassian.net/browse/ORD",
+      "aliases": [],
       "version": "1.4.2",
       "updated_at": "2026-04-28T09:00:00Z"
     }
@@ -206,6 +208,24 @@ curl -H 'Authorization: Bearer sysmlv2' \
 
 To fetch the next page, call again with `?after=<next>`.
 
+#### `?match=<query>` — substring lookup over name + aliases
+
+```sh
+curl -H 'Authorization: Bearer sysmlv2' \
+  'http://localhost:8000/software?match=front'
+```
+
+Restricts results to software whose `name` or any entry of `aliases`
+contains `<query>` as a case-insensitive substring. The query may be
+1–128 characters; ILIKE wildcards (`%`, `_`) in user input are escaped
+and matched literally. Combines with `?after=` and `?limit=` as usual.
+
+This is the primary lookup path for agents that know a colloquial
+label ("front end", "billing") rather than the canonical slug.
+Substring is intentionally generous — collisions are allowed across
+software, so callers should be prepared to disambiguate when more than
+one result comes back.
+
 ### `POST /software` — register a new software node
 
 ```sh
@@ -215,6 +235,7 @@ curl -H 'Authorization: Bearer sysmlv2' \
        "name": "payments-service",
        "repo_uri": "https://github.com/example/payments-service",
        "issue_tracker_uri": "https://example.atlassian.net/browse/PAY",
+       "aliases": ["payments", "billing"],
        "markdown": "# payments-service\n...",
        "version": "1.0.0"
      }' \
@@ -231,6 +252,16 @@ absent, consumers should fall back to inferring GitHub Issues from
 `repo_uri`. Validation: must be a well-formed `https://` URL with a
 host (no `http://`, no `mailto:`, no bare paths).
 
+`aliases` is **optional** and defaults to `[]`. Each entry is a
+human-friendly label that should resolve to this software via
+`?match=` lookups (e.g. `"front end"`, `"billing"`, `"前端"`). Per-entry
+rules: 1–128 characters after trim, no control characters or
+newlines, Unicode allowed, case is preserved on storage.
+Within a single payload, entries are deduplicated case-insensitively
+(first occurrence wins). **Cross-software collisions are allowed by
+design** — `?match=` surfaces all candidates and the caller
+disambiguates.
+
 `201` response:
 ```json
 { "id": "12c3a4b5-...", "name": "payments-service", "version": "1.0.0" }
@@ -239,8 +270,9 @@ host (no `http://`, no `mailto:`, no bare paths).
 Errors:
 - `409 Conflict` — name already taken.
 - `422 Unprocessable Entity` — `name` not a valid slug (see above),
-  malformed `version` (or `-rcN` suffix), or `issue_tracker_uri` not a
-  valid `https://` URL.
+  malformed `version` (or `-rcN` suffix), `issue_tracker_uri` not a
+  valid `https://` URL, or any `aliases` entry is empty / over 128
+  chars / contains control characters.
 
 ### `GET /software/{name}` — latest description
 
@@ -256,6 +288,7 @@ curl -H 'Authorization: Bearer sysmlv2' \
   "name": "payments-service",
   "repo_uri": "https://github.com/example/payments-service",
   "issue_tracker_uri": "https://example.atlassian.net/browse/PAY",
+  "aliases": ["payments", "billing"],
   "version": "2.1.0",
   "markdown": "# payments-service\n...",
   "updated_at": "2026-04-29T14:30:00Z"
@@ -264,6 +297,7 @@ curl -H 'Authorization: Bearer sysmlv2' \
 
 `issue_tracker_uri` is `null` when the software was registered without
 one (consumers fall back to GitHub Issues inference from `repo_uri`).
+`aliases` is `[]` when none were registered.
 
 `404` if the named software does not exist.
 
@@ -277,7 +311,8 @@ curl -H 'Authorization: Bearer sysmlv2' \
        "version": "2.1.0",
        "markdown": "...",
        "repo_uri": "https://github.com/example/payments-service-renamed",
-       "issue_tracker_uri": "https://linear.app/example/team/PAY"
+       "issue_tracker_uri": "https://linear.app/example/team/PAY",
+       "aliases": ["payments", "billing"]
      }' \
      http://localhost:8000/software/payments-service
 ```
@@ -285,19 +320,23 @@ curl -H 'Authorization: Bearer sysmlv2' \
 `version` is required, must be plain `MAJOR.MINOR.PATCH`, and must be
 strictly greater than the latest existing version for this software.
 
-`repo_uri` and `issue_tracker_uri` are optional with **PATCH semantics**.
-The two fields share the same shape; the only difference is that
-`repo_uri` is required at registration and may not be cleared.
+`repo_uri`, `issue_tracker_uri`, and `aliases` are optional with
+**PATCH semantics**. They share the same omit/value/null shape; the
+only differences are around what null means per field.
 
-| Field               | Omitted from body         | `"...": "value"`                | `"...": null`                 |
-| ------------------- | ------------------------- | ------------------------------- | ----------------------------- |
-| `repo_uri`          | Existing value unchanged. | Replaces stored value.          | **422** — cannot clear.       |
+| Field               | Omitted from body         | `"...": "value"`                    | `"...": null`                  |
+| ------------------- | ------------------------- | ----------------------------------- | ------------------------------ |
+| `repo_uri`          | Existing value unchanged. | Replaces stored value.              | **422** — cannot clear.        |
 | `issue_tracker_uri` | Existing value unchanged. | Replaces stored value (https-only). | Clears stored value to `null`. |
+| `aliases`           | Existing list unchanged.  | Replaces stored list (full set).    | Clears list to `[]`.           |
 
 `repo_uri` accepts any non-empty string (HTTPS URLs, SSH form like
 `git@github.com:owner/repo.git`, etc.) — the API does not enforce a
 URL grammar on it. `issue_tracker_uri` is strictly validated as
-`https://` with a host.
+`https://` with a host. `aliases` follows the same per-entry rules
+as on register (1–128 chars, no control characters, case-preserved,
+case-insensitive per-payload dedupe). Setting an empty list (`[]`) is
+equivalent to setting `null` — both clear.
 
 `200` response:
 ```json
@@ -308,7 +347,8 @@ Errors:
 - `404 Not Found` — software not registered.
 - `409 Conflict` — `version` is not strictly greater than the latest.
 - `422 Unprocessable Entity` — malformed `version`, `repo_uri` set to
-  null or empty string, or `issue_tracker_uri` not a valid `https://` URL.
+  null or empty string, `issue_tracker_uri` not a valid `https://` URL,
+  or any `aliases` entry violates the per-entry rules.
 
 ### `GET /software/{name}/contracts` — contracts touching this software (paginated)
 

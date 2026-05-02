@@ -131,21 +131,28 @@ the user needs guidance on what a section *means*, that guidance lives
 in the template body's instructional blockquotes — read them, follow
 them, strip them on POST.
 
-### 5. Optional: update row-level metadata (repo_uri, issue_tracker_uri)
+### 5. Optional: update row-level metadata (repo_uri, issue_tracker_uri, aliases)
 
-`PUT /software/{name}` accepts two optional row-level metadata fields
-with **PATCH semantics**. Same shape; the only difference is that
-`repo_uri` is required at registration and may not be cleared.
+`PUT /software/{name}` accepts three optional row-level metadata fields
+with **PATCH semantics**. They share the same omit/value/null shape;
+the only differences are around what null means per field.
 
-| Field               | Omitted                   | `"...": "value"`                | `"...": null`             |
-| ------------------- | ------------------------- | ------------------------------- | ------------------------- |
-| `repo_uri`          | Existing value unchanged. | Replaces stored value.          | **422** — cannot clear.   |
-| `issue_tracker_uri` | Existing value unchanged. | Replaces stored value (https-only). | Clears stored value.   |
+| Field               | Omitted                   | `"...": "value"`                | `"...": null`               |
+| ------------------- | ------------------------- | ------------------------------- | --------------------------- |
+| `repo_uri`          | Existing value unchanged. | Replaces stored value.          | **422** — cannot clear.     |
+| `issue_tracker_uri` | Existing value unchanged. | Replaces stored value (https-only). | Clears stored value.    |
+| `aliases`           | Existing list unchanged.  | Replaces stored list (full set).| Clears list to `[]`.        |
 
-Ask the user only if they have a reason to change either (repo
-renamed/moved, adopted Jira/Linear, etc.). Otherwise omit. Validation:
+Ask the user only if they have a reason to change any of these (repo
+renamed/moved, adopted Jira/Linear, new colloquial nickname, etc.).
+Otherwise omit. Validation:
 `repo_uri` accepts any non-empty string (HTTPS, SSH form, etc.);
-`issue_tracker_uri` is strictly `https://` with a host.
+`issue_tracker_uri` is strictly `https://` with a host;
+`aliases` entries must be 1–128 chars after trim, no control chars or
+newlines, Unicode allowed, case preserved. Setting an empty list
+(`[]`) is equivalent to `null` — both clear. Aliases are a full
+replacement, not a merge — to *add* one, fetch the existing list
+first and resubmit with the addition appended.
 
 ### 6. Choose a new software version
 
@@ -186,8 +193,9 @@ import json, pathlib
 print(json.dumps({
     'version': 'X.Y.Z',
     'markdown': pathlib.Path('.scratch/update-body.md').read_text(),
-    # 'repo_uri': 'https://...',           # uncomment to replace; null/empty 422
-    # 'issue_tracker_uri': 'https://...',  # uncomment to set, or null to clear
+    # 'repo_uri': 'https://...',                # uncomment to replace; null/empty 422
+    # 'issue_tracker_uri': 'https://...',       # uncomment to set, or null to clear
+    # 'aliases': ['payments', 'billing'],       # uncomment to replace; [] or null to clear
 }))
 " > .scratch/update-body.json
 

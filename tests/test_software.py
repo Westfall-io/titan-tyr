@@ -312,7 +312,280 @@ class TestIssueTrackerUri:
         assert r.status_code == 422
 
 
-class TestSoftwareContracts:
+class TestAliases:
+    async def test_register_without_aliases_returns_empty_list(self, client):
+        await _register(client, name="al-empty")
+        body = (await client.get("/software/al-empty")).json()
+        assert body["aliases"] == []
+
+    async def test_register_with_aliases(self, client):
+        r = await client.post(
+            "/software",
+            json={
+                "name": "al-set",
+                "repo_uri": "u",
+                "markdown": "m",
+                "aliases": ["Front End", "前端", "ui"],
+            },
+        )
+        assert r.status_code == 201, r.text
+        body = (await client.get("/software/al-set")).json()
+        assert body["aliases"] == ["Front End", "前端", "ui"]
+
+    async def test_register_dedupes_case_insensitively(self, client):
+        r = await client.post(
+            "/software",
+            json={
+                "name": "al-dup",
+                "repo_uri": "u",
+                "markdown": "m",
+                "aliases": ["Foo", "foo", "FOO", "bar"],
+            },
+        )
+        assert r.status_code == 201
+        body = (await client.get("/software/al-dup")).json()
+        assert body["aliases"] == ["Foo", "bar"]
+
+    async def test_register_strips_whitespace(self, client):
+        r = await client.post(
+            "/software",
+            json={
+                "name": "al-strip",
+                "repo_uri": "u",
+                "markdown": "m",
+                "aliases": ["  spaced  "],
+            },
+        )
+        assert r.status_code == 201
+        body = (await client.get("/software/al-strip")).json()
+        assert body["aliases"] == ["spaced"]
+
+    async def test_register_rejects_empty_alias(self, client):
+        r = await client.post(
+            "/software",
+            json={"name": "al-mt", "repo_uri": "u", "markdown": "m", "aliases": [""]},
+        )
+        assert r.status_code == 422
+
+    async def test_register_rejects_whitespace_only_alias(self, client):
+        r = await client.post(
+            "/software",
+            json={"name": "al-ws", "repo_uri": "u", "markdown": "m", "aliases": ["   "]},
+        )
+        assert r.status_code == 422
+
+    async def test_register_rejects_alias_over_128_chars(self, client):
+        r = await client.post(
+            "/software",
+            json={
+                "name": "al-long",
+                "repo_uri": "u",
+                "markdown": "m",
+                "aliases": ["x" * 129],
+            },
+        )
+        assert r.status_code == 422
+
+    async def test_register_accepts_alias_at_128_chars(self, client):
+        r = await client.post(
+            "/software",
+            json={
+                "name": "al-at-limit",
+                "repo_uri": "u",
+                "markdown": "m",
+                "aliases": ["x" * 128],
+            },
+        )
+        assert r.status_code == 201
+
+    async def test_register_rejects_newline_in_alias(self, client):
+        r = await client.post(
+            "/software",
+            json={
+                "name": "al-nl",
+                "repo_uri": "u",
+                "markdown": "m",
+                "aliases": ["a\nb"],
+            },
+        )
+        assert r.status_code == 422
+
+    async def test_register_rejects_control_char_in_alias(self, client):
+        r = await client.post(
+            "/software",
+            json={
+                "name": "al-ctrl",
+                "repo_uri": "u",
+                "markdown": "m",
+                "aliases": ["a\x07b"],
+            },
+        )
+        assert r.status_code == 422
+
+    async def test_collisions_across_software_allowed(self, client):
+        r1 = await client.post(
+            "/software",
+            json={
+                "name": "al-c1",
+                "repo_uri": "u",
+                "markdown": "m",
+                "aliases": ["frontend"],
+            },
+        )
+        assert r1.status_code == 201
+        r2 = await client.post(
+            "/software",
+            json={
+                "name": "al-c2",
+                "repo_uri": "u",
+                "markdown": "m",
+                "aliases": ["frontend"],
+            },
+        )
+        assert r2.status_code == 201
+
+    async def test_put_replaces_aliases(self, client):
+        await _register(client, name="al-put")
+        r = await client.put(
+            "/software/al-put",
+            json={"version": "1.1.0", "markdown": "m", "aliases": ["new-one"]},
+        )
+        assert r.status_code == 200
+        body = (await client.get("/software/al-put")).json()
+        assert body["aliases"] == ["new-one"]
+
+    async def test_put_without_aliases_leaves_existing(self, client):
+        r0 = await client.post(
+            "/software",
+            json={
+                "name": "al-keep",
+                "repo_uri": "u",
+                "markdown": "m",
+                "aliases": ["keepme"],
+            },
+        )
+        assert r0.status_code == 201
+        r = await client.put(
+            "/software/al-keep",
+            json={"version": "1.1.0", "markdown": "m2"},
+        )
+        assert r.status_code == 200
+        body = (await client.get("/software/al-keep")).json()
+        assert body["aliases"] == ["keepme"]
+
+    async def test_put_null_clears_aliases(self, client):
+        r0 = await client.post(
+            "/software",
+            json={
+                "name": "al-null",
+                "repo_uri": "u",
+                "markdown": "m",
+                "aliases": ["a", "b"],
+            },
+        )
+        assert r0.status_code == 201
+        r = await client.put(
+            "/software/al-null",
+            json={"version": "1.1.0", "markdown": "m", "aliases": None},
+        )
+        assert r.status_code == 200
+        body = (await client.get("/software/al-null")).json()
+        assert body["aliases"] == []
+
+    async def test_put_empty_list_clears_aliases(self, client):
+        r0 = await client.post(
+            "/software",
+            json={
+                "name": "al-mt-clear",
+                "repo_uri": "u",
+                "markdown": "m",
+                "aliases": ["a"],
+            },
+        )
+        assert r0.status_code == 201
+        r = await client.put(
+            "/software/al-mt-clear",
+            json={"version": "1.1.0", "markdown": "m", "aliases": []},
+        )
+        assert r.status_code == 200
+        body = (await client.get("/software/al-mt-clear")).json()
+        assert body["aliases"] == []
+
+    async def test_listing_returns_aliases(self, client):
+        await client.post(
+            "/software",
+            json={
+                "name": "al-list",
+                "repo_uri": "u",
+                "markdown": "m",
+                "aliases": ["alpha"],
+            },
+        )
+        listing = (await client.get("/software")).json()
+        entry = next(e for e in listing["results"] if e["name"] == "al-list")
+        assert entry["aliases"] == ["alpha"]
+
+
+class TestMatchQuery:
+    async def test_match_filters_by_name_substring(self, client):
+        await _register(client, name="payments-service")
+        await _register(client, name="orders-service")
+        await _register(client, name="other")
+        r = await client.get("/software?match=service")
+        assert r.status_code == 200
+        names = {e["name"] for e in r.json()["results"]}
+        assert names == {"payments-service", "orders-service"}
+
+    async def test_match_filters_by_alias_substring(self, client):
+        await client.post(
+            "/software",
+            json={
+                "name": "admin-ui",
+                "repo_uri": "u",
+                "markdown": "m",
+                "aliases": ["Front End", "operator console"],
+            },
+        )
+        await _register(client, name="other-svc")
+        r = await client.get("/software?match=front")
+        assert r.status_code == 200
+        names = {e["name"] for e in r.json()["results"]}
+        assert names == {"admin-ui"}
+
+    async def test_match_is_case_insensitive(self, client):
+        await client.post(
+            "/software",
+            json={
+                "name": "ci-test",
+                "repo_uri": "u",
+                "markdown": "m",
+                "aliases": ["MixedCase"],
+            },
+        )
+        r = await client.get("/software?match=mixedcase")
+        assert r.status_code == 200
+        assert len(r.json()["results"]) == 1
+        r2 = await client.get("/software?match=MIXEDCASE")
+        assert r2.status_code == 200
+        assert len(r2.json()["results"]) == 1
+
+    async def test_match_no_results(self, client):
+        await _register(client, name="something")
+        r = await client.get("/software?match=nothingmatches")
+        assert r.status_code == 200
+        assert r.json()["results"] == []
+
+    async def test_match_escapes_wildcards(self, client):
+        # ILIKE % shouldn't act as a wildcard from user input. Register
+        # something that doesn't contain a literal %, then verify the search
+        # treats it literally.
+        await _register(client, name="literal-percent")
+        r = await client.get("/software?match=%25")  # decodes to "%"
+        assert r.status_code == 200
+        assert r.json()["results"] == []
+
+
+
     async def test_lists_contracts_in_both_directions(self, client):
         await _register(client, name="a")
         await _register(client, name="b")
