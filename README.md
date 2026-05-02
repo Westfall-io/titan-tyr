@@ -167,6 +167,10 @@ auto-available in Claude Code when run from this repo. Invoke with
   `GET /software?match=`. Read-only.
 - `/propose-template-change` — draft and POST a proposal to update the
   `software` or `contract` template. Does not auto-accept.
+- `/propose-contract-change` — draft and POST a proposal to amend an
+  existing interface contract. Helps pick the contract, opens the
+  active body for in-place editing, shows a unified diff. Does not
+  auto-accept.
 - `/accept-template-proposal` — promote an open template proposal to
   the new active version. Mutates what every caller sees.
 - `/accept-contract-proposal` — promote an open contract proposal to
