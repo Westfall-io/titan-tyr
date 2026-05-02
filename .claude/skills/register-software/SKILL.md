@@ -64,89 +64,37 @@ Pull the current software template from the API:
 curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" "$TITAN_TYR_URL/templates/software"
 ```
 
-### 4. Build the markdown body from the template
+### 4. Fill the template
 
-The template you just fetched mixes **fillable content** (what the user
-wants to record) with **filler-only guidance** (instructions you should
-not save). Apply these fill rules — in this order — to convert the raw
-template into the markdown body that will be POSTed.
+The template is **self-describing** — its instructional blockquotes
+(`>` blocks) and any `### …` reference subsections are guidance for
+the human / agent doing the fill, not content to save. Read them,
+follow them, then strip them from the body you POST.
 
-#### Per-section guidance
-
-- **Owner / Repository** header — use what the user already gave you.
-- **Purpose** — ask for a 2–4 sentence description if not provided.
-- **Ports** table — each row is a **logical operation** (one row covers
-  all HTTP methods/routes that implement the same operation), not one
-  row per HTTP method. Direction is from this software's perspective.
-- **Notes** — anything that doesn't fit the above. Don't invent new H2
-  sections; surplus content goes here.
-
-If the user wants to skip Ports for this first registration (common),
-leave a single placeholder row noting "TBD" and ask them to come back
-later with `PUT /software/{name}`.
-
-#### Fill rules
+Generic fill rules — these apply regardless of what's in the template:
 
 1. **`<...>` placeholders are content slots.** Replace each with real
-   content; drop the angle brackets too. `<software-name>` →
-   `payments-service`; `<in | out>` → `in`.
+   content and drop the angle brackets. `<software-name>` →
+   `payments-service`.
 
-2. **Instructional blockquotes are filler-only.** Any block of lines
-   starting with `>` near the top of the template is guidance for you;
-   strip it from the saved markdown.
+2. **Instructional blockquotes are filler-only.** Any `>` block whose
+   content is guidance to the filler (rather than something the
+   software actually wants to record) gets stripped.
 
-3. **Instructional H3 subsections are filler-only — except** when you
-   have real content for them:
-   - `### Direction conventions` — pure reference. **Always drop.**
-   - `### What is *not* a Port` — drop if the software has nothing
-     specific to call out; **keep with real exclusions** if it does
-     (e.g. for an API: "Postgres connection — datastore" and
-     "Bearer-password middleware — cross-cutting").
+3. **Pure-reference H3 subsections are filler-only.** If an H3 only
+   exists to explain how to fill its parent section, drop it. If it
+   invites you to add real content (e.g. exclusions, exceptions
+   specific to this software), keep it iff you have real content.
 
-4. **Multi-counterparty rows.** The template's Ports row shows
-   `<counterparty-name>[, <counterparty-name>...]`. Pick one
-   convention and apply it consistently within this software's body —
-   either comma-separate counterparties in one cell, or duplicate the
-   Port row once per counterparty. Don't mix.
+4. **Don't invent structure.** No new H2 sections beyond what the
+   template defined. Surplus content that doesn't fit goes in the
+   Notes section the template provides.
 
-5. **Resolve placeholder counterparties to real software names.** If a
-   counterparty isn't yet registered with titan-tyr (you can check via
-   `GET /software/{name}`), flag it for the user — they may want to
-   register it first, or accept a placeholder like
-   `<any-authenticated-caller>` for now.
-
-#### Worked example
-
-Template fragment as returned by the API:
-
-```markdown
-# <software-name>
-
-**Owner:** <team or person>
-**Repository:** <repo-uri>
-
-> A Software node is a unit of software ownership — one codebase, one
-> deployable boundary, one owning team. ...
-
-## Purpose
-
-Two to four sentences. What does this software do and why does it
-exist? Written for a reader with no prior context.
-```
-
-After applying the rules:
-
-```markdown
-# payments-service
-
-**Owner:** payments-team
-**Repository:** https://github.com/example/payments-service
-
-## Purpose
-
-Handles all card and ACH payment capture for the storefront. Owns
-PCI-relevant data; everyone else integrates via the REST API.
-```
+The skill stops here on template specifics. Anything beyond these
+generic rules — what counts as a Port, how to phrase Purpose, etc. —
+belongs **in the template body itself**, not in this skill. If you
+find yourself wanting to add template-specific guidance here, that's
+a signal to `/propose-template-change` instead.
 
 ### 5. Preview before submitting
 
@@ -192,9 +140,11 @@ On `201`, summarise:
 > Registered `<name>` at version `1.0.0`. Software ID: `<uuid>`.
 > Read it back with: `curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' $TITAN_TYR_URL/software/<name>`
 
-Ask whether the user wants to also register interface contracts for this
-software (one `POST /contracts` per directed edge). Do NOT do that
-automatically — contracts need a counterparty software node to exist first.
+Ask whether the user wants to also register interface contracts for
+this software (one `POST /contracts` per directed edge between this
+software and another registered software). Do NOT do that
+automatically — both endpoints of the edge must already exist as
+software nodes.
 
 ## Error handling
 
