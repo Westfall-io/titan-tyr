@@ -3,9 +3,10 @@
 Skills here are auto-discovered by [Claude Code](https://claude.com/claude-code)
 when you run it from the titan-tyr repo root. Type `/<skill-name>` to invoke.
 
-| Skill                                              | What it does                                                          |
-| -------------------------------------------------- | --------------------------------------------------------------------- |
-| [`register-software`](./register-software/SKILL.md) | Register a software node with a running titan-tyr instance.           |
+| Skill                                                          | What it does                                                          |
+| -------------------------------------------------------------- | --------------------------------------------------------------------- |
+| [`register-software`](./register-software/SKILL.md)             | Register a software node with a running titan-tyr instance.           |
+| [`propose-template-change`](./propose-template-change/SKILL.md) | Draft and POST a proposal to update the `software` or `contract` template. Does not auto-accept. |
 
 ## Configuration
 
