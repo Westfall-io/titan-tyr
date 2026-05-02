@@ -1,0 +1,221 @@
+---
+name: learn-software
+description: Look up everything titan-tyr knows about a registered software node — its description, version, where to file tickets, and any contracts touching it. Use when an agent needs to understand another software before acting (filing a bug against it, integrating with it, summarising a conversation involving it). Returns structured JSON. Distinct from /find-software (the discovery flow when the target name isn't known yet — out of scope for v1).
+---
+
+# learn-software
+
+You are answering an agent's "tell me about software X" question by
+pulling everything titan-tyr knows about it: description, repo,
+ticket-filing target, version, and the contracts that touch it.
+
+This skill is **read-only and non-mutating**. It composes existing
+titan-tyr GET endpoints into a single structured response so a
+calling agent doesn't have to fetch and stitch four endpoints itself.
+
+## Server location
+
+Same env vars as the other titan-tyr skills:
+
+| Variable          | Required | Purpose                                          |
+| ----------------- | -------- | ------------------------------------------------ |
+| `TITAN_TYR_URL`   | yes      | Base URL of the API. No trailing slash.          |
+| `TITAN_TYR_TOKEN` | no       | Bearer token. Defaults to `sysmlv2`.             |
+
+If `TITAN_TYR_URL` is unset, **stop and tell the user**:
+
+> `TITAN_TYR_URL` is not set. Set it to the titan-tyr base URL before running this skill, e.g.
+> `export TITAN_TYR_URL=http://localhost:8000`.
+
+Don't guess. Don't default to localhost silently.
+
+## Inputs
+
+| Input    | Required | Purpose                                                                                  |
+| -------- | -------- | ---------------------------------------------------------------------------------------- |
+| `target` | yes      | Canonical software name (slug) to look up.                                               |
+| `caller` | no       | The software the requesting agent represents. When provided, contracts are filtered to caller↔target. When absent, every contract touching `target` is returned. |
+
+`/learn-software` does **not** do interactive discovery. If the agent
+doesn't know which canonical name to ask for, that's `/find-software`'s
+job (a sibling skill — out of scope for this v1 and gated on the
+aliases work in #13).
+
+## Workflow
+
+### 1. Confirm reachability
+
+```sh
+curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
+  "$TITAN_TYR_URL/templates/software" -o /dev/null
+```
+
+- `200` → continue.
+- `401` → wrong token. Stop.
+- Connection refused → wrong URL or server down. Stop.
+
+### 2. Look up the target
+
+```sh
+curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
+  "$TITAN_TYR_URL/software/$target"
+```
+
+- `200` → continue to step 3.
+- `404` → unknown target. Branch to step 6.
+- Anything else → surface the response body verbatim and stop.
+
+### 3. Pull contracts touching the target
+
+```sh
+curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
+  "$TITAN_TYR_URL/software/$target/contracts?limit=100"
+```
+
+The listing endpoint is paginated. For v1, fetch the first page
+(limit=100) and surface a `truncated: true` flag in the response if
+`next` is non-null. A real "give me everything" mode would loop the
+pages — out of scope for v1.
+
+If `caller` was provided, filter the returned `results` to entries
+where `owner == caller` or `counterparty == caller`. Do this in the
+skill (the listing endpoint doesn't support a counterparty filter).
+
+For each contract entry kept, fetch its body so the agent has the
+full markdown — the listing omits it per #7:
+
+```sh
+curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
+  "$TITAN_TYR_URL/contracts/<contract_id>"
+```
+
+### 4. Resolve the ticket-filing target
+
+Apply this precedence (per #10's design):
+
+1. If `target.issue_tracker_uri` is set → use as-is.
+   `ticket_filing.source = "issue_tracker_uri"`.
+2. Else, if `target.repo_uri` parses as a GitHub URL (HTTPS form
+   `https://github.com/<owner>/<repo>` or SSH form
+   `git@github.com:<owner>/<repo>.git`), build
+   `https://github.com/<owner>/<repo>/issues`.
+   `ticket_filing.source = "repo_uri_inferred"`.
+3. Else, no automatic answer.
+   `ticket_filing.source = "unknown"`,
+   `ticket_filing.resolved_to = null`.
+
+The skill resolves this inline so consumers don't reimplement the
+precedence.
+
+### 5. Return the "found" response
+
+```json
+{
+  "status": "found",
+  "software": {
+    "name": "<target>",
+    "repo_uri": "...",
+    "issue_tracker_uri": null,
+    "version": "1.2.0",
+    "updated_at": "2026-04-29T14:30:00Z",
+    "markdown": "..."
+  },
+  "contracts": [
+    {
+      "contract_id": "...",
+      "owner": "...",
+      "counterparty": "...",
+      "version": "1.0.0",
+      "updated_at": "...",
+      "markdown": "..."
+    }
+  ],
+  "ticket_filing": {
+    "resolved_to": "https://github.com/example/payments-service/issues",
+    "source": "repo_uri_inferred"
+  },
+  "truncated": false
+}
+```
+
+Field notes:
+
+- `software.markdown` is the full body of the latest version (not the
+  listing summary).
+- `contracts[].markdown` is the full body of each contract's latest
+  active version.
+- `truncated` is `true` when there were more contracts than the v1
+  fetch surfaced (more than 100 touching the target). v2 would page.
+
+### 6. Unknown target — substring suggestions
+
+When step 2 returns `404`, the skill helps the caller correct course:
+
+```sh
+curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
+  "$TITAN_TYR_URL/software?limit=100"
+```
+
+Build a substring match (case-insensitive) of `target` against each
+returned `name`. If hits exist, return them as `suggestions`. If no
+hits and the total registered count is small (≤10), return all names
+as suggestions so the agent can see what *is* registered. Otherwise
+return an empty list.
+
+```json
+{
+  "status": "not_found",
+  "target": "<target>",
+  "suggestions": ["admin-ui", "user-ui"],
+  "hint": "No software named '<target>' is registered. Run /register-software to add it, or call /find-software for an interactive resolution flow."
+}
+```
+
+Substring matching catches typos and partial-name queries
+(`ui` → `admin-ui`, `customer-ui`). It does **not** catch colloquial
+mappings like `front end → admin-ui` — that requires aliases (tracked
+in #13). When the alias work lands, this step grows an alias check.
+
+## Caller-side composition notes
+
+`/learn-software` is meant to be called from another agent's context.
+The structured JSON return value is the contract — agents parse the
+fields they need. The skill itself does not print prose summaries
+or render the response for human consumption; that's the calling
+agent's job.
+
+A common composition:
+
+1. Calling agent has a request like "file a bug against payments-service
+   about the timeout we observed."
+2. Calls `/learn-software target=payments-service caller=<self>`.
+3. Reads `ticket_filing.resolved_to` to know where to file.
+4. Reads `contracts` to understand the interface that observed the
+   timeout.
+5. Reads `software.markdown` if it needs the broader context.
+
+## Error handling
+
+| Status | Meaning                                                     | What to do                                                                  |
+| ------ | ----------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `401`  | Bad bearer token                                            | Stop. Tell user `TITAN_TYR_TOKEN` is wrong.                                 |
+| `404`  | Target software not registered                              | Branch to step 6 (substring suggestions).                                   |
+| `5xx`  | Server problem on any sub-call                              | Stop. Print response body verbatim.                                         |
+
+## Notes
+
+- This skill is read-only. It never POSTs / PUTs / DELETEs anything.
+  Safe to call as often as the calling agent likes; titan-tyr is local
+  infrastructure and the calls are cheap. (No caching in v1; revisit
+  if hot paths emerge.)
+- The unknown-target substring lookup is intentionally simple. Real
+  resolution (colloquial → canonical name) lands when aliases do
+  (#13) — at that point this skill grows an alias check, and a sibling
+  `/find-software` skill provides the interactive disambiguation flow.
+- Counterparty fan-out (fetching the *other* software's full
+  description for each contract) is out of scope for v1. The contract
+  entries carry the counterparty's name — call `/learn-software` again
+  on that name if the agent needs more.
+- Pagination across contract listings is left to v2. The current cap
+  (100 first-page entries) is enough for the registered scale today
+  and surfaces a `truncated` flag for callers that need to know.
