@@ -88,7 +88,10 @@ Generic fill rules — these apply regardless of what's in the template:
 
 3. **Instructional blockquotes are filler-only.** Any `>` block whose
    content is guidance to the filler (rather than something the
-   software actually wants to record) gets stripped.
+   software actually wants to record) gets stripped. Templates from
+   `software@2.4.0` / `contract@1.2.0` onward prefix every such
+   blockquote with `**DELETE WHEN FILLING IN.**` to make this
+   unambiguous — when you see that marker, drop the whole block.
 
 4. **Pure-reference H3 subsections are filler-only.** If an H3 only
    exists to explain how to fill its parent section, drop it. If it

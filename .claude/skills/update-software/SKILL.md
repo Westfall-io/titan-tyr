@@ -118,7 +118,10 @@ Apply the same generic fill rules as `/register-software`:
 2. Reserved meta-placeholders are filled by the skill:
    - `<template-version>` → the active template version you just
      fetched.
-3. Instructional blockquotes are filler-only; strip them.
+3. Instructional blockquotes are filler-only; strip them. Templates
+   from `software@2.4.0` / `contract@1.2.0` onward prefix every such
+   blockquote with `**DELETE WHEN FILLING IN.**` to make this
+   unambiguous — when you see that marker, drop the whole block.
 4. Pure-reference H3 subsections are filler-only; drop unless you
    have real content for them.
 5. Don't invent H2 structure.
