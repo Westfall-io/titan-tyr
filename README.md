@@ -67,7 +67,11 @@ DATABASE_URL='postgresql+asyncpg://titan:titan@localhost:5432/titan_tyr' \
 ```
 
 ```sh
-# Smoke test
+# Smoke test (no auth required — the /health endpoint is the orchestrator probe)
+curl http://localhost:8000/health
+# → {"status":"ok","version":"0.4.0","db":"reachable"}
+
+# Sanity check on the auth path
 curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/software
 ```
 

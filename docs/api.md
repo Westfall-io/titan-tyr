@@ -13,12 +13,43 @@ at `/docs` and `/redoc` when the API is running.
 
 - All paths are JSON request / JSON response **except** the two
   `/templates/*` endpoints, which return `text/markdown`.
-- Every endpoint requires `Authorization: Bearer sysmlv2`. Missing or
-  wrong tokens get `401`.
+- Every endpoint requires `Authorization: Bearer sysmlv2` **except**
+  `GET /health`, which is unauthenticated so orchestrators can probe
+  it. Missing or wrong tokens on protected endpoints get `401`.
 - Versions are semver strings. Software and stable contract versions
   are `MAJOR.MINOR.PATCH`. Contract proposals may additionally carry an
   `-rcN` suffix.
 - Errors are returned as `{"detail": "..."}` per FastAPI convention.
+
+---
+
+## Health
+
+### `GET /health` — liveness + readiness probe
+
+```sh
+curl http://localhost:8000/health
+```
+
+No `Authorization` header required — orchestrators don't carry one.
+
+`200` response when the API can reach Postgres:
+```json
+{ "status": "ok", "version": "0.4.0", "db": "reachable" }
+```
+
+`503` response when the DB query fails:
+```json
+{ "status": "degraded", "version": "0.4.0", "db": "unreachable" }
+```
+
+`version` is the running titan-tyr package version (resolved from
+the installed package metadata, not hardcoded). Use the 503 to fail
+the pod / restart the container.
+
+A separate split into `/livez` (process is up) and `/readyz` (can
+serve traffic) is the more correct K8s pattern; deferred until
+there's an actual orchestrator that benefits from the distinction.
 
 ---
 
@@ -417,3 +448,4 @@ Errors:
 | 405  | Method not allowed on this path.                       |
 | 409  | Caller-supplied state conflicts with what is stored.   |
 | 422  | Request body / path failed validation.                 |
+| 503  | `GET /health` only — DB is unreachable.                |
