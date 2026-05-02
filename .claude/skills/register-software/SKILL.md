@@ -77,16 +77,24 @@ Generic fill rules — these apply regardless of what's in the template:
    content and drop the angle brackets. `<software-name>` →
    `payments-service`.
 
-2. **Instructional blockquotes are filler-only.** Any `>` block whose
+2. **Reserved meta-placeholders.** A small fixed set of `<...>` slots
+   are filled by the skill, not the user. The only one today:
+   - `<template-version>` — substitute with the active template
+     version you fetched from `GET /templates/<kind>` (currently
+     `2.1.0` for `software`). The stamp is usually
+     `<!-- template: software@<template-version> -->` at the top of
+     the body. Keep the comment line; replace the placeholder.
+
+3. **Instructional blockquotes are filler-only.** Any `>` block whose
    content is guidance to the filler (rather than something the
    software actually wants to record) gets stripped.
 
-3. **Pure-reference H3 subsections are filler-only.** If an H3 only
+4. **Pure-reference H3 subsections are filler-only.** If an H3 only
    exists to explain how to fill its parent section, drop it. If it
    invites you to add real content (e.g. exclusions, exceptions
    specific to this software), keep it iff you have real content.
 
-4. **Don't invent structure.** No new H2 sections beyond what the
+5. **Don't invent structure.** No new H2 sections beyond what the
    template defined. Surplus content that doesn't fit goes in the
    Notes section the template provides.
 

@@ -6,6 +6,7 @@ when you run it from the titan-tyr repo root. Type `/<skill-name>` to invoke.
 | Skill                                                            | What it does                                                          |
 | ---------------------------------------------------------------- | --------------------------------------------------------------------- |
 | [`register-software`](./register-software/SKILL.md)               | Register a software node with a running titan-tyr instance.           |
+| [`update-software`](./update-software/SKILL.md)                   | Append a new version to an already-registered software node. Detects template-version drift and helps migrate. |
 | [`propose-template-change`](./propose-template-change/SKILL.md)   | Draft and POST a proposal to update the `software` or `contract` template. Does not auto-accept. |
 | [`accept-template-proposal`](./accept-template-proposal/SKILL.md) | Promote an open template proposal to the new active version. Mutates what every caller sees on the next `GET /templates/{kind}`. |
 

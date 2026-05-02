@@ -153,6 +153,8 @@ auto-available in Claude Code when run from this repo. Invoke with
 
 - `/register-software` — walk through registering a software node
   against a running titan-tyr.
+- `/update-software` — append a new version to a registered software
+  node. Detects template-version drift and helps migrate.
 - `/propose-template-change` — draft and POST a proposal to update the
   `software` or `contract` template. Does not auto-accept.
 - `/accept-template-proposal` — promote an open template proposal to

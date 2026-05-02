@@ -1,0 +1,211 @@
+---
+name: update-software
+description: Append a new version to a software node already registered with titan-tyr. Use when the user wants to update a registered software's body — e.g. "update my software registration", "bump titan-tyr's version", "my software is out of date with the template", "register a new version of X". Detects template-version drift, helps the user revise the body, and PUTs to /software/{name}. Distinct from /register-software, which creates new nodes.
+---
+
+# update-software
+
+You are appending a new version to a software node that already exists
+in titan-tyr. The endpoint is `PUT /software/{name}`. Each call adds
+one row to that software's `*_versions` history; reads always return
+the latest.
+
+There are two reasons to update:
+
+- **Content drift** — the software actually changed (new ports, new
+  purpose, owner moved teams).
+- **Template drift** — the template moved forward (e.g. `software@1.0.0`
+  → `software@2.1.0`) and the body is now structurally stale even if
+  nothing about the software itself changed.
+
+This skill handles both, in either combination.
+
+## Server location
+
+Same env vars as the other titan-tyr skills:
+
+| Variable          | Required | Purpose                                          |
+| ----------------- | -------- | ------------------------------------------------ |
+| `TITAN_TYR_URL`   | yes      | Base URL of the API. No trailing slash.          |
+| `TITAN_TYR_TOKEN` | no       | Bearer token. Defaults to `sysmlv2`.             |
+
+If `TITAN_TYR_URL` is unset, **stop and tell the user**:
+
+> `TITAN_TYR_URL` is not set. Set it to the titan-tyr base URL before running this skill, e.g.
+> `export TITAN_TYR_URL=http://localhost:8000`.
+
+Don't guess. Don't default to localhost silently.
+
+## Workflow
+
+### 1. Confirm reachability and identify the software
+
+```sh
+curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
+  "$TITAN_TYR_URL/templates/software" -o /dev/null
+```
+
+- `200` → continue.
+- `401` → wrong token. Stop.
+- Connection refused → wrong URL or server down. Stop.
+
+Ask the user which software to update (the `name` they registered it
+under). If they don't remember, they can list candidates via the
+relevant `GET` endpoints — but pick a single name before continuing.
+
+### 2. Fetch current state
+
+Two reads, in parallel:
+
+```sh
+curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
+  "$TITAN_TYR_URL/software/{name}"
+curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
+  "$TITAN_TYR_URL/templates/software"
+```
+
+Note the current software `version` and `markdown` from the first
+response, and the active template body from the second. Pull the
+active template version off `GET /templates/software/proposals`'s
+`active_version` field (the markdown endpoint returns the body, not
+metadata).
+
+`404` on `/software/{name}` → the software is not registered. Stop
+and point at `/register-software`.
+
+### 3. Detect template-version drift
+
+Look for the **template-version stamp** at the top of the body:
+
+```html
+<!-- template: software@X.Y.Z -->
+```
+
+Three cases:
+
+- **Stamp matches active template version.** No template drift. The
+  body is structurally compliant; this is content-only.
+- **Stamp present but older.** Template drift exists. Diff the old
+  template body (stamp version) against the current active template
+  body so the user sees what changed structurally. Then plan a
+  migration (see step 4).
+- **No stamp.** The body pre-dates the stamp feature (introduced in
+  `software@2.1.0`). Treat as "unknown but probably drifted." Diff
+  the current body's structure against the active template; surface
+  any sections, columns, or placeholders that don't line up.
+
+Fetching an older template version is not currently exposed by the
+API — it stores the history but doesn't serve it. If the user needs
+the old template body for the diff, they can paste it; otherwise
+work from the current body's existing shape.
+
+### 4. Decide what's changing
+
+Ask the user to confirm scope:
+
+- **Content only.** Edit the existing body in place. Keep all
+  structure the body already has.
+- **Template migration only.** The software is unchanged but the body
+  needs to be reshaped onto the current template. Carry user-supplied
+  content forward; drop sections the new template no longer has;
+  initialise sections the new template added.
+- **Both.** Do the migration first (gives you a clean scaffold), then
+  apply content changes on top.
+
+Apply the same generic fill rules as `/register-software`:
+
+1. `<...>` placeholders are content slots; replace and drop brackets.
+2. Reserved meta-placeholders are filled by the skill:
+   - `<template-version>` → the active template version you just
+     fetched.
+3. Instructional blockquotes are filler-only; strip them.
+4. Pure-reference H3 subsections are filler-only; drop unless you
+   have real content for them.
+5. Don't invent H2 structure.
+
+The skill does not carry template-specific knowledge beyond this. If
+the user needs guidance on what a section *means*, that guidance lives
+in the template body's instructional blockquotes — read them, follow
+them, strip them on POST.
+
+### 5. Choose a new software version
+
+The new version must be **strictly greater** than the current one and
+plain `MAJOR.MINOR.PATCH` (no `-rcN` — software does not support
+pre-releases; only contract and template proposals do).
+
+Bump rationale is about the **software**, not the template. The
+template moving from 1.0.0 to 2.1.0 doesn't itself force a MAJOR bump
+on the software — pick based on what changed in *this software*:
+
+| Change                                                | Bump  |
+| ----------------------------------------------------- | ----- |
+| New Port, removed Port, breaking interface change     | MAJOR |
+| Refined Purpose, additional Notes, new optional info  | MINOR |
+| Typo / clarification only                             | PATCH |
+
+Pure template migration with no real content change is usually a
+PATCH bump — the software didn't change, the documentation just got
+re-shaped.
+
+### 6. Preview before submitting
+
+Show the user **the full new body** plus the version about to be
+submitted. Ask "ready to update?" Do not PUT until the user confirms.
+Iterate if they want changes.
+
+### 7. Submit
+
+Same scratch-file convention as the other skills — JSON via tool, not
+shell heredocs:
+
+```sh
+mkdir -p .scratch
+python3 -c "
+import json, pathlib
+print(json.dumps({
+    'version': 'X.Y.Z',
+    'markdown': pathlib.Path('.scratch/update-body.md').read_text(),
+}))
+" > .scratch/update-body.json
+
+curl -fsS -X PUT \
+     -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
+     -H "Content-Type: application/json" \
+     --data @.scratch/update-body.json \
+     "$TITAN_TYR_URL/software/{name}"
+```
+
+### 8. Report
+
+On `200`, summarise:
+
+> Updated `<name>` to version `<new-version>`.
+> Read it back: `curl -H 'Authorization: Bearer sysmlv2' $TITAN_TYR_URL/software/<name>`
+
+Note whether the update closed any template drift (stamp now matches
+active template), or whether it only addressed content.
+
+## Error handling
+
+| Status | Meaning                                                             | What to do                                                                  |
+| ------ | ------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `401`  | Bad bearer token                                                    | Stop. Tell user `TITAN_TYR_TOKEN` is wrong.                                 |
+| `404`  | Software not registered                                             | Stop. Point at `/register-software`.                                        |
+| `409`  | New `version` not strictly greater than current                     | Bump beyond current; suggest the next sensible value.                       |
+| `422`  | Malformed `version` (e.g. `1.0`, `1.0.0-rc1`)                       | Software versions are plain `MAJOR.MINOR.PATCH`, no RC suffix. Suggest a fix. |
+| `5xx`  | Server problem                                                      | Print response body verbatim. Do not retry.                                 |
+
+## Notes
+
+- This skill mutates a single software node's history. Acceptance-style
+  confirmation gates (as in `/accept-template-proposal`) are not needed
+  — `PUT /software/{name}` only affects this one software's reads, not
+  every caller's view of a template.
+- If the user is updating purely to close template drift, mention that
+  the propose/accept of the new template version was already the
+  cross-cutting change; this update is just bringing one node into
+  compliance. Other registered software may still be on older
+  templates.
+- `/register-software` and `/update-software` share the same generic
+  fill rules. If those rules grow, update both in lockstep.
