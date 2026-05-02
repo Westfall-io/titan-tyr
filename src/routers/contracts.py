@@ -1,19 +1,22 @@
 from __future__ import annotations
 
 import uuid
+from typing import Union
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth import require_password
 from src.db import get_session
 from src.models import Contract, ContractVersion, Software
-from src.routers.software import _latest_active_contract_version
+from src.pagination import DEFAULT_LIMIT, MAX_LIMIT, validate_limit
+from src.routers.software import _latest_active_contract_version, _list_active_contracts
 from src.schemas import (
     ContractCreate,
     ContractCreateResponse,
     ContractDetail,
+    ContractListResponse,
     ContractSearchResponse,
     ContractSearchResult,
 )
@@ -86,12 +89,30 @@ async def register_contract(
     )
 
 
-@router.get("", response_model=ContractSearchResponse)
-async def search_contracts(
-    owner: str,
-    counterparty: str,
+@router.get("", response_model=Union[ContractSearchResponse, ContractListResponse])
+async def list_or_search_contracts(
+    owner: str | None = Query(default=None),
+    counterparty: str | None = Query(default=None),
+    after: str | None = Query(default=None),
+    limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     session: AsyncSession = Depends(get_session),
-) -> ContractSearchResponse:
+):
+    # Search mode requires both filters; list mode requires neither.
+    if (owner is None) != (counterparty is None):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="owner and counterparty must be supplied together for search; supply neither to list.",
+        )
+
+    if owner is None:
+        # List mode: paginated summary of every contract with an active version.
+        limit = validate_limit(limit)
+        items, next_cursor = await _list_active_contracts(
+            session, after=after, limit=limit, touching_software_id=None
+        )
+        return ContractListResponse(results=items, next=next_cursor)
+
+    # Search mode: existing behaviour. Up to 2 results, full markdown.
     a = await _resolve_software(session, owner)
     b = await _resolve_software(session, counterparty)
 

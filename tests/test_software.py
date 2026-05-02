@@ -338,9 +338,12 @@ class TestSoftwareContracts:
 
         listing = (await client.get("/software/a/contracts")).json()
         assert listing["software"] == "a"
-        assert len(listing["contracts"]) == 2
-        owners = {c["owner"] for c in listing["contracts"]}
+        assert len(listing["results"]) == 2
+        owners = {c["owner"] for c in listing["results"]}
         assert owners == {"a", "c"}
+        # Listing should not include markdown bodies (per #7).
+        for entry in listing["results"]:
+            assert "markdown" not in entry
 
     async def test_unknown_software(self, client):
         r = await client.get("/software/missing/contracts")

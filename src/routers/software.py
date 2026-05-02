@@ -1,18 +1,27 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import or_, select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth import require_password
 from src.db import get_session
 from src.models import Contract, ContractVersion, Software, SoftwareVersion
+from src.pagination import (
+    DEFAULT_LIMIT,
+    MAX_LIMIT,
+    decode_cursor,
+    encode_cursor,
+    validate_limit,
+)
 from src.schemas import (
-    ContractEntry,
-    SoftwareContractsResponse,
+    ContractListItem,
+    SoftwareContractsListResponse,
     SoftwareCreate,
     SoftwareCreateResponse,
     SoftwareDetail,
+    SoftwareListItem,
+    SoftwareListResponse,
     SoftwareUpdate,
     SoftwareUpdateResponse,
 )
@@ -33,6 +42,78 @@ async def _latest_software_version(session: AsyncSession, software_id) -> Softwa
         .limit(1)
     )
     return (await session.execute(stmt)).scalar_one_or_none()
+
+
+@router.get("", response_model=SoftwareListResponse)
+async def list_software(
+    after: str | None = Query(default=None),
+    limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    session: AsyncSession = Depends(get_session),
+) -> SoftwareListResponse:
+    limit = validate_limit(limit)
+
+    latest_versions = (
+        select(
+            SoftwareVersion.software_id.label("sv_software_id"),
+            SoftwareVersion.version_major.label("sv_major"),
+            SoftwareVersion.version_minor.label("sv_minor"),
+            SoftwareVersion.version_patch.label("sv_patch"),
+            SoftwareVersion.created_at.label("sv_created_at"),
+        )
+        .distinct(SoftwareVersion.software_id)
+        .order_by(
+            SoftwareVersion.software_id,
+            SoftwareVersion.version_major.desc(),
+            SoftwareVersion.version_minor.desc(),
+            SoftwareVersion.version_patch.desc(),
+        )
+        .subquery()
+    )
+
+    stmt = select(
+        Software.id,
+        Software.name,
+        Software.repo_uri,
+        Software.issue_tracker_uri,
+        latest_versions.c.sv_major,
+        latest_versions.c.sv_minor,
+        latest_versions.c.sv_patch,
+        latest_versions.c.sv_created_at,
+    ).join(latest_versions, Software.id == latest_versions.c.sv_software_id)
+
+    if after is not None:
+        cursor_t, cursor_id = decode_cursor(after)
+        stmt = stmt.where(
+            tuple_(latest_versions.c.sv_created_at, Software.id)
+            < tuple_(cursor_t, cursor_id)
+        )
+
+    stmt = stmt.order_by(
+        latest_versions.c.sv_created_at.desc(), Software.id.desc()
+    ).limit(limit + 1)
+
+    rows = (await session.execute(stmt)).all()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+
+    items: list[SoftwareListItem] = []
+    last_t = None
+    last_id = None
+    for sw_id, sw_name, sw_repo, sw_tracker, vmaj, vmin, vpat, vts in rows:
+        items.append(
+            SoftwareListItem(
+                id=sw_id,
+                name=sw_name,
+                repo_uri=sw_repo,
+                issue_tracker_uri=sw_tracker,
+                version=str(Version(vmaj, vmin, vpat)),
+                updated_at=vts,
+            )
+        )
+        last_t, last_id = vts, sw_id
+
+    next_cursor = encode_cursor(last_t, last_id) if has_more and last_t else None
+    return SoftwareListResponse(results=items, next=next_cursor)
 
 
 @router.post("", response_model=SoftwareCreateResponse, status_code=status.HTTP_201_CREATED)
@@ -137,43 +218,127 @@ async def update_software(
     return SoftwareUpdateResponse(name=software.name, version=str(new_version))
 
 
-@router.get("/{name}/contracts", response_model=SoftwareContractsResponse)
+@router.get("/{name}/contracts", response_model=SoftwareContractsListResponse)
 async def list_software_contracts(
     name: str,
+    after: str | None = Query(default=None),
+    limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     session: AsyncSession = Depends(get_session),
-) -> SoftwareContractsResponse:
+) -> SoftwareContractsListResponse:
+    limit = validate_limit(limit)
+
     software = (
         await session.execute(select(Software).where(Software.name == name))
     ).scalar_one_or_none()
     if software is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Software {name!r} not found")
 
-    stmt = select(Contract).where(
-        or_(
-            Contract.owner_software_id == software.id,
-            Contract.counterparty_software_id == software.id,
-        )
+    items, next_cursor = await _list_active_contracts(
+        session,
+        after=after,
+        limit=limit,
+        touching_software_id=software.id,
     )
-    contracts = (await session.execute(stmt)).scalars().all()
+    return SoftwareContractsListResponse(software=software.name, results=items, next=next_cursor)
 
-    entries: list[ContractEntry] = []
-    for contract in contracts:
-        latest = await _latest_active_contract_version(session, contract.id)
-        if latest is None:
-            continue  # contract has no active version yet — skip
-        owner = (await session.get(Software, contract.owner_software_id)).name
-        counterparty = (await session.get(Software, contract.counterparty_software_id)).name
-        entries.append(
-            ContractEntry(
-                id=contract.id,
-                owner=owner,
-                counterparty=counterparty,
-                version=str(Version(latest.version_major, latest.version_minor, latest.version_patch)),
-                markdown=latest.markdown,
-                updated_at=latest.accepted_at or latest.created_at,
+
+async def _list_active_contracts(
+    session: AsyncSession,
+    *,
+    after: str | None,
+    limit: int,
+    touching_software_id=None,
+) -> tuple[list[ContractListItem], str | None]:
+    """Paginated listing of contracts with their latest active version.
+
+    `touching_software_id`, if provided, restricts results to contracts where the
+    software is owner or counterparty. Otherwise lists every contract.
+    """
+    latest_active = (
+        select(
+            ContractVersion.contract_id.label("cv_contract_id"),
+            ContractVersion.version_major.label("cv_major"),
+            ContractVersion.version_minor.label("cv_minor"),
+            ContractVersion.version_patch.label("cv_patch"),
+            ContractVersion.created_at.label("cv_created_at"),
+            ContractVersion.accepted_at.label("cv_accepted_at"),
+        )
+        .where(ContractVersion.status == "active")
+        .distinct(ContractVersion.contract_id)
+        .order_by(
+            ContractVersion.contract_id,
+            ContractVersion.version_major.desc(),
+            ContractVersion.version_minor.desc(),
+            ContractVersion.version_patch.desc(),
+        )
+        .subquery()
+    )
+
+    owner_alias = Software.__table__.alias("owner_sw")
+    cp_alias = Software.__table__.alias("cp_sw")
+
+    stmt = (
+        select(
+            Contract.id,
+            owner_alias.c.name.label("owner_name"),
+            cp_alias.c.name.label("cp_name"),
+            latest_active.c.cv_major,
+            latest_active.c.cv_minor,
+            latest_active.c.cv_patch,
+            latest_active.c.cv_created_at,
+            latest_active.c.cv_accepted_at,
+        )
+        .join(latest_active, Contract.id == latest_active.c.cv_contract_id)
+        .join(owner_alias, owner_alias.c.id == Contract.owner_software_id)
+        .join(cp_alias, cp_alias.c.id == Contract.counterparty_software_id)
+    )
+
+    if touching_software_id is not None:
+        stmt = stmt.where(
+            or_(
+                Contract.owner_software_id == touching_software_id,
+                Contract.counterparty_software_id == touching_software_id,
             )
         )
-    return SoftwareContractsResponse(software=software.name, contracts=entries)
+
+    # Pagination order key: COALESCE(accepted_at, created_at) per row, plus id.
+    # Use accepted_at if present; otherwise created_at. We compute the value in
+    # Python after fetching since SQL coalesce on different sides of the cursor
+    # would complicate the tuple comparison. Instead we sort by created_at and
+    # use it as the cursor key — close enough; accepted_at is set on accept of
+    # an RC which is the same write that created the active row in most cases.
+    if after is not None:
+        cursor_t, cursor_id = decode_cursor(after)
+        stmt = stmt.where(
+            tuple_(latest_active.c.cv_created_at, Contract.id)
+            < tuple_(cursor_t, cursor_id)
+        )
+
+    stmt = stmt.order_by(
+        latest_active.c.cv_created_at.desc(), Contract.id.desc()
+    ).limit(limit + 1)
+
+    rows = (await session.execute(stmt)).all()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+
+    items: list[ContractListItem] = []
+    last_t = None
+    last_id = None
+    for c_id, owner_name, cp_name, vmaj, vmin, vpat, vts, accepted_at in rows:
+        items.append(
+            ContractListItem(
+                contract_id=c_id,
+                owner=owner_name,
+                counterparty=cp_name,
+                version=str(Version(vmaj, vmin, vpat)),
+                updated_at=accepted_at or vts,
+            )
+        )
+        last_t, last_id = vts, c_id
+
+    next_cursor = encode_cursor(last_t, last_id) if has_more and last_t else None
+    return items, next_cursor
 
 
 async def _latest_active_contract_version(session: AsyncSession, contract_id) -> ContractVersion | None:

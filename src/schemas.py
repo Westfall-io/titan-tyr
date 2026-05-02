@@ -114,18 +114,37 @@ class SoftwareDetail(BaseModel):
     updated_at: datetime
 
 
-class ContractEntry(BaseModel):
+class SoftwareListItem(BaseModel):
     id: uuid.UUID
-    owner: str
-    counterparty: str
+    name: str
+    repo_uri: str
+    issue_tracker_uri: str | None
     version: str
-    markdown: str
     updated_at: datetime
 
 
-class SoftwareContractsResponse(BaseModel):
+class SoftwareListResponse(BaseModel):
+    results: list[SoftwareListItem]
+    next: str | None
+
+
+class ContractListItem(BaseModel):
+    contract_id: uuid.UUID
+    owner: str
+    counterparty: str
+    version: str
+    updated_at: datetime
+
+
+class ContractListResponse(BaseModel):
+    results: list[ContractListItem]
+    next: str | None
+
+
+class SoftwareContractsListResponse(BaseModel):
     software: str
-    contracts: list[ContractEntry]
+    results: list[ContractListItem]
+    next: str | None
 
 
 # ---------- Contracts ----------

@@ -21,6 +21,24 @@ at `/docs` and `/redoc` when the API is running.
   `-rcN` suffix.
 - Errors are returned as `{"detail": "..."}` per FastAPI convention.
 
+### Listing pagination
+
+`GET /software`, `GET /contracts` (list mode), and
+`GET /software/{name}/contracts` are paginated.
+
+- **Cursor-based.** Pass `?after=<cursor>` to continue from where the
+  previous page ended. The cursor is an opaque base64-url-safe string;
+  do not decode it.
+- **Limit.** Default `50`, max `100`. `?limit=<n>` to override.
+  Out-of-range → `422`.
+- **Sort.** Most-recently-updated first. For software, "updated" is the
+  latest version's `created_at`; for contracts, the latest active
+  version's `accepted_at` (falling back to `created_at`).
+- **Response shape.** `{"results": [...], "next": "<cursor>" | null}`.
+  `next` is `null` on the last page.
+- **Listings omit `markdown`.** Follow up with the per-row GET endpoint
+  for the body.
+
 ---
 
 ## Health
@@ -154,6 +172,40 @@ The constraint exists because names appear in URL paths
 `owner_software` / `counterparty_software` references — anything that
 would need URL-encoding or be awkward to grep is rejected at the door.
 
+### `GET /software` — list registered software (paginated)
+
+```sh
+curl -H 'Authorization: Bearer sysmlv2' \
+  'http://localhost:8000/software?limit=2'
+```
+
+`200` response:
+```json
+{
+  "results": [
+    {
+      "id": "12c3a4b5-...",
+      "name": "payments-service",
+      "repo_uri": "https://github.com/example/payments-service",
+      "issue_tracker_uri": null,
+      "version": "2.1.0",
+      "updated_at": "2026-04-29T14:30:00Z"
+    },
+    {
+      "id": "98765432-...",
+      "name": "orders-service",
+      "repo_uri": "https://github.com/example/orders-service",
+      "issue_tracker_uri": "https://example.atlassian.net/browse/ORD",
+      "version": "1.4.2",
+      "updated_at": "2026-04-28T09:00:00Z"
+    }
+  ],
+  "next": "eyJ0IjoiMjAyNi0wNC0yOFQwOTowMDowMFoiLCJpIjoiOTg3NjU0MzItLi4uIn0"
+}
+```
+
+To fetch the next page, call again with `?after=<next>`.
+
 ### `POST /software` — register a new software node
 
 ```sh
@@ -258,32 +310,40 @@ Errors:
 - `422 Unprocessable Entity` — malformed `version`, `repo_uri` set to
   null or empty string, or `issue_tracker_uri` not a valid `https://` URL.
 
-### `GET /software/{name}/contracts` — every contract touching this software
+### `GET /software/{name}/contracts` — contracts touching this software (paginated)
 
 Returns each contract where this software appears as either owner or
-counterparty, with that contract's latest active version.
+counterparty, with that contract's latest active version. Paginated.
+**Markdown is not included** — follow up with `GET /contracts/{id}` for
+the body.
 
 ```sh
 curl -H 'Authorization: Bearer sysmlv2' \
-     http://localhost:8000/software/payments-service/contracts
+     'http://localhost:8000/software/payments-service/contracts?limit=10'
 ```
 
 `200` response:
 ```json
 {
   "software": "payments-service",
-  "contracts": [
+  "results": [
     {
-      "id": "ab12cd34-...",
+      "contract_id": "ab12cd34-...",
       "owner": "payments-service",
       "counterparty": "orders-service",
       "version": "1.2.0",
-      "markdown": "...",
       "updated_at": "2026-04-15T09:14:00Z"
     }
-  ]
+  ],
+  "next": null
 }
 ```
+
+Pagination follows the conventions described above.
+
+> **Breaking change in v0.6.0**: this endpoint previously returned a
+> `contracts` key with full markdown bodies. It now returns `results`
+> (no markdown) and a `next` cursor for pagination.
 
 ---
 
@@ -326,17 +386,19 @@ Errors:
   malformed `version`, or either software reference is not a valid
   slug (see Software name format above).
 
-### `GET /contracts?owner={a}&counterparty={b}` — search by software pair
+### `GET /contracts` — list or search contracts
 
+Two modes, dispatched by query parameters:
+
+**Search mode** (`?owner=…&counterparty=…`) — both filters present.
 Returns the active contract(s) between the two software nodes, in
-either direction. Zero, one, or two results.
+either direction. Zero, one, or two results. Includes full `markdown`.
 
 ```sh
 curl -H 'Authorization: Bearer sysmlv2' \
      'http://localhost:8000/contracts?owner=payments-service&counterparty=orders-service'
 ```
 
-`200` response (e.g. when only `payments → orders` exists):
 ```json
 {
   "results": [
@@ -353,6 +415,32 @@ curl -H 'Authorization: Bearer sysmlv2' \
 ```
 
 `404` if either software does not exist.
+
+**List mode** (no `owner` and no `counterparty`) — paginated summary of
+every contract with an active version. **No markdown** in list items.
+
+```sh
+curl -H 'Authorization: Bearer sysmlv2' \
+     'http://localhost:8000/contracts?limit=20'
+```
+
+```json
+{
+  "results": [
+    {
+      "contract_id": "ab12cd34-...",
+      "owner": "payments-service",
+      "counterparty": "orders-service",
+      "version": "1.2.0",
+      "updated_at": "2026-04-15T09:14:00Z"
+    }
+  ],
+  "next": null
+}
+```
+
+**Half-filter** (`?owner=…` alone or `?counterparty=…` alone) → `422`.
+Search requires both filters; list requires neither.
 
 ### `GET /contracts/{contract_id}` — latest active contract by id
 
