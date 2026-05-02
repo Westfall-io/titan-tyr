@@ -23,8 +23,9 @@ at `/docs` and `/redoc` when the API is running.
 
 ### CORS
 
-The API serves CORS-permissive responses to browser clients, but only
-for an allow-listed set of origins:
+The API serves CORS-permissive responses to browser clients from an
+allow-listed set of origins. The default allow-list (when no env vars
+are set) is:
 
 - `https://digitalforge.app` (apex)
 - `https://*.digitalforge.app` (any subdomain)
@@ -42,6 +43,32 @@ For a non-allow-listed `Origin`, the API still serves the response
 
 The bearer token travels in the `Authorization` header, not as a
 cookie, so `Access-Control-Allow-Credentials` is not set.
+
+#### Configuring the allow-list per deployment
+
+Two env vars, read once at startup. Precedence is top-to-bottom:
+
+| Env var                 | When set                                                                                                                            |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `CORS_ALLOW_ANY_ORIGIN` | `=true` → fully open (`Access-Control-Allow-Origin: *` for any `Origin`). Opt-in only; never the default. Use sparingly.            |
+| `CORS_ALLOWED_ORIGINS`  | Comma-separated list of literal origins (`scheme://host[:port]`) that **replaces** the source-hardcoded default verbatim.           |
+| _(neither set)_         | Falls back to the default allow-list above.                                                                                         |
+
+Example:
+
+```
+CORS_ALLOWED_ORIGINS=https://watchervault.example.com,https://other-tenant.example.com,http://localhost:8765
+```
+
+Per-entry rules: scheme must be `http` or `https`; host required;
+optional port; no path, query, fragment, or trailing slash. Whitespace
+around commas is trimmed; empty entries are skipped. Plain `*` is
+**rejected** — use `CORS_ALLOW_ANY_ORIGIN=true` if that's what you
+mean. Wildcard subdomains (e.g. `https://*.example.com`) are out of
+scope for this env var; those need source-side regex configuration.
+
+Invalid entries fail the API at startup with a clear error, so
+misconfiguration is loud, not silent.
 
 ### Listing pagination
 
@@ -75,12 +102,12 @@ No `Authorization` header required — orchestrators don't carry one.
 
 `200` response when the API can reach Postgres:
 ```json
-{ "status": "ok", "version": "0.7.1", "db": "reachable" }
+{ "status": "ok", "version": "0.7.2", "db": "reachable" }
 ```
 
 `503` response when the DB query fails:
 ```json
-{ "status": "degraded", "version": "0.7.1", "db": "unreachable" }
+{ "status": "degraded", "version": "0.7.2", "db": "unreachable" }
 ```
 
 `version` is the running titan-tyr package version (resolved from

@@ -69,7 +69,7 @@ DATABASE_URL='postgresql+asyncpg://titan:titan@localhost:5432/titan_tyr' \
 ```sh
 # Smoke test (no auth required — the /health endpoint is the orchestrator probe)
 curl http://localhost:8000/health
-# → {"status":"ok","version":"0.7.1","db":"reachable"}
+# → {"status":"ok","version":"0.7.2","db":"reachable"}
 
 # Sanity check on the auth path
 curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/software
@@ -78,7 +78,7 @@ curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/software
 ## Run from Docker
 
 ```sh
-docker build -t titan-tyr:0.7.1 .
+docker build -t titan-tyr:0.7.2 .
 ```
 
 The image runs as a non-root `app` user, exposes port 8000, and bundles
@@ -90,12 +90,12 @@ step *before* the API container starts:
 # 1. Apply migrations (one-shot)
 docker run --rm \
   -e DATABASE_URL='postgresql+asyncpg://titan:titan@host.docker.internal:5432/titan_tyr' \
-  titan-tyr:0.7.1 alembic upgrade head
+  titan-tyr:0.7.2 alembic upgrade head
 
 # 2. Serve the API
 docker run --rm -p 8000:8000 \
   -e DATABASE_URL='postgresql+asyncpg://titan:titan@host.docker.internal:5432/titan_tyr' \
-  titan-tyr:0.7.1
+  titan-tyr:0.7.2
 ```
 
 (In Compose / Kubernetes, the migrate step is a `depends_on` job or an
@@ -113,9 +113,11 @@ Authorization: Bearer sysmlv2
 
 ## Configuration
 
-| Env var        | Required | Description                                                          |
-| -------------- | -------- | -------------------------------------------------------------------- |
-| `DATABASE_URL` | yes      | Async DSN, e.g. `postgresql+asyncpg://user:pw@host:5432/titan_tyr`   |
+| Env var                 | Required | Description                                                                                                                            |
+| ----------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`          | yes      | Async DSN, e.g. `postgresql+asyncpg://user:pw@host:5432/titan_tyr`                                                                     |
+| `CORS_ALLOWED_ORIGINS`  | no       | Comma-separated literal origins replacing the default CORS allow-list. See [docs/api.md § CORS](./docs/api.md#cors).                   |
+| `CORS_ALLOW_ANY_ORIGIN` | no       | `true` opens CORS to any origin (`*`). Opt-in only. Takes precedence over `CORS_ALLOWED_ORIGINS`.                                      |
 
 ## Run the tests
 
