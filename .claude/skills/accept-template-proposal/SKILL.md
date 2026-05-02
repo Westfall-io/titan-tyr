@@ -146,8 +146,16 @@ similar). Don't auto-do them — surface them and ask.
   just `accepted_at` set and status changed.
 - **Templates only.** This skill drives `POST /templates/{kind}/proposals/{version}/accept`.
   Contract proposals have a parallel endpoint
-  (`POST /contracts/{contract_id}/proposals/{version}/accept`) — out
-  of scope for this skill; build a sibling if/when needed.
+  (`POST /contracts/{contract_id}/proposals/{version}/accept`) —
+  that's `/accept-contract-proposal`'s job.
+- **"Owner accepts" is governance language, not an API gate.**
+  Templates don't have an owner field, but the same caveat that
+  applies to contract proposals applies here: any caller with a valid
+  bearer token can hit `/accept`. In single-operator setups, the
+  agent should run `/accept` itself rather than defer to another
+  party. Only defer when there are genuinely separate teams with
+  conflicting interests, and then only as a process choice, not a
+  technical constraint.
 - **No --data file is needed**, so the JSON-via-file scratch dance the
   other two skills use does not apply here.
 - **There is no reject endpoint.** If you don't like a proposal, the

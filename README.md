@@ -169,3 +169,6 @@ auto-available in Claude Code when run from this repo. Invoke with
   `software` or `contract` template. Does not auto-accept.
 - `/accept-template-proposal` — promote an open template proposal to
   the new active version. Mutates what every caller sees.
+- `/accept-contract-proposal` — promote an open contract proposal to
+  the new active version. Helps pick the contract (by id, by software,
+  or from a list), shows a unified diff vs the active body.
