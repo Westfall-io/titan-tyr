@@ -150,3 +150,9 @@ similar). Don't auto-do them — surface them and ask.
   of scope for this skill; build a sibling if/when needed.
 - **No --data file is needed**, so the JSON-via-file scratch dance the
   other two skills use does not apply here.
+- **There is no reject endpoint.** If you don't like a proposal, the
+  response is to counter-propose a higher version that reflects what
+  you do want, then accept that. Proposals can't be torn down — they
+  stay in `*_versions` for history and drop out of
+  `GET .../proposals` once the active version moves past them. By
+  design; see DESIGN.md → Open Questions §1.

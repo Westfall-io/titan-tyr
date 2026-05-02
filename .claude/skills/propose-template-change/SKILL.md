@@ -183,3 +183,11 @@ you asked for that.")
 - This skill is for **template content**, not for the API's behavior.
   Endpoint changes go through the regular PR / DESIGN.md flow, not
   through `POST /templates/...`.
+- **There is no withdraw or reject.** Once a proposal is POSTed it
+  stays in the database. If you decide the proposal is wrong before
+  it's accepted, propose a higher version that reflects what you
+  actually want and accept that. The dangling earlier proposal is
+  preserved for history and drops out of `GET .../proposals` once the
+  active version moves past it. Same on the receiver side
+  (`/accept-template-proposal`) — the response to a proposal you don't
+  like is a counter-proposal, not a rejection.

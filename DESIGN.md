@@ -131,10 +131,13 @@ proposal/RC machinery, same accept-time invariants — because templates
 are mutated through the same propose-then-accept flow.
 
 `status` is a `TEXT` column with a `CHECK` constraint, not a Postgres
-`ENUM`. The set of allowed values will evolve (rejected, withdrawn,
-superseded, …) and `ALTER TYPE` is half-supported and irreversible —
-`TEXT + CHECK` lets us add or remove values with a single migration that
-drops and recreates the constraint.
+`ENUM`. The set of allowed values is small today (`active`, `proposal`)
+but may grow (e.g. `superseded` if we start tagging rows whose newer
+version has been accepted). `ALTER TYPE` for ENUMs is half-supported
+and irreversible; `TEXT + CHECK` lets us add or remove values with a
+single migration that drops and recreates the constraint. Note that
+`rejected` / `withdrawn` are intentionally *not* in the planned set —
+see Open Questions §1.
 
 ### Versioning scheme
 
@@ -698,9 +701,16 @@ changes, and constraint tightening on populated tables.
 
 ## Open questions
 
-1. **Proposal rejection** — accepting a proposal is defined; explicit
-   rejection is not. Do we need a status for "rejected" / "withdrawn",
-   or is leaving stale proposals on the edge acceptable?
+1. ~~**Proposal rejection**~~ — **Resolved (2026-05-02): no withdrawal
+   or rejection mechanism, by design.** A proposal is the initiation of
+   a conversation between two components because the current definition
+   is insufficient — it must be resolved, not abandoned. The recourse
+   when a proposal is wrong is to make a higher-version proposal on top
+   (the existing RC iteration flow already supports this within a
+   target version; cross-target counter-proposals work the same way).
+   Stale proposals stay in `*_versions` for posterity, mirroring the
+   "RCs preserved on accept" pattern, and are filtered out of
+   `GET .../proposals` once the active version moves past them.
 2. **Contract direction** — the model treats `(A→B)` and `(B→A)` as
    distinct contracts. Confirm this matches how callers think about
    interfaces, or collapse to undirected.
