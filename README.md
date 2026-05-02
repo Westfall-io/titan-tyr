@@ -143,3 +143,13 @@ docs/               getting-started, api reference (also see DESIGN.md)
   schema, versioning rules, migration policy, open questions.
 - [`AGENTS.md`](./AGENTS.md) — operating rules for AI coding agents
   working in this repo.
+
+## Claude Code skills
+
+Project-level skills under [`.claude/skills/`](./.claude/skills/) are
+auto-available in Claude Code when run from this repo. Invoke with
+`/<skill-name>`. They expect `TITAN_TYR_URL` (and optionally
+`TITAN_TYR_TOKEN`) in the environment.
+
+- `/register-software` — walk through registering a software node
+  against a running titan-tyr.
