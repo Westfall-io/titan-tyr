@@ -156,29 +156,33 @@ want changes, iterate — re-show after each edit.
 
 ### 6. Submit
 
-```sh
-curl -fsS -X POST \
-     -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
-     -H "Content-Type: application/json" \
-     --data @/tmp/body.json \
-     "$TITAN_TYR_URL/software"
-```
+**Scratch files must live inside the project.** Do not write to `/tmp`,
+`$HOME`, or any path outside the working directory. Use `.scratch/` at
+the repo root (gitignored — create it if it doesn't exist) and clean up
+after.
 
 **Build the JSON body via a tool, not via shell heredocs or `-d "..."`.**
 The markdown will contain backticks, pipes, asterisks, double quotes,
 and unicode characters; `--data @file.json` written by Python or `jq`
-sidesteps every shell-escaping landmine. Example:
+sidesteps every shell-escaping landmine.
 
 ```sh
+mkdir -p .scratch
 python3 -c "
 import json, pathlib
 print(json.dumps({
     'name': 'payments-service',
     'repo_uri': 'https://github.com/example/payments-service',
-    'markdown': pathlib.Path('/tmp/body.md').read_text(),
+    'markdown': pathlib.Path('.scratch/body.md').read_text(),
     'version': '1.0.0',
 }))
-" > /tmp/body.json
+" > .scratch/body.json
+
+curl -fsS -X POST \
+     -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
+     -H "Content-Type: application/json" \
+     --data @.scratch/body.json \
+     "$TITAN_TYR_URL/software"
 ```
 
 ### 7. Report the result

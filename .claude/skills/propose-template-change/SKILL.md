@@ -117,21 +117,27 @@ If they want changes, iterate — re-show after each edit.
 Build the JSON via a tool, not shell heredocs or `-d "..."`. Template
 bodies will contain backticks, pipes, asterisks, double quotes, and
 unicode — `--data @file.json` written by Python sidesteps every
-shell-escaping landmine:
+shell-escaping landmine.
+
+**Scratch files must live inside the project.** Do not write to `/tmp`,
+`$HOME`, or any path outside the working directory. Use `.scratch/` at
+the repo root (gitignored — create it if it doesn't exist) and clean up
+after.
 
 ```sh
+mkdir -p .scratch
 python3 -c "
 import json, pathlib
 print(json.dumps({
     'version': 'X.Y.Z',  # or 'X.Y.Z-rcN'
-    'markdown': pathlib.Path('/tmp/template-proposal.md').read_text(),
+    'markdown': pathlib.Path('.scratch/template-proposal.md').read_text(),
 }))
-" > /tmp/template-proposal.json
+" > .scratch/template-proposal.json
 
 curl -fsS -X POST \
      -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
      -H "Content-Type: application/json" \
-     --data @/tmp/template-proposal.json \
+     --data @.scratch/template-proposal.json \
      "$TITAN_TYR_URL/templates/{kind}/proposals"
 ```
 
