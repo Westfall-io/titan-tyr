@@ -51,6 +51,30 @@ class TestRegister:
         )
         assert r.status_code == 404
 
+    async def test_non_slug_owner_rejected(self, client):
+        await _register_pair(client)
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_software": "Bad Name",
+                "counterparty_software": "b",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 422
+
+    async def test_non_slug_counterparty_rejected(self, client):
+        await _register_pair(client)
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_software": "a",
+                "counterparty_software": "Has.Dot",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 422
+
     async def test_duplicate_pair_conflicts(self, client):
         await _register_pair(client)
         await _new_contract(client)

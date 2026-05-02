@@ -1,3 +1,5 @@
+import pytest
+
 SAMPLE_MD = "# payments-service\n\nDescribes the payments service."
 
 
@@ -42,6 +44,44 @@ class TestRegister:
         r = await client.post(
             "/software",
             json={"name": "bad", "repo_uri": "u", "markdown": "m", "version": "1.0"},
+        )
+        assert r.status_code == 422
+
+
+class TestNameValidation:
+    @pytest.mark.parametrize("name", [
+        "x",
+        "ab",
+        "payments-service",
+        "a1",
+        "1a",
+        "abc-123-def",
+        "a" * 64,
+    ])
+    async def test_accepts_slug(self, client, name):
+        r = await client.post(
+            "/software",
+            json={"name": name, "repo_uri": "u", "markdown": "m"},
+        )
+        assert r.status_code == 201, r.text
+
+    @pytest.mark.parametrize("name", [
+        "",                          # empty
+        "Capital",                   # uppercase
+        "name with spaces",          # spaces
+        "weird.name",                # dot
+        "weird/name",                # slash
+        "weird_name",                # underscore
+        "-leading-hyphen",
+        "trailing-hyphen-",
+        "a" * 65,                    # too long
+        "name@example",              # punctuation
+        "café",                 # non-ascii
+    ])
+    async def test_rejects_non_slug(self, client, name):
+        r = await client.post(
+            "/software",
+            json={"name": name, "repo_uri": "u", "markdown": "m"},
         )
         assert r.status_code == 422
 

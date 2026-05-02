@@ -132,6 +132,28 @@ posterity.
 
 ## Software
 
+### Software name format
+
+`name` on `POST /software` and the `owner_software` / `counterparty_software`
+fields on `POST /contracts` are validated against a slug pattern:
+
+```
+^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$
+```
+
+- Lowercase letters, digits, hyphens.
+- 1–64 characters.
+- Cannot start or end with a hyphen.
+- No spaces, dots, slashes, underscores, or other punctuation.
+- Examples that pass: `payments-service`, `titan-tyr`, `a1`, `x`.
+- Examples that fail (`422 Unprocessable Entity`): `My Service`,
+  `weird.name`, `-leading`, `trailing-`, `name@example`, `café`.
+
+The constraint exists because names appear in URL paths
+(`GET /software/{name}`) and inside contract markdown as
+`owner_software` / `counterparty_software` references — anything that
+would need URL-encoding or be awkward to grep is rejected at the door.
+
 ### `POST /software` — register a new software node
 
 ```sh
@@ -164,8 +186,9 @@ host (no `http://`, no `mailto:`, no bare paths).
 
 Errors:
 - `409 Conflict` — name already taken.
-- `422 Unprocessable Entity` — malformed `version` (or `-rcN` suffix),
-  or `issue_tracker_uri` not a valid `https://` URL.
+- `422 Unprocessable Entity` — `name` not a valid slug (see above),
+  malformed `version` (or `-rcN` suffix), or `issue_tracker_uri` not a
+  valid `https://` URL.
 
 ### `GET /software/{name}` — latest description
 
@@ -300,7 +323,8 @@ Errors:
   `counterparty_software` already exists. To change it, use
   `POST /contracts/{contract_id}/proposals`.
 - `422 Unprocessable Entity` — `owner_software == counterparty_software`,
-  or malformed `version`.
+  malformed `version`, or either software reference is not a valid
+  slug (see Software name format above).
 
 ### `GET /contracts?owner={a}&counterparty={b}` — search by software pair
 
