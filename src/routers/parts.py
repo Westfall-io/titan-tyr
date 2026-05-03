@@ -351,6 +351,7 @@ async def _list_active_contracts(
     limit: int,
     touching_part_id=None,
     subtype: str | None = None,
+    connection_type: str | None = None,
 ) -> tuple[list[ContractListItem], str | None]:
     """Paginated listing of contracts with their latest active version.
 
@@ -359,6 +360,11 @@ async def _list_active_contracts(
 
     `subtype`, if provided, restricts results to contracts of that subtype
     (validated by the caller against CONTRACT_SUBTYPES).
+
+    `connection_type`, if provided, restricts results to that connection
+    label (only meaningful when subtype='connection'; the caller validates
+    against CONNECTION_TYPES and rejects mismatched subtype/connection_type
+    combos).
     """
     latest_active = (
         select(
@@ -387,6 +393,7 @@ async def _list_active_contracts(
         select(
             Contract.id,
             Contract.subtype,
+            Contract.connection_type,
             owner_alias.c.name.label("owner_name"),
             cp_alias.c.name.label("cp_name"),
             latest_active.c.cv_major,
@@ -410,6 +417,9 @@ async def _list_active_contracts(
 
     if subtype is not None:
         stmt = stmt.where(Contract.subtype == subtype)
+
+    if connection_type is not None:
+        stmt = stmt.where(Contract.connection_type == connection_type)
 
     # Pagination order key: COALESCE(accepted_at, created_at) per row, plus id.
     # Use accepted_at if present; otherwise created_at. We compute the value in
@@ -435,13 +445,14 @@ async def _list_active_contracts(
     items: list[ContractListItem] = []
     last_t = None
     last_id = None
-    for c_id, c_subtype, owner_name, cp_name, vmaj, vmin, vpat, vts, accepted_at in rows:
+    for c_id, c_subtype, c_conn_type, owner_name, cp_name, vmaj, vmin, vpat, vts, accepted_at in rows:
         items.append(
             ContractListItem(
                 contract_id=c_id,
                 owner=owner_name,
                 counterparty=cp_name,
                 subtype=c_subtype,
+                connection_type=c_conn_type,
                 version=str(Version(vmaj, vmin, vpat)),
                 updated_at=accepted_at or vts,
             )

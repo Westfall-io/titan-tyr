@@ -282,3 +282,255 @@ class TestBindingSubtype:
             client, owner="ctr", counterparty="svc", subtype="interaction"
         )
         assert body["subtype"] == "interaction"
+
+
+class TestConnectionSubtype:
+    """Connection contracts (#32): structural binding with no data flow.
+
+    Six labels distinguish the kinds of structural binding. Two
+    (`depends-on`, `submodule`) work today; the other four reference
+    Part subtypes (`image`, `pod`, `compose`) that aren't implemented
+    yet — they reject at registration with a 'not yet implemented'
+    error rather than silently 404'ing on the part lookup.
+    """
+
+    async def test_register_depends_on_container_to_container(self, client):
+        await _register_part(client, "c1", subtype="container")
+        await _register_part(client, "c2", subtype="container")
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "c1",
+                "counterparty_part": "c2",
+                "subtype": "connection",
+                "connection_type": "depends-on",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert body["subtype"] == "connection"
+        assert body["connection_type"] == "depends-on"
+
+    async def test_register_submodule_software_to_software(self, client):
+        await _register_pair(client)
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "a",
+                "counterparty_part": "b",
+                "subtype": "connection",
+                "connection_type": "submodule",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["connection_type"] == "submodule"
+
+    async def test_connection_type_required_when_subtype_connection(self, client):
+        await _register_pair(client)
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "a",
+                "counterparty_part": "b",
+                "subtype": "connection",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 422
+        assert "connection_type" in r.json()["detail"]
+
+    async def test_connection_type_rejected_when_subtype_not_connection(self, client):
+        await _register_pair(client)
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "a",
+                "counterparty_part": "b",
+                "subtype": "interaction",
+                "connection_type": "submodule",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 422
+        assert "only valid when subtype" in r.json()["detail"]
+
+    async def test_unknown_connection_type_rejected(self, client):
+        await _register_pair(client)
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "a",
+                "counterparty_part": "b",
+                "subtype": "connection",
+                "connection_type": "nonsense",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 422
+
+    async def test_depends_on_owner_must_be_container(self, client):
+        # Software → container with depends-on is rejected.
+        await _register_part(client, "a", subtype="software")
+        await _register_part(client, "c", subtype="container")
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "a",
+                "counterparty_part": "c",
+                "subtype": "connection",
+                "connection_type": "depends-on",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 422
+        assert "container" in r.json()["detail"]
+
+    async def test_submodule_owner_must_be_software(self, client):
+        # Container → software with submodule is rejected.
+        await _register_part(client, "c", subtype="container")
+        await _register_part(client, "s", subtype="software")
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "c",
+                "counterparty_part": "s",
+                "subtype": "connection",
+                "connection_type": "submodule",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 422
+        assert "software" in r.json()["detail"]
+
+    async def test_builds_from_rejected_image_not_implemented(self, client):
+        # `builds-from` requires an image counterparty; image subtype
+        # isn't implemented yet — clear "not yet implemented" error.
+        await _register_part(client, "repo", subtype="software")
+        await _register_part(client, "other", subtype="software")
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "repo",
+                "counterparty_part": "other",
+                "subtype": "connection",
+                "connection_type": "builds-from",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 422
+        detail = r.json()["detail"]
+        assert "image" in detail
+        assert "not yet implemented" in detail
+
+    async def test_member_of_rejected_compose_not_implemented(self, client):
+        # `member-of` requires a compose counterparty; compose subtype
+        # isn't implemented yet.
+        await _register_part(client, "ctr", subtype="container")
+        await _register_part(client, "other", subtype="container")
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "ctr",
+                "counterparty_part": "other",
+                "subtype": "connection",
+                "connection_type": "member-of",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 422
+        detail = r.json()["detail"]
+        assert "compose" in detail
+        assert "not yet implemented" in detail
+
+    async def test_connection_type_returned_on_get(self, client):
+        await _register_part(client, "c1", subtype="container")
+        await _register_part(client, "c2", subtype="container")
+        body = await _register_connection_depends_on(client, "c1", "c2")
+        r = await client.get(f"/contracts/{body['contract_id']}")
+        assert r.status_code == 200
+        assert r.json()["connection_type"] == "depends-on"
+
+    async def test_connection_type_returned_on_search(self, client):
+        await _register_part(client, "c1", subtype="container")
+        await _register_part(client, "c2", subtype="container")
+        await _register_connection_depends_on(client, "c1", "c2")
+        r = await client.get(
+            "/contracts", params={"owner": "c1", "counterparty": "c2"}
+        )
+        assert r.status_code == 200
+        results = r.json()["results"]
+        assert results[0]["connection_type"] == "depends-on"
+
+    async def test_connection_type_returned_on_list(self, client):
+        await _register_part(client, "c1", subtype="container")
+        await _register_part(client, "c2", subtype="container")
+        await _register_connection_depends_on(client, "c1", "c2")
+        r = await client.get("/contracts")
+        assert r.status_code == 200
+        results = r.json()["results"]
+        assert len(results) == 1
+        assert results[0]["connection_type"] == "depends-on"
+
+    async def test_connection_type_filter(self, client):
+        # Two connections of different types; ?connection_type=depends-on
+        # returns only the depends-on row.
+        for name in ("a", "b"):
+            await _register_part(client, name, subtype="software")
+        for name in ("c1", "c2"):
+            await _register_part(client, name, subtype="container")
+        await _register_connection_depends_on(client, "c1", "c2")
+        await client.post(
+            "/contracts",
+            json={
+                "owner_part": "a",
+                "counterparty_part": "b",
+                "subtype": "connection",
+                "connection_type": "submodule",
+                "markdown": "m",
+            },
+        )
+        r = await client.get(
+            "/contracts",
+            params={"subtype": "connection", "connection_type": "depends-on"},
+        )
+        assert r.status_code == 200
+        results = r.json()["results"]
+        assert len(results) == 1
+        assert results[0]["connection_type"] == "depends-on"
+
+    async def test_connection_type_filter_only_with_subtype_connection(self, client):
+        # connection_type filter with subtype=interaction is rejected.
+        r = await client.get(
+            "/contracts",
+            params={"subtype": "interaction", "connection_type": "depends-on"},
+        )
+        assert r.status_code == 422
+
+    async def test_connection_type_filter_unknown_value_rejected(self, client):
+        r = await client.get("/contracts", params={"connection_type": "nonsense"})
+        assert r.status_code == 422
+
+    async def test_connection_type_null_for_non_connection(self, client):
+        # interaction and binding contracts have connection_type = null.
+        await _register_pair(client)
+        body = await _new_contract(client, subtype="interaction")
+        assert body["connection_type"] is None
+        r = await client.get(f"/contracts/{body['contract_id']}")
+        assert r.json()["connection_type"] is None
+
+
+async def _register_connection_depends_on(client, owner, counterparty):
+    r = await client.post(
+        "/contracts",
+        json={
+            "owner_part": owner,
+            "counterparty_part": counterparty,
+            "subtype": "connection",
+            "connection_type": "depends-on",
+            "markdown": "m",
+        },
+    )
+    assert r.status_code == 201, r.text
+    return r.json()

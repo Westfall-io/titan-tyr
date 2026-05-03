@@ -75,7 +75,8 @@ gave you:
   Render `owner → counterparty [<subtype>] v<version>` and ask which
   one. If the result set is paginated (`next` is non-null), warn that
   you've shown the first page and offer to drill in by part name (or
-  by `?subtype=<interaction|binding>`) instead.
+  by `?subtype=<interaction|binding|connection>` (and optionally
+  `?connection_type=<label>` when `subtype=connection`)) instead.
 
 ### 3. Fetch the current active body
 
@@ -116,7 +117,7 @@ will need to be checked against it. Fetch the template state now so
 you have it in hand:
 
 ```sh
-# subtype came from step 3's contract body (interaction | binding)
+# subtype came from step 3's contract body (interaction | binding | connection)
 curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
   "$TITAN_TYR_URL/templates/<subtype>/proposals" \
   | python3 -c "
@@ -157,12 +158,12 @@ matching the contract's subtype:
 
 - `<!-- template: interaction@X.Y.Z -->` for `interaction` contracts
 - `<!-- template: binding@X.Y.Z -->` for `binding` contracts
+- `<!-- template: connection@X.Y.Z -->` for `connection` contracts (#32)
 - `<!-- template: contract@X.Y.Z -->` is **legacy** — the `contract`
   template kind was renamed to `interaction` in titan-tyr v0.10.0
-  (#24) and a sibling `binding` kind was added. Any modern contract
-  carrying `contract@` is by definition stamp-stale and must be
-  re-stamped to `interaction@` (or `binding@` if it's actually a
-  binding contract that escaped the rename).
+  (#24) and the sibling `binding` and `connection` kinds were added.
+  Any modern contract carrying `contract@` is by definition
+  stamp-stale and must be re-stamped to the correct subtype kind.
 
 Compare the proposed body's stamp against the template state from
 step 4b:

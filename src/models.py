@@ -104,8 +104,19 @@ class Contract(Base):
             name="owner_ne_counterparty",
         ),
         CheckConstraint(
-            "subtype IN ('interaction', 'binding')",
+            "subtype IN ('interaction', 'binding', 'connection')",
             name="ck_contracts_subtype_allowed",
+        ),
+        CheckConstraint(
+            "(subtype = 'connection' AND connection_type IS NOT NULL) "
+            "OR (subtype <> 'connection' AND connection_type IS NULL)",
+            name="ck_contracts_connection_type_required",
+        ),
+        CheckConstraint(
+            "connection_type IS NULL OR connection_type IN "
+            "('builds-from', 'instantiates', 'runs', "
+            "'member-of', 'depends-on', 'submodule')",
+            name="ck_contracts_connection_type_allowed",
         ),
     )
 
@@ -121,6 +132,7 @@ class Contract(Base):
         UUID(as_uuid=True), ForeignKey("parts.id"), nullable=False
     )
     subtype: Mapped[str] = mapped_column(String, nullable=False)
+    connection_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -136,7 +148,7 @@ class Template(Base):
     __tablename__ = "templates"
     __table_args__ = (
         CheckConstraint(
-            "kind IN ('software', 'container', 'interaction', 'binding')",
+            "kind IN ('software', 'container', 'interaction', 'binding', 'connection')",
             name="kind_allowed",
         ),
     )

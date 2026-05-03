@@ -21,8 +21,28 @@ PART_NAME_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 PART_SUBTYPES: tuple[str, ...] = ("software", "container")
 PartSubtype = Literal["software", "container"]
 
-CONTRACT_SUBTYPES: tuple[str, ...] = ("interaction", "binding")
-ContractSubtype = Literal["interaction", "binding"]
+CONTRACT_SUBTYPES: tuple[str, ...] = ("interaction", "binding", "connection")
+ContractSubtype = Literal["interaction", "binding", "connection"]
+
+# Connection sub-discriminator. Each label has its own From/To Part type rule
+# enforced in the contracts router; the schema layer just constrains the
+# enum. See docs/api.md and #32 for the full per-label rule table.
+CONNECTION_TYPES: tuple[str, ...] = (
+    "builds-from",
+    "instantiates",
+    "runs",
+    "member-of",
+    "depends-on",
+    "submodule",
+)
+ConnectionType = Literal[
+    "builds-from",
+    "instantiates",
+    "runs",
+    "member-of",
+    "depends-on",
+    "submodule",
+]
 
 
 def _validate_part_name(v: str) -> str:
@@ -185,6 +205,7 @@ class ContractListItem(BaseModel):
     owner: str
     counterparty: str
     subtype: ContractSubtype
+    connection_type: ConnectionType | None = None
     version: str
     updated_at: datetime
 
@@ -207,6 +228,7 @@ class ContractCreate(BaseModel):
     owner_part: str
     counterparty_part: str
     subtype: ContractSubtype
+    connection_type: ConnectionType | None = None
     markdown: str
     version: str = "1.0.0"
 
@@ -220,6 +242,7 @@ class ContractCreateResponse(BaseModel):
     owner: str
     counterparty: str
     subtype: ContractSubtype
+    connection_type: ConnectionType | None = None
     version: str
     status: str
 
@@ -229,6 +252,7 @@ class ContractSearchResult(BaseModel):
     owner: str
     counterparty: str
     subtype: ContractSubtype
+    connection_type: ConnectionType | None = None
     version: str
     markdown: str
     updated_at: datetime
@@ -243,6 +267,7 @@ class ContractDetail(BaseModel):
     owner: str
     counterparty: str
     subtype: ContractSubtype
+    connection_type: ConnectionType | None = None
     version: str
     markdown: str
     updated_at: datetime

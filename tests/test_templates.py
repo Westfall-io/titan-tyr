@@ -1,5 +1,6 @@
 from tests.conftest import (
     SEED_BINDING_TEMPLATE,
+    SEED_CONNECTION_TEMPLATE,
     SEED_CONTAINER_TEMPLATE,
     SEED_INTERACTION_TEMPLATE,
     SEED_SOFTWARE_TEMPLATE,
@@ -30,6 +31,12 @@ class TestGetTemplate:
         assert r.status_code == 200
         assert "text/markdown" in r.headers["content-type"]
         assert r.text == SEED_BINDING_TEMPLATE
+
+    async def test_connection_template(self, client):
+        r = await client.get("/templates/connection")
+        assert r.status_code == 200
+        assert "text/markdown" in r.headers["content-type"]
+        assert r.text == SEED_CONNECTION_TEMPLATE
 
     async def test_unknown_kind_404(self, client):
         r = await client.get("/templates/nonexistent")

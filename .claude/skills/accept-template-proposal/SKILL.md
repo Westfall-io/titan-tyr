@@ -1,6 +1,6 @@
 ---
 name: accept-template-proposal
-description: Promote an open titan-tyr template proposal (software, container, interaction, or binding) to the new active version. Use when the user wants to land a previously-proposed template change — e.g. "accept the template proposal", "promote 2.0.0-rc1 to active", "make this the new template". Lists open proposals, confirms which one to accept, and POSTs to /templates/{kind}/proposals/{version}/accept. Acceptance changes what every caller sees on `GET /templates/{kind}` — confirm before submitting.
+description: Promote an open titan-tyr template proposal (software, container, interaction, binding, or connection) to the new active version. Use when the user wants to land a previously-proposed template change — e.g. "accept the template proposal", "promote 2.0.0-rc1 to active", "make this the new template". Lists open proposals, confirms which one to accept, and POSTs to /templates/{kind}/proposals/{version}/accept. Acceptance changes what every caller sees on `GET /templates/{kind}` — confirm before submitting.
 ---
 
 # accept-template-proposal
@@ -44,13 +44,14 @@ curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
 - `401` → wrong token. Stop.
 - Connection refused → wrong URL or server down. Stop.
 
-Ask which template the user wants to accept against. Four kinds today,
+Ask which template the user wants to accept against. Five kinds today,
 one per part subtype and one per contract subtype:
 
 - **`software`** — for software parts (codebases / deployables)
 - **`container`** — for container parts (running instances)
-- **`interaction`** — for interaction contracts (env-agnostic, any pair)
-- **`binding`** — for binding contracts (container → software, env-specific)
+- **`interaction`** — for interaction contracts (env-agnostic, any pair, runtime data flows)
+- **`binding`** — for binding contracts (container → software, env-specific runtime address)
+- **`connection`** — for connection contracts (structural binding, no runtime data flow)
 
 (The legacy `contract` kind was renamed to `interaction` in v0.10.0
 and is no longer accepted.)
@@ -150,6 +151,7 @@ Pick the audit recipe based on the kind that just landed:
 | `container`     | `GET $TITAN_TYR_URL/parts?subtype=container&limit=100`                                                                  | Same — `GET /parts/{name}`, check stamp.                                                          |
 | `interaction`   | `GET $TITAN_TYR_URL/contracts?subtype=interaction&limit=100`                                                            | `GET /contracts/{contract_id}`, check stamp on line 1 of `markdown`.                              |
 | `binding`       | `GET $TITAN_TYR_URL/contracts?subtype=binding&limit=100`                                                                | `GET /contracts/{contract_id}`, check stamp.                                                      |
+| `connection`    | `GET $TITAN_TYR_URL/contracts?subtype=connection&limit=100`                                                             | `GET /contracts/{contract_id}`, check stamp.                                                      |
 
 A compact one-liner:
 
@@ -176,9 +178,9 @@ auto-file the issues** — surface the list and let the user confirm
 scope first. Once confirmed, file one realign issue per resource on
 the *owner* side (see realign convention below).
 
-**Realign convention for contract templates** (`interaction`/`binding`):
-file the realign ticket on the **counterparty side only**, not on
-both sides of every contract. The contract owner naturally re-stamps
+**Realign convention for contract templates** (`interaction` /
+`binding` / `connection`): file the realign ticket on the
+**counterparty side only**, not on both sides of every contract. The contract owner naturally re-stamps
 during their own acceptance flow when they propose the next change;
 filing on both sides duplicates work. For part templates
 (`software`/`container`), file on the part owner — there's no

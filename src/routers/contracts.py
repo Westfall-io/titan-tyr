@@ -19,6 +19,7 @@ from src.pagination import (
 )
 from src.routers.parts import _latest_active_contract_version, _list_active_contracts
 from src.schemas import (
+    CONNECTION_TYPES,
     CONTRACT_SUBTYPES,
     ContractCreate,
     ContractCreateResponse,
@@ -32,6 +33,44 @@ from src.schemas import (
 from src.versioning import Version
 
 router = APIRouter(prefix="/contracts", tags=["contracts"], dependencies=[Depends(require_password)])
+
+# Per-label From/To Part subtype rules for connection contracts (#32).
+# `allowed_owner` / `allowed_counterparty` are sets of allowed subtype
+# strings. Subtype strings referenced here that don't yet exist as Part
+# subtypes (today: 'image', 'pod', 'compose') are detected at registration
+# and rejected with a "not yet implemented" error rather than silently
+# 404'ing on the part lookup.
+_PART_SUBTYPES_IMPLEMENTED: set[str] = {"software", "container"}
+
+CONNECTION_RULES: dict[str, dict[str, set[str]]] = {
+    "builds-from":  {"owner": {"software"},          "counterparty": {"image"}},
+    "instantiates": {"owner": {"image"},             "counterparty": {"container", "pod"}},
+    "runs":         {"owner": {"container", "pod"},  "counterparty": {"software"}},
+    "member-of":    {"owner": {"container"},         "counterparty": {"compose"}},
+    "depends-on":   {"owner": {"container"},         "counterparty": {"container"}},
+    "submodule":    {"owner": {"software"},          "counterparty": {"software"}},
+}
+
+
+def _check_part_subtype_implemented(
+    role: str, part_name: str, required: set[str]
+) -> None:
+    """422 if the rule requires a Part subtype that isn't implemented yet.
+
+    `required` is the rule's allow-set for the role; if every allowed
+    subtype is unimplemented, surface a clear 'not yet implemented'
+    error citing the missing subtypes.
+    """
+    unimplemented = required - _PART_SUBTYPES_IMPLEMENTED
+    if unimplemented and not (required & _PART_SUBTYPES_IMPLEMENTED):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"this connection_type requires {role}_part subtype in "
+                f"{sorted(unimplemented)}, which is not yet implemented; "
+                f"see #32 for the deferred Part subtype tracking issues"
+            ),
+        )
 
 
 async def _resolve_part(session: AsyncSession, name: str) -> Part:
@@ -51,12 +90,33 @@ async def register_contract(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="owner_part and counterparty_part must differ",
         )
+
+    # `connection_type` is required iff subtype == 'connection'. Pre-validate
+    # at the router layer so the user gets a clear message; the DB CHECK
+    # constraint is a backstop.
+    if payload.subtype == "connection" and payload.connection_type is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="connection_type is required when subtype='connection'",
+        )
+    if payload.subtype != "connection" and payload.connection_type is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"connection_type is only valid when subtype='connection'; "
+                f"got subtype={payload.subtype!r}"
+            ),
+        )
+
     owner = await _resolve_part(session, payload.owner_part)
     counterparty = await _resolve_part(session, payload.counterparty_part)
 
-    # Subtype-specific source/target enforcement. Today only `binding` has
-    # rules; `interaction` accepts any (part, part) pair, preserving today's
-    # behaviour.
+    # Subtype-specific source/target enforcement.
+    # - `interaction` accepts any (part, part) pair (no rule to apply).
+    # - `binding` enforces container → software (existing behaviour).
+    # - `connection` enforces per-label rules from CONNECTION_RULES, and
+    #   surfaces a deferred-subtype error early when the rule references
+    #   Part subtypes that aren't implemented yet.
     if payload.subtype == "binding":
         if owner.subtype != "container":
             raise HTTPException(
@@ -71,6 +131,30 @@ async def register_contract(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=(
                     f"binding contracts require counterparty_part subtype 'software'; "
+                    f"{counterparty.name!r} is {counterparty.subtype!r}"
+                ),
+            )
+    elif payload.subtype == "connection":
+        rule = CONNECTION_RULES[payload.connection_type]
+        _check_part_subtype_implemented("owner", owner.name, rule["owner"])
+        _check_part_subtype_implemented(
+            "counterparty", counterparty.name, rule["counterparty"]
+        )
+        if owner.subtype not in rule["owner"]:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"connection_type {payload.connection_type!r} requires "
+                    f"owner_part subtype in {sorted(rule['owner'])}; "
+                    f"{owner.name!r} is {owner.subtype!r}"
+                ),
+            )
+        if counterparty.subtype not in rule["counterparty"]:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"connection_type {payload.connection_type!r} requires "
+                    f"counterparty_part subtype in {sorted(rule['counterparty'])}; "
                     f"{counterparty.name!r} is {counterparty.subtype!r}"
                 ),
             )
@@ -95,6 +179,7 @@ async def register_contract(
         owner_part_id=owner.id,
         counterparty_part_id=counterparty.id,
         subtype=payload.subtype,
+        connection_type=payload.connection_type,
     )
     session.add(contract)
     await session.flush()
@@ -116,6 +201,7 @@ async def register_contract(
         owner=owner.name,
         counterparty=counterparty.name,
         subtype=payload.subtype,
+        connection_type=payload.connection_type,
         version=str(version),
         status="active",
     )
@@ -126,6 +212,7 @@ async def list_or_search_contracts(
     owner: str | None = Query(default=None),
     counterparty: str | None = Query(default=None),
     subtype: str | None = Query(default=None),
+    connection_type: str | None = Query(default=None),
     after: str | None = Query(default=None),
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     session: AsyncSession = Depends(get_session),
@@ -145,11 +232,34 @@ async def list_or_search_contracts(
             ),
         )
 
+    if connection_type is not None:
+        if connection_type not in CONNECTION_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"connection_type must be one of {sorted(CONNECTION_TYPES)}; "
+                    f"got {connection_type!r}"
+                ),
+            )
+        if subtype is not None and subtype != "connection":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "connection_type filter is only valid with subtype='connection'; "
+                    f"got subtype={subtype!r}"
+                ),
+            )
+
     if owner is None:
         # List mode: paginated summary of every contract with an active version.
         limit = validate_limit(limit)
         items, next_cursor = await _list_active_contracts(
-            session, after=after, limit=limit, touching_part_id=None, subtype=subtype
+            session,
+            after=after,
+            limit=limit,
+            touching_part_id=None,
+            subtype=subtype,
+            connection_type=connection_type,
         )
         return ContractListResponse(results=items, next=next_cursor)
 
@@ -171,6 +281,8 @@ async def list_or_search_contracts(
     )
     if subtype is not None:
         stmt = stmt.where(Contract.subtype == subtype)
+    if connection_type is not None:
+        stmt = stmt.where(Contract.connection_type == connection_type)
     contracts = (await session.execute(stmt)).scalars().all()
 
     results: list[ContractSearchResult] = []
@@ -186,6 +298,7 @@ async def list_or_search_contracts(
                 owner=owner_name,
                 counterparty=cp_name,
                 subtype=c.subtype,
+                connection_type=c.connection_type,
                 version=str(Version(latest.version_major, latest.version_minor, latest.version_patch)),
                 markdown=latest.markdown,
                 updated_at=latest.accepted_at or latest.created_at,
@@ -212,6 +325,7 @@ async def get_contract(
         owner=owner,
         counterparty=counterparty,
         subtype=contract.subtype,
+        connection_type=contract.connection_type,
         version=str(Version(latest.version_major, latest.version_minor, latest.version_patch)),
         markdown=latest.markdown,
         updated_at=latest.accepted_at or latest.created_at,

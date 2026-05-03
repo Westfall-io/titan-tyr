@@ -123,21 +123,25 @@ there's an actual orchestrator that benefits from the distinction.
 
 ## Templates
 
-The four templates (`software`, `container`, `interaction`, `binding`)
-live in Postgres as versioned markdown. They are mutated through the
-same propose/accept flow as contracts — see Proposals below for the
-full RC behaviour, the shape carries over here unchanged.
+The five templates (`software`, `container`, `interaction`, `binding`,
+`connection`) live in Postgres as versioned markdown. They are mutated
+through the same propose/accept flow as contracts — see Proposals
+below for the full RC behaviour, the shape carries over here unchanged.
 
 Every template kind matches a subtype: `software`/`container` are the
-two part subtypes; `interaction`/`binding` are the two contract
-subtypes. The matching template is fetched at registration time
-depending on which subtype the caller is creating.
+two part subtypes; `interaction`/`binding`/`connection` are the three
+contract subtypes. The matching template is fetched at registration
+time depending on which subtype the caller is creating.
 
 > **Breaking change in v0.10.0**: template kind `contract` was renamed
 > to `interaction` to match the new contract subtype names. Callers
 > hitting `/templates/contract` will get `404` — switch to
 > `/templates/interaction`. The body content is unchanged (the same
 > `templates` row, just with a renamed `kind`).
+
+> **New in v0.11.0**: template kind `connection` added (#32) — the
+> body for the new `connection` contract subtype. See the Contracts
+> section for the per-label From/To Part type rules.
 
 ### `GET /templates/{kind}` — latest active template
 
@@ -146,11 +150,12 @@ curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/software
 curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/container
 curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/interaction
 curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/binding
+curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/connection
 ```
 
-`kind` ∈ `{software, container, interaction, binding}`. Response is
-`text/markdown` of the latest stable active version. RC-suffixed
-versions are never returned here.
+`kind` ∈ `{software, container, interaction, binding, connection}`.
+Response is `text/markdown` of the latest stable active version.
+RC-suffixed versions are never returned here.
 
 `404` if `kind` is unknown.
 
@@ -531,14 +536,39 @@ Contracts are directed edges between two parts. Every contract carries
 a `subtype` discriminator that selects which template was used to fill
 its body and which validation rules apply at registration:
 
-| Subtype       | What it represents                                                                | Source (owner_part) | Target (counterparty_part) |
-| ------------- | --------------------------------------------------------------------------------- | ------------------- | -------------------------- |
-| `interaction` | Protocol/schema-level agreement (HTTP API, queue topic, RPC). Env-agnostic.       | any                 | any                        |
-| `binding`     | Deployment address binding from a container to a software part. Env-specific.     | `container`         | `software`                 |
+| Subtype       | What it represents                                                                       | Source (owner_part)             | Target (counterparty_part)            |
+| ------------- | ---------------------------------------------------------------------------------------- | ------------------------------- | ------------------------------------- |
+| `interaction` | Protocol/schema-level agreement (HTTP API, queue topic, RPC). Env-agnostic. Runtime data flows. | any                             | any                                   |
+| `binding`     | Deployment address binding from a container to a software part. Env-specific. Runtime.   | `container`                     | `software`                            |
+| `connection`  | Structural binding declared in build/config/deploy artifacts. **No runtime data flow.**  | depends on `connection_type`    | depends on `connection_type`          |
 
 The `subtype` field is required at registration time and is
 **immutable** afterward (no PUT path mutates it; subsequent versions
 go through propose/accept).
+
+#### Connection sub-discriminator
+
+`connection` contracts additionally carry a `connection_type` label
+selecting one of six structural binding kinds. The label is required
+when `subtype = "connection"` and rejected for any other subtype. Each
+label has its own From/To Part subtype rule:
+
+| `connection_type` | Owner part subtype  | Counterparty part subtype | What it records                                     |
+| ----------------- | ------------------- | ------------------------- | --------------------------------------------------- |
+| `builds-from`     | `software`          | `image`                   | Repository builds into image (Dockerfile + CI)      |
+| `instantiates`    | `image`             | `container` or `pod`      | Image is run as a container or pod                  |
+| `runs`            | `container` or `pod`| `software`                | Runtime hosts a specific software process            |
+| `member-of`       | `container`         | `compose`                 | Container is a service entry in a compose stack     |
+| `depends-on`      | `container`         | `container`               | Startup ordering within a compose stack              |
+| `submodule`       | `software`          | `software`                | One repository includes another via `.gitmodules`   |
+
+Labels referencing Part subtypes that are **not yet implemented**
+(`image`, `pod`, `compose`) reject at registration with a clear "not
+yet implemented" error. Today only `depends-on` and `submodule` work
+end-to-end. Tracking issues:
+- `image` Part subtype → see follow-up issue
+- `pod` Part subtype → deferred per #24, see follow-up issue
+- `compose` Part subtype → see follow-up issue
 
 The unique constraint is on `(owner_part_id, counterparty_part_id)` —
 subtype is **not** part of the key, so `A → B` can hold one contract
@@ -559,11 +589,18 @@ curl -H 'Authorization: Bearer sysmlv2' \
      http://localhost:8000/contracts
 ```
 
-`subtype` is **required** and must be one of `interaction`, `binding`.
+`subtype` is **required** and must be one of `interaction`, `binding`,
+`connection`.
 
 For `binding` specifically, the API additionally enforces:
 - `owner_part.subtype == "container"`
 - `counterparty_part.subtype == "software"`
+
+For `connection` specifically:
+- `connection_type` is **required** (one of the six labels above)
+- The per-label From/To rule applies (see table above)
+- Labels referencing un-implemented Part subtypes reject at
+  registration with a "not yet implemented" error
 
 `interaction` has no source/target subtype constraints — any (part,
 part) pair is valid (preserves today's behaviour).
@@ -589,10 +626,14 @@ Errors:
   `counterparty_part` already exists in any subtype. To change it, use
   `POST /contracts/{contract_id}/proposals`.
 - `422 Unprocessable Entity` — `owner_part == counterparty_part`,
-  `subtype` missing or not one of `interaction`/`binding`, malformed
-  `version`, either part reference is not a valid slug (see Part name
-  format above), or `binding` source/target subtype mismatch (e.g. a
-  `binding` contract with a software owner).
+  `subtype` missing or not one of `interaction`/`binding`/`connection`,
+  `connection_type` missing/wrong (required iff `subtype=connection`,
+  rejected otherwise), malformed `version`, either part reference is
+  not a valid slug (see Part name format above), `binding`
+  source/target subtype mismatch (e.g. a `binding` contract with a
+  software owner), `connection` source/target subtype mismatch per the
+  per-label rule, or a `connection_type` whose required Part subtype
+  is not yet implemented.
 
 ### `GET /contracts` — list or search contracts
 
@@ -649,7 +690,7 @@ curl -H 'Authorization: Bearer sysmlv2' \
 }
 ```
 
-#### `?subtype=<interaction|binding>` — filter by subtype
+#### `?subtype=<interaction|binding|connection>` — filter by subtype
 
 ```sh
 curl -H 'Authorization: Bearer sysmlv2' \
@@ -658,7 +699,24 @@ curl -H 'Authorization: Bearer sysmlv2' \
 
 Restricts results to contracts of the named subtype. Combines with
 both modes (search and list). `422` if the value is anything other
-than `interaction` or `binding`.
+than `interaction`, `binding`, or `connection`.
+
+#### `?connection_type=<label>` — filter by connection sub-label
+
+```sh
+curl -H 'Authorization: Bearer sysmlv2' \
+  'http://localhost:8000/contracts?subtype=connection&connection_type=depends-on'
+```
+
+Only meaningful with `subtype=connection`. Combining
+`?connection_type=` with `?subtype=interaction` or `?subtype=binding`
+→ `422`. Unknown label values → `422` listing the six allowed labels.
+
+> **New in v0.11.0**: `connection` subtype + `connection_type`
+> sub-discriminator (#32). Existing rows are unaffected; their
+> `connection_type` is `null`. Listings, search, and detail responses
+> include `connection_type` for every contract; it is `null` for
+> `interaction` and `binding`.
 
 **Half-filter** (`?owner=…` alone or `?counterparty=…` alone) → `422`.
 Search requires both filters; list requires neither.

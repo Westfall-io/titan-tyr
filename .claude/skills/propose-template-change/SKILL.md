@@ -1,14 +1,15 @@
 ---
 name: propose-template-change
-description: Propose a change to one of titan-tyr's templates (`software`, `container`, `interaction`, `binding`). Use when the user wants to update the canonical template content served by /templates/{kind} — e.g. "propose changing the interaction template", "draft a template change", "I want to update the software template", "tweak the binding template". Fetches current state, applies the user's edit, picks a version, and POSTs to /templates/{kind}/proposals. Does NOT accept the proposal — acceptance is a deliberate separate step.
+description: Propose a change to one of titan-tyr's templates (`software`, `container`, `interaction`, `binding`, `connection`). Use when the user wants to update the canonical template content served by /templates/{kind} — e.g. "propose changing the interaction template", "draft a template change", "I want to update the software template", "tweak the binding template", "update the connection template". Fetches current state, applies the user's edit, picks a version, and POSTs to /templates/{kind}/proposals. Does NOT accept the proposal — acceptance is a deliberate separate step.
 ---
 
 # propose-template-change
 
 You are drafting a proposed change to one of titan-tyr's templates.
-The current set is `software`, `container`, `interaction`, `binding` —
-two for each subtype dimension (parts: software/container, contracts:
-interaction/binding). Templates live in Postgres and evolve through a
+The current set is `software`, `container`, `interaction`, `binding`,
+`connection` — one per part subtype (parts: software/container) and
+one per contract subtype (contracts: interaction/binding/connection).
+Templates live in Postgres and evolve through a
 propose / accept / RC flow — same machinery as contracts. This skill
 **creates the proposal**; it never accepts. Acceptance is the user's
 explicit next step (`POST /templates/{kind}/proposals/{version}/accept`).
@@ -45,8 +46,8 @@ curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
 - Connection refused → wrong URL or server down. Stop.
 
 Ask which template the user wants to change: one of **`software`**,
-**`container`**, **`interaction`**, **`binding`**. Those are the only
-valid `kind` values.
+**`container`**, **`interaction`**, **`binding`**, **`connection`**.
+Those are the only valid `kind` values.
 
 ### 2. Fetch the current active template
 
@@ -169,7 +170,7 @@ you asked for that.")
 | Status | Meaning                                            | What to do                                                                  |
 | ------ | -------------------------------------------------- | --------------------------------------------------------------------------- |
 | `401`  | Bad bearer token                                   | Stop. Tell user `TITAN_TYR_TOKEN` is wrong.                                 |
-| `404`  | Unknown `kind` (not one of `software`, `container`, `interaction`, `binding`) | Stop. Re-check the kind value.                                              |
+| `404`  | Unknown `kind` (not one of `software`, `container`, `interaction`, `binding`, `connection`) | Stop. Re-check the kind value.                                              |
 | `409`  | `version` not strictly greater than latest         | Bump beyond the current max (active + any open proposals). Suggest a value. |
 | `422`  | Malformed `version`                                | Format is `^\d+\.\d+\.\d+(-rc\d+)?$`. No `alpha`/`beta` suffixes.           |
 | `5xx`  | Server problem                                     | Print response body verbatim. Do not retry.                                 |

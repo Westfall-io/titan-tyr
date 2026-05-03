@@ -1,14 +1,14 @@
 ---
 name: register-contract
-description: Register a new contract between two parts already in titan-tyr. Branches on subtype — currently `interaction` (the existing protocol/schema agreement, e.g. "Software A calls Software B over HTTP") or `binding` (an environment-specific deployment binding, e.g. "Container payments-prod is reachable at host=payments-prod, port=8080 by software payments-service"). Use when the user wants to create a new contract — e.g. "register a contract from X to Y", "create the binding for payments-prod", "we need an interaction contract between the API and the UI". Picks the two part endpoints (with ?match= autocomplete), fetches the matching template (`/templates/interaction` or `/templates/binding`), fills it, and POSTs to `/contracts`. Initial creation is `active` immediately — no propose/accept dance for v1.0.0; that's by design.
+description: Register a new contract between two parts already in titan-tyr. Branches on subtype — `interaction` (protocol/schema agreement, e.g. "Software A calls Software B over HTTP"), `binding` (environment-specific deployment binding, e.g. "Container payments-prod is reachable at host=payments-prod, port=8080 by software payments-service"), or `connection` (structural binding declared in build/config/deploy artifacts with no runtime data flow, e.g. "this image is built from this repo", "this container depends on that container at startup"). Use when the user wants to create a new contract — e.g. "register a contract from X to Y", "create the binding for payments-prod", "we need an interaction contract between the API and the UI", "record the depends-on between containers". Picks the two part endpoints (with ?match= autocomplete), fetches the matching template, fills it, and POSTs to `/contracts`. Initial creation is `active` immediately — no propose/accept dance for v1.0.0; that's by design.
 ---
 
 # register-contract
 
 You are helping the user register a new contract — a directed edge
-between two parts in titan-tyr's graph. Per #24, contracts come in
-subtypes — currently `interaction` and `binding`. The skill walks
-through `POST /contracts`.
+between two parts in titan-tyr's graph. Contracts come in three
+subtypes: `interaction` (#24), `binding` (#24), and `connection`
+(#32). The skill walks through `POST /contracts`.
 
 Both part endpoints must already exist as registered nodes — if
 either is missing, hand off to `/register-part` first. Only one
@@ -52,24 +52,46 @@ curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
 ### 2. Pick the subtype
 
 Ask the user which kind of contract they want, or infer from context.
-The two subtypes encode different agreements with different validation
-rules:
+The three subtypes encode different agreements with different
+validation rules:
 
-| Subtype       | What it describes                                                            | Source (owner_part) | Target (counterparty_part) |
-| ------------- | ---------------------------------------------------------------------------- | ------------------- | -------------------------- |
-| `interaction` | Protocol/schema-level agreement (HTTP API, queue topic, RPC). Env-agnostic.  | any                 | any                        |
-| `binding`     | Deployment address binding (host/port/protocol from container to software). Env-specific. | `container`         | `software`                 |
+| Subtype       | What it describes                                                                                    | Source (owner_part)            | Target (counterparty_part)            |
+| ------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------ | ------------------------------------- |
+| `interaction` | Protocol/schema-level agreement (HTTP API, queue topic, RPC). Env-agnostic. Runtime data flows.      | any                            | any                                   |
+| `binding`     | Deployment address binding (host/port/protocol from container to software). Env-specific. Runtime.   | `container`                    | `software`                            |
+| `connection`  | Structural binding declared in build/config/deploy artifacts. **No runtime data flow.**              | depends on `connection_type`   | depends on `connection_type`          |
 
 Quick rule of thumb:
 
 - "How does A talk to B?" / "What's the schema?" → **interaction**
 - "Where does the running container expose itself?" / "How does the software find its address?" → **binding**
+- "What does X build from / instantiate / depend on at startup / include as a submodule?" → **connection**
+- Test for connection vs interaction/binding: if the relationship is declared in a Dockerfile, compose file, k8s manifest, or `.gitmodules` and **no data flows at runtime**, it's a `connection`. If it's expressed in running application code or carries a runtime address, it's `interaction` or `binding`.
 
 If the user says "contract" without qualifying, default to `interaction`
 (today's existing behaviour) and confirm.
 
-The subtype determines which template you fetch in step 5 and shapes
-the validation in step 6.
+If the user picked `connection`, also pick the **connection_type** —
+one of six labels:
+
+| `connection_type` | Owner part subtype  | Counterparty part subtype | What it records                                     |
+| ----------------- | ------------------- | ------------------------- | --------------------------------------------------- |
+| `builds-from`     | `software`          | `image`                   | Repository builds into image (Dockerfile + CI)      |
+| `instantiates`    | `image`             | `container` or `pod`      | Image is run as a container or pod                  |
+| `runs`            | `container` or `pod`| `software`                | Runtime hosts a specific software process            |
+| `member-of`       | `container`         | `compose`                 | Container is a service entry in a compose stack     |
+| `depends-on`      | `container`         | `container`               | Startup ordering within a compose stack              |
+| `submodule`       | `software`          | `software`                | One repository includes another via `.gitmodules`   |
+
+Labels referencing Part subtypes that are **not yet implemented**
+(`image`, `pod`, `compose`) reject at registration. Today only
+`depends-on` and `submodule` work end-to-end. If the user picks one
+of the deferred labels, surface that early and ask whether to proceed
+(the API will 422 with a clear "not yet implemented" message) or pick
+a different label.
+
+The subtype determines which template you fetch in step 7 and shapes
+the validation in step 4.
 
 ### 3. Resolve the two part endpoints
 
@@ -97,16 +119,20 @@ part, **stop**: the API will `404` and you can't proceed.
 Point the user at `/register-part` to create the missing node
 first, then come back.
 
-### 4. Subtype-specific validation (binding only)
+### 4. Subtype-specific validation
 
-For `binding`, the API enforces:
+Pre-flight the per-subtype rules so the user gets a clear message
+before the POST instead of a 422 after.
+
+**`interaction`** — no source/target constraints. Any (part, part)
+pair is valid.
+
+**`binding`** — the API enforces:
 
 - `owner_part.subtype == "container"` (the source must be a container)
 - `counterparty_part.subtype == "software"` (the target must be a software part)
 
-If either side fails this check, **stop early** with a clear message
-to the user — don't bother POSTing, the API will `422` with the same
-message. Examples of what to catch:
+Examples to catch:
 
 - User gave two software parts → "binding from software → software
   doesn't make sense; you probably want subtype `interaction`"
@@ -115,9 +141,20 @@ message. Examples of what to catch:
 - Source is a container but target is also a container → tell them and
   ask what they meant.
 
-For `interaction`, no source/target subtype constraints apply — any
-(part, part) pair is valid. (Interaction is the catch-all subtype that
-preserves today's behaviour.)
+**`connection`** — the per-label table from step 2 is the source of
+truth. For each `connection_type`, owner and counterparty must each
+match the rule's allow-set. Two failure modes worth distinguishing:
+
+1. **Wrong subtype for an implemented label.** E.g. `depends-on` with
+   `owner.subtype == "software"`. Tell the user the rule, suggest the
+   correct subtype (or a different label that fits what they have).
+2. **Label requires an un-implemented Part subtype.** Labels
+   `builds-from`, `instantiates`, `runs` (pod arm), `member-of`
+   reference `image`, `pod`, or `compose` — none of which exist yet.
+   Surface this as "not yet implemented; tracked in <follow-up
+   issue>" and ask whether to abort or pick a different label.
+
+If either check fails, **stop early** — don't POST.
 
 ### 5. Confirm direction
 
@@ -180,10 +217,11 @@ If `results` is empty, continue.
 
 The template path depends on the subtype you picked in step 2:
 
-| Subtype       | Template URL                       |
-| ------------- | ---------------------------------- |
-| `interaction` | `$TITAN_TYR_URL/templates/interaction` |
-| `binding`     | `$TITAN_TYR_URL/templates/binding`     |
+| Subtype       | Template URL                              |
+| ------------- | ----------------------------------------- |
+| `interaction` | `$TITAN_TYR_URL/templates/interaction`    |
+| `binding`     | `$TITAN_TYR_URL/templates/binding`        |
+| `connection`  | `$TITAN_TYR_URL/templates/connection`     |
 
 ```sh
 curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
@@ -267,13 +305,17 @@ every shell-escaping landmine.
 mkdir -p .scratch
 python3 -c "
 import json, pathlib
-print(json.dumps({
+payload = {
     'owner_part': 'payments-prod',
     'counterparty_part': 'payments-service',
     'subtype': 'binding',
     'markdown': pathlib.Path('.scratch/contract-body.md').read_text(),
     'version': '1.0.0',
-}))
+}
+# For subtype='connection', also include the connection_type label
+# picked in step 2 (e.g. 'depends-on' or 'submodule'):
+#   payload['connection_type'] = 'depends-on'
+print(json.dumps(payload))
 " > .scratch/contract-body.json
 
 curl -fsS -X POST \
@@ -317,7 +359,7 @@ been added yet"), surface them — don't auto-do.
 | `401`  | Bad bearer token                                                       | Stop. Tell user `TITAN_TYR_TOKEN` is wrong.                                 |
 | `404`  | Either `owner_part` or `counterparty_part` is unknown                  | Re-resolve in step 3; route to `/register-part` if truly missing.       |
 | `409`  | A contract already exists in this direction                            | Stop. Show the existing `contract_id` + `subtype` (re-run the search from step 6) and route to `/propose-contract-change`. |
-| `422`  | `owner_part == counterparty_part`, missing/unknown `subtype`, malformed `version`, slug pattern fail, or `binding` source/target subtype mismatch | Fix and retry. `version` is plain `MAJOR.MINOR.PATCH`. For `binding`, owner must be a container, counterparty must be a software part. |
+| `422`  | `owner_part == counterparty_part`, missing/unknown `subtype`, missing or wrong `connection_type` (required iff `subtype=connection`), malformed `version`, slug pattern fail, `binding` source/target subtype mismatch, `connection` source/target subtype mismatch per the per-label rule, or `connection_type` whose required Part subtype isn't yet implemented | Fix and retry. `version` is plain `MAJOR.MINOR.PATCH`. Re-check the rule table in step 2/4. |
 | `500+` | Server problem                                                         | Print response body verbatim. Do not retry.                                 |
 
 ## Notes
@@ -350,7 +392,14 @@ been added yet"), surface them — don't auto-do.
 - **Pod subtype is deferred.** The SysMLv2 binding definition allows
   Pod Parts as a binding source too, but `pod` isn't a part subtype
   yet (#24 deferred it). When it lands, this skill needs to expand
-  step 4 to accept `owner.subtype IN ("container", "pod")`.
+  step 4 to accept `owner.subtype IN ("container", "pod")` for
+  `binding`, and also unblock the `pod` arm of `connection_type`
+  `instantiates` and `runs`.
+- **`image` and `compose` Part subtypes are deferred too.** They block
+  four of the six `connection_type` labels (`builds-from`,
+  `instantiates`, `runs` image arm, `member-of`). When either lands,
+  the rule table in step 2 doesn't change but the "not yet
+  implemented" branch in step 4 collapses for the affected labels.
 - **The contract template's fill rules are identical to the part
   template's.** If those rules grow, update both register skills in
   lockstep — same as the propose/accept pair.
