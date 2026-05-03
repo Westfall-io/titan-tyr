@@ -89,6 +89,13 @@ direction. State the intended direction explicitly to the user
 ("`titan-tyr` (owner, API server) → `titan-mimiron` (counterparty, UI
 client)") and confirm before proceeding.
 
+Direction also sets the future review handshake — proposals from
+either side go through `/propose-contract-change`, but **the proposer
+does not accept their own proposal**. The counterparty side accepts
+(or counter-proposes a higher RC). In a cross-team contract this is
+how the review gate stays load-bearing. See `/accept-contract-proposal`
+for the full protocol.
+
 ### 4. Refuse gracefully if a contract already exists
 
 Before fetching the template, check:

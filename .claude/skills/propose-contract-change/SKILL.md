@@ -216,7 +216,7 @@ curl -fsS -X POST \
      "$TITAN_TYR_URL/contracts/{contract_id}/proposals"
 ```
 
-### 9. Report — and explain accept, but do NOT accept
+### 9. Report the API result
 
 On `201`, summarise:
 
@@ -225,10 +225,6 @@ On `201`, summarise:
 >
 > List open proposals:
 >   `curl -H 'Authorization: Bearer sysmlv2' $TITAN_TYR_URL/contracts/<contract_id>/proposals`
->
-> Accept (when ready): use `/accept-contract-proposal`, or run raw:
->   `curl -X POST -H 'Authorization: Bearer sysmlv2' \`
->     `$TITAN_TYR_URL/contracts/<contract_id>/proposals/<version>/accept`
 
 If the proposal is RC, mention that the typical next step is iterate
 (`-rc2`, `-rc3`) until both sides agree, then propose the bare
@@ -238,12 +234,80 @@ If the change has cross-repo implications (e.g. a counterparty needs
 to file a tracking issue, drop a workaround, etc.), surface them —
 they're often in the proposal's body but worth restating.
 
-**Do not auto-accept.** The propose/accept boundary is the contract
-review gate; collapsing it defeats the purpose. Even if the user
-appears to want it landed immediately, do propose and accept as two
-visible steps. (If the user explicitly says "and accept it," then run
-`/accept-contract-proposal` after the propose, but call it out: "Proposed
-and accepted in one go because you asked for that.")
+### 10. Notify the counterparty
+
+Contract proposals are visible via the API but the counterparty's
+developer doesn't poll. Without a GitHub notification on their side,
+the proposal sits unreviewed and the loop stalls. Pair every
+cross-team proposal with a comment on the counterparty's repo.
+
+**Skip this step only if** the user is operating both sides of the
+contract solo (one human, one repo for both). Default is to notify.
+
+a. **Identify the counterparty repo.** The counterparty software node's
+   `repo_uri` is a GitHub URL — fetch:
+
+   ```sh
+   curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
+     "$TITAN_TYR_URL/software/<counterparty_name>" \
+     | python3 -c "import json,sys; print(json.load(sys.stdin)['repo_uri'])"
+   ```
+
+   Convert to `<owner>/<repo>` form for `gh` (e.g.
+   `https://github.com/Westfall-io/titan-mimiron` →
+   `Westfall-io/titan-mimiron`).
+
+b. **Find the linked issue.** Look in the proposal body and recent
+   conversation for a referenced issue in the counterparty repo (often
+   a `<repo>#N` link in the changelog, or the consumer-side feature
+   that motivated this proposal). If there's an obvious one, use it.
+   If unsure, list open issues and ask:
+
+   ```sh
+   gh issue list --repo <owner>/<repo> --state open --limit 10
+   ```
+
+c. **Comment on the linked issue** with: contract id, the new RC
+   version, what changed in 1–2 lines (call out anything beyond what
+   the linked issue originally scoped), and the inspect URL. Keep it
+   short — diff and decision-making belong on the contract endpoint,
+   not in the GitHub thread.
+
+   ```sh
+   gh issue comment <number> --repo <owner>/<repo> --body "$(cat <<'EOF'
+   ## Update from titan-tyr
+
+   Posted contract proposal `<version>` for contract
+   `<contract_id>`.
+
+   What changed vs `<active_version>`: <one-or-two-line summary>
+
+   Inspect:
+   ```
+   GET /contracts/<contract_id>/proposals
+   ```
+   EOF
+   )"
+   ```
+
+d. **No obvious linked issue?** File a new one against the counterparty
+   repo:
+
+   ```sh
+   gh issue create --repo <owner>/<repo> \
+     --title "titan-tyr contract <contract_id> — review <version>" \
+     --body "<same body as above>"
+   ```
+
+**Do not auto-accept your own proposal.** The propose/accept boundary is
+the contract review gate, and the counterparty is the side that
+accepts (see `/accept-contract-proposal`). After step 10, your job ends
+— wait for the counterparty to either accept (`active_version` moves
+forward) or counter-propose (a higher RC appears on the contract).
+Even if the user appears to want it landed immediately, surface that
+the counterparty is the natural acceptor; only run
+`/accept-contract-proposal` yourself if the user explicitly tells you
+to (single-operator setup, or counterparty has delegated).
 
 ## Error handling
 

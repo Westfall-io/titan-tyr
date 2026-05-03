@@ -14,6 +14,36 @@ This skill mutates *what every caller sees* on the next
 do not run it without an explicit user confirmation on the exact
 contract + version about to land.
 
+## Before you start: confirm THIS side didn't originate the proposal
+
+Cross-team contract review is a two-party handshake: **whoever did NOT
+propose is the one who accepts.** If THIS side just ran
+`/propose-contract-change` (or otherwise posted the RC you're about
+to accept), accepting it now defeats the review — the counterparty
+had no chance to push back or counter-propose.
+
+The objection signal from the counterparty is a *higher RC* posted on
+the contract. The consent signal is them calling `/accept` (you'll see
+`active_version` move forward to the stripped version on the next
+`GET /contracts/<id>/proposals`). Neither happens via a GitHub ack —
+do not wait for one, but also do not pre-emptively accept your own
+proposal in its place.
+
+**Skip this guard only when:**
+
+- Single-operator setup: one human owns both sides of the contract,
+  one bearer token, no separate review party.
+- Counterparty has explicitly delegated acceptance back to you for
+  this proposal.
+
+Otherwise: stop. The counterparty accepts your proposals; you accept
+theirs.
+
+How to tell who originated the proposal: check the conversation /
+recent activity. If you ran `/propose-contract-change` against this
+contract earlier this session, that's almost certainly THIS side.
+When in doubt, ask the user.
+
 ## Server location
 
 Same env vars as the other titan-tyr skills:
@@ -103,6 +133,12 @@ Ask which proposal version to accept. Default sensibly:
 - If both exist for the same target (`X.Y.Z-rc2`, `X.Y.Z-rc3`,
   `X.Y.Z`), the bare version is almost always the right choice — RC
   rows are review artifacts.
+
+Once you've identified the version, **re-check the proposer guard**
+(see the "Before you start" section above) against this specific RC.
+If it was posted by THIS side, stop here — surface to the user that
+the counterparty is the natural acceptor and confirm before
+proceeding.
 
 ### 5. Show a unified diff vs the active body
 
@@ -202,9 +238,19 @@ Don't auto-do them — surface them and ask.
   bearer token can hit `/accept`. In single-operator setups (one
   human owns both sides of the contract, one bearer token everywhere),
   the agent should run `/accept` itself rather than ask another party
-  to do it. Defer to the named role only when there are genuinely
-  separate teams with conflicting interests, and even then only as a
-  process choice, not a technical constraint.
+  to do it.
+- **Proposer-vs-acceptor is a separate distinction from owner-vs-counterparty.**
+  The owner-accepts rule above describes which *role* in the contract
+  holds the decision in steady state. The proposer-doesn't-accept rule
+  (in the "Before you start" section above) describes the *workflow*
+  invariant — whoever just ran `/propose-contract-change` against this
+  contract should not be the one accepting that same RC. These can
+  cooperate: e.g. mimiron (counterparty) proposes a change, titan-tyr
+  (owner) accepts. They can also conflict: titan-tyr (owner) proposes
+  a change to its own published surface, but the proposer rule says
+  mimiron (counterparty, the one consuming) does the accept — that's
+  the cross-team review gate doing its job. In genuinely cross-team
+  setups, the proposer rule wins.
 - **Contracts only.** This skill drives
   `POST /contracts/{contract_id}/proposals/{version}/accept`. Template
   proposals have a parallel endpoint
