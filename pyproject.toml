@@ -1,7 +1,7 @@
 [project]
 name = "titan-tyr"
-version = "0.12.0"
-description = "WatcherVault REST API — typed parts (software, image, container) + typed contracts (interaction, binding, connection) as a versioned graph."
+version = "0.13.0"
+description = "WatcherVault REST API — typed parts (software, image, container, pod) + typed contracts (interaction, binding, connection) as a versioned graph."
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.110",

@@ -37,10 +37,16 @@ router = APIRouter(prefix="/contracts", tags=["contracts"], dependencies=[Depend
 # Per-label From/To Part subtype rules for connection contracts (#32).
 # `allowed_owner` / `allowed_counterparty` are sets of allowed subtype
 # strings. Subtype strings referenced here that don't yet exist as Part
-# subtypes (today: 'pod', 'compose') are detected at registration and
-# rejected with a "not yet implemented" error rather than silently
-# 404'ing on the part lookup.
-_PART_SUBTYPES_IMPLEMENTED: set[str] = {"software", "container", "image"}
+# subtypes (today: 'compose') are detected at registration and rejected
+# with a "not yet implemented" error rather than silently 404'ing on
+# the part lookup.
+_PART_SUBTYPES_IMPLEMENTED: set[str] = {"software", "container", "image", "pod"}
+
+# Binding contracts express the runtime address at which a software part
+# is reachable. Originally container-only; extended to pod in #36 (the
+# SysMLv2 binding spec was always permissive — `pod` just didn't exist
+# as a Part subtype yet).
+_BINDING_OWNER_SUBTYPES: tuple[str, ...] = ("container", "pod")
 
 CONNECTION_RULES: dict[str, dict[str, set[str]]] = {
     "builds-from":  {"owner": {"software"},          "counterparty": {"image"}},
@@ -113,16 +119,19 @@ async def register_contract(
 
     # Subtype-specific source/target enforcement.
     # - `interaction` accepts any (part, part) pair (no rule to apply).
-    # - `binding` enforces container → software (existing behaviour).
+    # - `binding` enforces (container or pod) → software. The pod arm
+    #   was always allowed by the SysMLv2 spec; it became reachable
+    #   when `pod` landed as a Part subtype in #36.
     # - `connection` enforces per-label rules from CONNECTION_RULES, and
     #   surfaces a deferred-subtype error early when the rule references
     #   Part subtypes that aren't implemented yet.
     if payload.subtype == "binding":
-        if owner.subtype != "container":
+        if owner.subtype not in _BINDING_OWNER_SUBTYPES:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=(
-                    f"binding contracts require owner_part subtype 'container'; "
+                    f"binding contracts require owner_part subtype in "
+                    f"{list(_BINDING_OWNER_SUBTYPES)}; "
                     f"{owner.name!r} is {owner.subtype!r}"
                 ),
             )

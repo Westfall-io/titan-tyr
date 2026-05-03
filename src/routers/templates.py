@@ -25,7 +25,10 @@ router = APIRouter(
     dependencies=[Depends(require_password)],
 )
 
-VALID_KINDS = ("software", "container", "image", "interaction", "binding", "connection")
+VALID_KINDS = (
+    "software", "container", "image", "pod",
+    "interaction", "binding", "connection",
+)
 
 
 def _validate_kind(kind: str) -> None:

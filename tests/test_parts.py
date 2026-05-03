@@ -650,7 +650,7 @@ class TestSubtype:
             "/parts",
             json={
                 "name": "bad-subtype",
-                "subtype": "pod",  # Pod is deferred per #36
+                "subtype": "compose",  # Compose is deferred per #37
                 "repo_uri": "u",
                 "markdown": "m",
             },
@@ -682,7 +682,7 @@ class TestSubtype:
         assert "f-soft" not in names
 
     async def test_list_filter_unknown_subtype_rejected(self, client):
-        r = await client.get("/parts?subtype=pod")
+        r = await client.get("/parts?subtype=compose")
         assert r.status_code == 422
 
     async def test_subtype_not_mutable_via_put(self, client):
@@ -815,3 +815,34 @@ class TestImageSubtype:
             },
         )
         assert r2.status_code == 201, r2.text
+
+
+class TestPodSubtype:
+    async def test_register_pod(self, client):
+        r = await client.post(
+            "/parts",
+            json={
+                "name": "payments-pod",
+                "subtype": "pod",
+                "repo_uri": "https://example.com/repo",
+                "markdown": "# payments-pod\n\nK8s pod.",
+            },
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["subtype"] == "pod"
+
+    async def test_list_filter_subtype_pod(self, client):
+        await _register(client, name="p-soft", subtype="software")
+        await client.post(
+            "/parts",
+            json={
+                "name": "p-pod",
+                "subtype": "pod",
+                "repo_uri": "u",
+                "markdown": "m",
+            },
+        )
+        pod_only = (await client.get("/parts?subtype=pod")).json()
+        names = {e["name"] for e in pod_only["results"]}
+        assert "p-pod" in names
+        assert "p-soft" not in names

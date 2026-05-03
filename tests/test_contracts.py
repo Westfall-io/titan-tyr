@@ -241,8 +241,10 @@ class TestBindingSubtype:
         assert body["owner"] == "payments-prod"
         assert body["counterparty"] == "payments-service"
 
-    async def test_binding_owner_must_be_container(self, client):
-        # Software → software with subtype=binding is rejected.
+    async def test_binding_owner_must_be_container_or_pod(self, client):
+        # Software → software with subtype=binding is rejected. The
+        # owner-side rule was relaxed in #36 from container-only to
+        # {container, pod}; software remains invalid.
         await _register_part(client, "a", subtype="software")
         await _register_part(client, "b", subtype="software")
         r = await client.post(
@@ -255,7 +257,24 @@ class TestBindingSubtype:
             },
         )
         assert r.status_code == 422
-        assert "container" in r.json()["detail"]
+        detail = r.json()["detail"]
+        assert "container" in detail
+        assert "pod" in detail
+
+    async def test_register_binding_pod_to_software(self, client):
+        # Pod → software is the K8s sibling of container → software.
+        # Both arms are valid binding owners after #36.
+        await _register_part(client, "payments-service", subtype="software")
+        await _register_part(client, "payments-pod", subtype="pod")
+        body = await _new_contract(
+            client,
+            owner="payments-pod",
+            counterparty="payments-service",
+            subtype="binding",
+        )
+        assert body["subtype"] == "binding"
+        assert body["owner"] == "payments-pod"
+        assert body["counterparty"] == "payments-service"
 
     async def test_binding_counterparty_must_be_software(self, client):
         # Container → container with subtype=binding is rejected.
@@ -287,10 +306,10 @@ class TestBindingSubtype:
 class TestConnectionSubtype:
     """Connection contracts (#32): structural binding with no data flow.
 
-    Six labels distinguish the kinds of structural binding. Four
-    (`depends-on`, `submodule`, `builds-from`, `instantiates` to a
-    container) work today; the remaining arms reference Part subtypes
-    (`pod`, `compose`) that aren't implemented yet — they reject at
+    Six labels distinguish the kinds of structural binding. Five
+    (`depends-on`, `submodule`, `builds-from`, `instantiates`,
+    `runs`) work today; only `member-of` references a Part subtype
+    (`compose`) that isn't implemented yet — it rejects at
     registration with a 'not yet implemented' error rather than
     silently 404'ing on the part lookup.
     """
@@ -490,6 +509,77 @@ class TestConnectionSubtype:
         )
         assert r.status_code == 422
         assert "image" in r.json()["detail"]
+
+    async def test_instantiates_image_to_pod(self, client):
+        # The pod arm of instantiates was unblocked by #36.
+        await _register_part(client, "payments-image", subtype="image")
+        await _register_part(client, "payments-pod", subtype="pod")
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "payments-image",
+                "counterparty_part": "payments-pod",
+                "subtype": "connection",
+                "connection_type": "instantiates",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["connection_type"] == "instantiates"
+
+    async def test_runs_container_to_software(self, client):
+        # The container arm of runs works today.
+        await _register_part(client, "payments-service", subtype="software")
+        await _register_part(client, "payments-prod", subtype="container")
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "payments-prod",
+                "counterparty_part": "payments-service",
+                "subtype": "connection",
+                "connection_type": "runs",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["connection_type"] == "runs"
+
+    async def test_runs_pod_to_software(self, client):
+        # The pod arm of runs was unblocked by #36.
+        await _register_part(client, "payments-service", subtype="software")
+        await _register_part(client, "payments-pod", subtype="pod")
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "payments-pod",
+                "counterparty_part": "payments-service",
+                "subtype": "connection",
+                "connection_type": "runs",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["connection_type"] == "runs"
+
+    async def test_runs_owner_must_be_runtime(self, client):
+        # Software → software with runs is rejected; owner must be a
+        # container or pod (the two implemented runtime subtypes).
+        await _register_part(client, "a", subtype="software")
+        await _register_part(client, "b", subtype="software")
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "a",
+                "counterparty_part": "b",
+                "subtype": "connection",
+                "connection_type": "runs",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 422
+        detail = r.json()["detail"]
+        assert "container" in detail
+        assert "pod" in detail
 
     async def test_member_of_rejected_compose_not_implemented(self, client):
         # `member-of` requires a compose counterparty; compose subtype

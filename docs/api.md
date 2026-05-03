@@ -123,14 +123,14 @@ there's an actual orchestrator that benefits from the distinction.
 
 ## Templates
 
-The six templates (`software`, `container`, `image`, `interaction`,
-`binding`, `connection`) live in Postgres as versioned markdown. They
-are mutated through the same propose/accept flow as contracts — see
-Proposals below for the full RC behaviour, the shape carries over
-here unchanged.
+The seven templates (`software`, `container`, `image`, `pod`,
+`interaction`, `binding`, `connection`) live in Postgres as versioned
+markdown. They are mutated through the same propose/accept flow as
+contracts — see Proposals below for the full RC behaviour, the shape
+carries over here unchanged.
 
 Every template kind matches a subtype:
-`software`/`container`/`image` are the three part subtypes;
+`software`/`container`/`image`/`pod` are the four part subtypes;
 `interaction`/`binding`/`connection` are the three contract subtypes.
 The matching template is fetched at registration time depending on
 which subtype the caller is creating.
@@ -150,18 +150,24 @@ which subtype the caller is creating.
 > and container). Unblocks the `builds-from` and `instantiates`
 > (container arm) connection labels end-to-end.
 
+> **New in v0.13.0**: template kind `pod` added (#36) — the body
+> for the new `pod` Part subtype (K8s scheduled unit). Also
+> unblocks the pod arms of `instantiates` and `runs`, and relaxes
+> the `binding` source rule to admit either container or pod.
+
 ### `GET /templates/{kind}` — latest active template
 
 ```sh
 curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/software
 curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/container
 curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/image
+curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/pod
 curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/interaction
 curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/binding
 curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/connection
 ```
 
-`kind` ∈ `{software, container, image, interaction, binding, connection}`.
+`kind` ∈ `{software, container, image, pod, interaction, binding, connection}`.
 Response is `text/markdown` of the latest stable active version.
 RC-suffixed versions are never returned here.
 
@@ -235,12 +241,13 @@ its body:
 | ----------- | --------------------------------------------------------------------------------- |
 | `software`  | A codebase / deployable boundary (a repo, a service, a library).                  |
 | `image`     | A built artifact (tagged Docker image, Helm chart version, packaged binary). Sits between source repo and running instance. |
-| `container` | A running instance of an image — typically one row per `(software, environment)`. |
+| `container` | A running instance of an image — typically one row per `(software, environment)`. Docker / Compose runtime. |
+| `pod`       | The K8s sibling of `container` — a scheduled unit of one or more co-located containers sharing a network namespace and storage. |
 
 The `subtype` field is required at registration time and is
 **immutable** afterward. Subtype-specific markdown structure lives in
-the matching template (`/templates/software`, `/templates/image`, or
-`/templates/container`), not in the API surface.
+the matching template (`/templates/software`, `/templates/image`,
+`/templates/container`, or `/templates/pod`), not in the API surface.
 
 ### Part name format
 
@@ -265,10 +272,11 @@ The constraint exists because names appear in URL paths
 need URL-encoding or be awkward to grep is rejected at the door.
 
 **One namespace across subtypes.** `name` is unique across software,
-image, AND container parts. A common convention is `<service>` for the
-software part, `<service>-image` for the canonical image built from
-it, and `<service>-<env>` for the container
-(`payments`, `payments-image`, `payments-prod`).
+image, container, AND pod parts. A common convention is `<service>`
+for the software part, `<service>-image` for the canonical image
+built from it, `<service>-<env>` for the container, and
+`<service>-pod` for the K8s pod (`payments`, `payments-image`,
+`payments-prod`, `payments-pod`).
 
 ### `GET /parts` — list registered parts (paginated)
 
@@ -308,7 +316,7 @@ curl -H 'Authorization: Bearer sysmlv2' \
 
 To fetch the next page, call again with `?after=<next>`.
 
-#### `?subtype=<software|image|container>` — filter by subtype
+#### `?subtype=<software|image|container|pod>` — filter by subtype
 
 ```sh
 curl -H 'Authorization: Bearer sysmlv2' \
@@ -317,7 +325,7 @@ curl -H 'Authorization: Bearer sysmlv2' \
 
 Restricts results to parts of the named subtype. Combines with
 `?match=`, `?after=`, and `?limit=`. `422` if the value is anything
-other than `software`, `image`, or `container`.
+other than `software`, `image`, `container`, or `pod`.
 
 #### `?match=<query>` — substring lookup over name + aliases
 
@@ -356,8 +364,8 @@ curl -H 'Authorization: Bearer sysmlv2' \
 ```
 
 `subtype` is **required** and must be one of `software`, `image`,
-`container`. It is set at registration time and cannot be changed
-afterward.
+`container`, `pod`. It is set at registration time and cannot be
+changed afterward.
 
 `version` is optional and defaults to `"1.0.0"`. It must be plain
 `MAJOR.MINOR.PATCH` — parts do not support `-rcN` suffixes.
@@ -388,8 +396,8 @@ Errors:
 - `409 Conflict` — name already taken (across all subtypes — names are
   one namespace).
 - `422 Unprocessable Entity` — `name` not a valid slug (see above),
-  `subtype` missing or not one of `software` / `image` / `container`,
-  malformed
+  `subtype` missing or not one of `software` / `image` / `container`
+  / `pod`, malformed
   `version` (or `-rcN` suffix), `issue_tracker_uri` not a valid
   `https://` URL, or any `aliases` entry is empty / over 128 chars /
   contains control characters.
@@ -551,7 +559,7 @@ its body and which validation rules apply at registration:
 | Subtype       | What it represents                                                                       | Source (owner_part)             | Target (counterparty_part)            |
 | ------------- | ---------------------------------------------------------------------------------------- | ------------------------------- | ------------------------------------- |
 | `interaction` | Protocol/schema-level agreement (HTTP API, queue topic, RPC). Env-agnostic. Runtime data flows. | any                             | any                                   |
-| `binding`     | Deployment address binding from a container to a software part. Env-specific. Runtime.   | `container`                     | `software`                            |
+| `binding`     | Deployment address binding from a runtime (container or pod) to a software part. Env-specific. Runtime.   | `container` or `pod`            | `software`                            |
 | `connection`  | Structural binding declared in build/config/deploy artifacts. **No runtime data flow.**  | depends on `connection_type`    | depends on `connection_type`          |
 
 The `subtype` field is required at registration time and is
@@ -575,14 +583,12 @@ label has its own From/To Part subtype rule:
 | `submodule`       | `software`          | `software`                | One repository includes another via `.gitmodules`   |
 
 Labels referencing Part subtypes that are **not yet implemented**
-(`pod`, `compose`) reject at registration with a clear "not yet
-implemented" error. Today `depends-on`, `submodule`, `builds-from`,
-and `instantiates` (to a container) work end-to-end; the remaining
-arms (`runs` pod arm, `member-of`, `instantiates` pod arm) are
-blocked. Tracking issues:
-- `pod` Part subtype → deferred per #24, see follow-up issue
+(`compose`) reject at registration with a clear "not yet implemented"
+error. Today every arm except `member-of` works end-to-end. Tracking
+issues:
 - `compose` Part subtype → see follow-up issue
 - `image` Part subtype → shipped in #35.
+- `pod` Part subtype → shipped in #36.
 
 The unique constraint is on `(owner_part_id, counterparty_part_id)` —
 subtype is **not** part of the key, so `A → B` can hold one contract
@@ -735,7 +741,13 @@ Only meaningful with `subtype=connection`. Combining
 > **New in v0.12.0**: `image` Part subtype (#35). Unblocks
 > `connection_type=builds-from` (software → image) and
 > `connection_type=instantiates` to a container (image → container)
-> end-to-end. The `instantiates` pod arm still blocks on `pod`.
+> end-to-end.
+
+> **New in v0.13.0**: `pod` Part subtype (#36). Unblocks the pod
+> arms of `connection_type=instantiates` (image → pod) and
+> `connection_type=runs` (pod → software), and relaxes the
+> `binding` source rule from container-only to either container
+> or pod.
 
 **Half-filter** (`?owner=…` alone or `?counterparty=…` alone) → `422`.
 Search requires both filters; list requires neither.

@@ -58,7 +58,7 @@ validation rules:
 | Subtype       | What it describes                                                                                    | Source (owner_part)            | Target (counterparty_part)            |
 | ------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------ | ------------------------------------- |
 | `interaction` | Protocol/schema-level agreement (HTTP API, queue topic, RPC). Env-agnostic. Runtime data flows.      | any                            | any                                   |
-| `binding`     | Deployment address binding (host/port/protocol from container to software). Env-specific. Runtime.   | `container`                    | `software`                            |
+| `binding`     | Deployment address binding (host/port/protocol from container or pod to software). Env-specific. Runtime.   | `container` or `pod`           | `software`                            |
 | `connection`  | Structural binding declared in build/config/deploy artifacts. **No runtime data flow.**              | depends on `connection_type`   | depends on `connection_type`          |
 
 Quick rule of thumb:
@@ -84,13 +84,10 @@ one of six labels:
 | `submodule`       | `software`          | `software`                | One repository includes another via `.gitmodules`   |
 
 Labels referencing Part subtypes that are **not yet implemented**
-(`pod`, `compose`) reject at registration. Today `depends-on`,
-`submodule`, `builds-from`, and `instantiates` (to a container) work
-end-to-end. The remaining arms — `runs` (pod arm), `member-of` (any),
-`instantiates` (pod arm) — block on `pod` / `compose`. If the user
-picks one of those arms, surface that early and ask whether to
-proceed (the API will 422 with a clear "not yet implemented" message)
-or pick a different label.
+(`compose`) reject at registration. Today every arm except
+`member-of` works end-to-end. If the user picks `member-of`, surface
+that early and ask whether to proceed (the API will 422 with a clear
+"not yet implemented" message) or pick a different label.
 
 The subtype determines which template you fetch in step 7 and shapes
 the validation in step 4.
@@ -111,10 +108,10 @@ For each side (owner, then counterparty):
   `mimiron`), use `GET /parts?match=<label>`. Render hits as
   `<name> v<version> subtype=<software|container> aliases=[...]` and
   ask which one. If exactly one hit, suggest it as the default.
-- For `binding` specifically, the source side is almost always a
-  container — narrow the search with
-  `GET /parts?match=<label>&subtype=container` to avoid surfacing
-  unrelated software parts.
+- For `binding` specifically, the source side is a runtime — either
+  a container or a pod. Narrow the search with
+  `GET /parts?match=<label>&subtype=container` (or `&subtype=pod` for
+  K8s topologies) to avoid surfacing unrelated software parts.
 
 **"Not registered" handling.** If either side doesn't exist as a
 part, **stop**: the API will `404` and you can't proceed.
@@ -131,17 +128,17 @@ pair is valid.
 
 **`binding`** — the API enforces:
 
-- `owner_part.subtype == "container"` (the source must be a container)
+- `owner_part.subtype IN ("container", "pod")` (the source must be a runtime — either a container or a K8s pod)
 - `counterparty_part.subtype == "software"` (the target must be a software part)
 
 Examples to catch:
 
 - User gave two software parts → "binding from software → software
   doesn't make sense; you probably want subtype `interaction`"
-- User flipped the direction (software → container) → "binding flows
-  outward from the container; want me to flip the direction?"
-- Source is a container but target is also a container → tell them and
-  ask what they meant.
+- User flipped the direction (software → container/pod) → "binding
+  flows outward from the runtime; want me to flip the direction?"
+- Source is a container or pod but target is also a runtime → tell
+  them and ask what they meant.
 
 **`connection`** — the per-label table from step 2 is the source of
 truth. For each `connection_type`, owner and counterparty must each
@@ -150,11 +147,11 @@ match the rule's allow-set. Two failure modes worth distinguishing:
 1. **Wrong subtype for an implemented label.** E.g. `depends-on` with
    `owner.subtype == "software"`. Tell the user the rule, suggest the
    correct subtype (or a different label that fits what they have).
-2. **Label requires an un-implemented Part subtype.** Labels
-   `runs` (pod arm), `member-of`, and `instantiates` (pod arm)
-   reference `pod` or `compose` — neither exists yet. Surface this
-   as "not yet implemented; tracked in <follow-up issue>" and ask
-   whether to abort or pick a different label.
+2. **Label requires an un-implemented Part subtype.** Only
+   `member-of` is affected today: it references `compose`, which
+   doesn't exist yet. Surface this as "not yet implemented; tracked
+   in <follow-up issue>" and ask whether to abort or pick a
+   different label.
 
 If either check fails, **stop early** — don't POST.
 
@@ -168,11 +165,11 @@ subtype:
   the interface — for an HTTP API, that's the server; the consumer is
   the counterparty. For a queue or event topic, owner is the publisher
   schema; the consumer subscribes.
-- **Binding.** Owner is the container (the side that *exposes* the
-  address); counterparty is the software (the side that *reads* the
-  address from env vars and constructs its callable URL). This
-  follows the direction of the address information, which mirrors the
-  direction of inbound traffic.
+- **Binding.** Owner is the runtime — container or pod — (the side
+  that *exposes* the address); counterparty is the software (the side
+  that *reads* the address from env vars and constructs its callable
+  URL). This follows the direction of the address information, which
+  mirrors the direction of inbound traffic.
 
 The schema enforces only that owner ≠ counterparty and that no
 contract already exists in that direction (regardless of subtype).
@@ -391,17 +388,12 @@ been added yet"), surface them — don't auto-do.
   contract markdown body if it matters to humans, not in a JSON field.
 - **Don't put a `Version` field inside the markdown body** — the API
   tracks it on the version row separately.
-- **Pod subtype is deferred.** The SysMLv2 binding definition allows
-  Pod Parts as a binding source too, but `pod` isn't a part subtype
-  yet (#24 deferred it). When it lands, this skill needs to expand
-  step 4 to accept `owner.subtype IN ("container", "pod")` for
-  `binding`, and also unblock the `pod` arm of `connection_type`
-  `instantiates` and `runs`.
 - **`compose` Part subtype is deferred.** It blocks the `member-of`
   label entirely. When it lands, the rule table in step 2 doesn't
   change but the "not yet implemented" branch in step 4 collapses
-  for `member-of`. (`image` shipped in #35; the `builds-from` and
-  `instantiates` (container arm) labels work today.)
+  for `member-of`. (`image` shipped in #35; `pod` shipped in #36 —
+  both `builds-from` and the full `instantiates` / `runs` /
+  `binding` arms now work end-to-end.)
 - **The contract template's fill rules are identical to the part
   template's.** If those rules grow, update both register skills in
   lockstep — same as the propose/accept pair.

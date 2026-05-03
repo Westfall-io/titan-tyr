@@ -24,7 +24,7 @@ class Part(Base):
     __tablename__ = "parts"
     __table_args__ = (
         CheckConstraint(
-            "subtype IN ('software', 'container', 'image')",
+            "subtype IN ('software', 'container', 'image', 'pod')",
             name="ck_parts_subtype_allowed",
         ),
     )
@@ -148,7 +148,7 @@ class Template(Base):
     __tablename__ = "templates"
     __table_args__ = (
         CheckConstraint(
-            "kind IN ('software', 'container', 'image', 'interaction', 'binding', 'connection')",
+            "kind IN ('software', 'container', 'image', 'pod', 'interaction', 'binding', 'connection')",
             name="kind_allowed",
         ),
     )

@@ -1,6 +1,6 @@
 ---
 name: accept-template-proposal
-description: Promote an open titan-tyr template proposal (software, container, image, interaction, binding, or connection) to the new active version. Use when the user wants to land a previously-proposed template change — e.g. "accept the template proposal", "promote 2.0.0-rc1 to active", "make this the new template". Lists open proposals, confirms which one to accept, and POSTs to /templates/{kind}/proposals/{version}/accept. Acceptance changes what every caller sees on `GET /templates/{kind}` — confirm before submitting.
+description: Promote an open titan-tyr template proposal (software, container, image, pod, interaction, binding, or connection) to the new active version. Use when the user wants to land a previously-proposed template change — e.g. "accept the template proposal", "promote 2.0.0-rc1 to active", "make this the new template". Lists open proposals, confirms which one to accept, and POSTs to /templates/{kind}/proposals/{version}/accept. Acceptance changes what every caller sees on `GET /templates/{kind}` — confirm before submitting.
 ---
 
 # accept-template-proposal
@@ -44,14 +44,15 @@ curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
 - `401` → wrong token. Stop.
 - Connection refused → wrong URL or server down. Stop.
 
-Ask which template the user wants to accept against. Six kinds today,
-one per part subtype and one per contract subtype:
+Ask which template the user wants to accept against. Seven kinds
+today, one per part subtype and one per contract subtype:
 
 - **`software`** — for software parts (codebases / deployables)
-- **`container`** — for container parts (running instances)
-- **`image`** — for image parts (built artifacts between source and container)
+- **`container`** — for container parts (Docker / Compose runtimes)
+- **`image`** — for image parts (built artifacts between source and runtime)
+- **`pod`** — for pod parts (K8s scheduled units of one or more containers)
 - **`interaction`** — for interaction contracts (env-agnostic, any pair, runtime data flows)
-- **`binding`** — for binding contracts (container → software, env-specific runtime address)
+- **`binding`** — for binding contracts (container or pod → software, env-specific runtime address)
 - **`connection`** — for connection contracts (structural binding, no runtime data flow)
 
 (The legacy `contract` kind was renamed to `interaction` in v0.10.0
@@ -151,6 +152,7 @@ Pick the audit recipe based on the kind that just landed:
 | `software`      | `GET $TITAN_TYR_URL/parts?subtype=software&limit=100`                                                                   | `GET /parts/{name}`, read the stamp on line 1 of `markdown`. If older than active → realign needed. |
 | `container`     | `GET $TITAN_TYR_URL/parts?subtype=container&limit=100`                                                                  | Same — `GET /parts/{name}`, check stamp.                                                          |
 | `image`         | `GET $TITAN_TYR_URL/parts?subtype=image&limit=100`                                                                      | Same — `GET /parts/{name}`, check stamp.                                                          |
+| `pod`           | `GET $TITAN_TYR_URL/parts?subtype=pod&limit=100`                                                                        | Same — `GET /parts/{name}`, check stamp.                                                          |
 | `interaction`   | `GET $TITAN_TYR_URL/contracts?subtype=interaction&limit=100`                                                            | `GET /contracts/{contract_id}`, check stamp on line 1 of `markdown`.                              |
 | `binding`       | `GET $TITAN_TYR_URL/contracts?subtype=binding&limit=100`                                                                | `GET /contracts/{contract_id}`, check stamp.                                                      |
 | `connection`    | `GET $TITAN_TYR_URL/contracts?subtype=connection&limit=100`                                                             | `GET /contracts/{contract_id}`, check stamp.                                                      |
