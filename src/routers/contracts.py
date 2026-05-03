@@ -1,21 +1,27 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from typing import Union
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import and_, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth import require_password
 from src.db import get_session
-from src.models import Contract, ContractVersion, Part
+from src.models import Contract, ContractSubtypeProposal, ContractVersion, Part
 from src.pagination import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
     decode_cursor,
     encode_cursor,
     validate_limit,
+)
+from src.routers._rules import BINDING_OWNER_SUBTYPES, CONNECTION_RULES
+from src.routers._subtype_helpers import (
+    body_realign_required,
+    enforce_two_party,
 )
 from src.routers.parts import _latest_active_contract_version, _list_active_contracts
 from src.schemas import (
@@ -27,6 +33,12 @@ from src.schemas import (
     ContractListResponse,
     ContractSearchResponse,
     ContractSearchResult,
+    ContractSubtypeShiftAcceptResponse,
+    ContractSubtypeShiftCreate,
+    ContractSubtypeShiftCreateResponse,
+    ContractSubtypeShiftEntry,
+    ContractSubtypeShiftListResponse,
+    SubtypeShiftImpact,
     VersionHistoryItem,
     VersionHistoryResponse,
 )
@@ -34,9 +46,7 @@ from src.versioning import Version
 
 router = APIRouter(prefix="/contracts", tags=["contracts"], dependencies=[Depends(require_password)])
 
-# Per-label From/To Part subtype rules for connection contracts (#32).
-# `allowed_owner` / `allowed_counterparty` are sets of allowed subtype
-# strings. With #37 every Part subtype referenced by the rule table is
+# With #37 every Part subtype referenced by CONNECTION_RULES is
 # implemented; the deferred-subtype check below is now a no-op for the
 # current rule set, but stays in place as a guard for any future rule
 # that references a not-yet-implemented subtype.
@@ -44,20 +54,11 @@ _PART_SUBTYPES_IMPLEMENTED: set[str] = {
     "software", "container", "image", "pod", "compose",
 }
 
-# Binding contracts express the runtime address at which a software part
-# is reachable. Originally container-only; extended to pod in #36 (the
-# SysMLv2 binding spec was always permissive — `pod` just didn't exist
-# as a Part subtype yet).
-_BINDING_OWNER_SUBTYPES: tuple[str, ...] = ("container", "pod")
-
-CONNECTION_RULES: dict[str, dict[str, set[str]]] = {
-    "builds-from":  {"owner": {"software"},          "counterparty": {"image"}},
-    "instantiates": {"owner": {"image"},             "counterparty": {"container", "pod"}},
-    "runs":         {"owner": {"container", "pod"},  "counterparty": {"software"}},
-    "member-of":    {"owner": {"container"},         "counterparty": {"compose"}},
-    "depends-on":   {"owner": {"container"},         "counterparty": {"container"}},
-    "submodule":    {"owner": {"software"},          "counterparty": {"software"}},
-}
+# CONNECTION_RULES and BINDING_OWNER_SUBTYPES live in `_rules.py`
+# (#33) so the parts router can also consult them for subtype-shift
+# impact previews without creating a circular import. Aliased here
+# for in-module readability.
+_BINDING_OWNER_SUBTYPES = BINDING_OWNER_SUBTYPES
 
 
 def _check_part_subtype_implemented(
@@ -359,44 +360,417 @@ async def get_contract_history(
     # Only accepted versions land in history. The active_must_be_stable check
     # constraint on contract_versions guarantees status='active' rows have a
     # NULL prerelease, so this naturally excludes superseded RC iterations.
-    stmt = select(
-        ContractVersion.id,
-        ContractVersion.version_major,
-        ContractVersion.version_minor,
-        ContractVersion.version_patch,
-        ContractVersion.created_at,
-        ContractVersion.accepted_at,
-    ).where(
-        ContractVersion.contract_id == contract_id,
-        ContractVersion.status == "active",
-    )
+    body_rows = (
+        await session.execute(
+            select(
+                ContractVersion.id,
+                ContractVersion.version_major,
+                ContractVersion.version_minor,
+                ContractVersion.version_patch,
+                ContractVersion.created_at,
+                ContractVersion.accepted_at,
+            ).where(
+                ContractVersion.contract_id == contract_id,
+                ContractVersion.status == "active",
+            )
+        )
+    ).all()
+
+    shift_rows = (
+        await session.execute(
+            select(
+                ContractSubtypeProposal.id,
+                ContractSubtypeProposal.accepted_at,
+            ).where(
+                ContractSubtypeProposal.contract_id == contract_id,
+                ContractSubtypeProposal.status == "accepted",
+            )
+        )
+    ).all()
+
+    body_sorted = sorted(body_rows, key=lambda r: r.accepted_at or r.created_at)
+
+    def _version_at(t: datetime) -> str:
+        latest = None
+        for r in body_sorted:
+            ts = r.accepted_at or r.created_at
+            if ts <= t:
+                latest = r
+            else:
+                break
+        if latest is None:
+            return "0.0.0"
+        return str(
+            Version(latest.version_major, latest.version_minor, latest.version_patch)
+        )
+
+    entries: list[tuple[datetime, uuid.UUID, str, str]] = []
+    for r in body_rows:
+        ts = r.accepted_at or r.created_at
+        entries.append(
+            (
+                ts,
+                r.id,
+                "body_bump",
+                str(Version(r.version_major, r.version_minor, r.version_patch)),
+            )
+        )
+    for r in shift_rows:
+        if r.accepted_at is None:
+            continue
+        entries.append(
+            (r.accepted_at, r.id, "subtype_shift", _version_at(r.accepted_at))
+        )
+
+    entries.sort(key=lambda e: (e[0], e[1]), reverse=True)
 
     if after is not None:
         cursor_t, cursor_id = decode_cursor(after)
-        stmt = stmt.where(
-            tuple_(ContractVersion.created_at, ContractVersion.id)
-            < tuple_(cursor_t, cursor_id)
-        )
+        entries = [e for e in entries if (e[0], e[1]) < (cursor_t, cursor_id)]
 
-    stmt = stmt.order_by(
-        ContractVersion.created_at.desc(), ContractVersion.id.desc()
-    ).limit(limit + 1)
+    has_more = len(entries) > limit
+    entries = entries[:limit]
 
-    rows = (await session.execute(stmt)).all()
-    has_more = len(rows) > limit
-    rows = rows[:limit]
-
-    items: list[VersionHistoryItem] = []
-    last_t = None
-    last_id = None
-    for cv_id, vmaj, vmin, vpat, vcreated, vaccepted in rows:
-        items.append(
-            VersionHistoryItem(
-                version=str(Version(vmaj, vmin, vpat)),
-                updated_at=vaccepted or vcreated,
-            )
-        )
-        last_t, last_id = vcreated, cv_id
-
+    items = [
+        VersionHistoryItem(version=v, updated_at=ts, kind=k)
+        for ts, _, k, v in entries
+    ]
+    last_t, last_id = (entries[-1][0], entries[-1][1]) if entries else (None, None)
     next_cursor = encode_cursor(last_t, last_id) if has_more and last_t else None
     return VersionHistoryResponse(results=items, next=next_cursor)
+
+
+# ---------- Subtype-shift proposals (#33) ----------
+
+
+def _validate_contract_shift_payload(
+    *, current: Contract, payload: ContractSubtypeShiftCreate
+) -> None:
+    """Reject payloads that violate the connection_type required-iff rule.
+
+    Pydantic enforces the enum membership; this enforces the
+    cross-field constraint. Same shape as register_contract's
+    pre-validation, but for the proposed shift's destination state.
+    """
+    if payload.new_subtype == "connection" and payload.new_connection_type is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="new_connection_type is required when new_subtype='connection'",
+        )
+    if payload.new_subtype != "connection" and payload.new_connection_type is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"new_connection_type is only valid when new_subtype='connection'; "
+                f"got new_subtype={payload.new_subtype!r}"
+            ),
+        )
+
+    is_noop = (
+        payload.new_subtype == current.subtype
+        and payload.new_connection_type == current.connection_type
+    )
+    if is_noop:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"no-op shift: contract is already subtype={current.subtype!r}"
+                + (
+                    f", connection_type={current.connection_type!r}"
+                    if current.connection_type
+                    else ""
+                )
+                + "; pick different fields or skip the proposal"
+            ),
+        )
+
+
+def _check_contract_shift_source_target(
+    *,
+    owner_subtype: str,
+    counterparty_subtype: str,
+    new_subtype: str,
+    new_connection_type: str | None,
+) -> tuple[str, str | None]:
+    """Validate the new subtype's source/target rule against current endpoints.
+
+    Returns ('pass', None) on success, ('fail', message) on mismatch.
+    interaction has no rule (always 'pass'). Caller decides whether
+    to surface failure as 422 (propose-time hard-block) or as a
+    field on the impact preview (informational).
+    """
+    if new_subtype == "interaction":
+        return "pass", None
+    if new_subtype == "binding":
+        if owner_subtype not in BINDING_OWNER_SUBTYPES:
+            return "fail", (
+                f"binding requires owner subtype in {list(BINDING_OWNER_SUBTYPES)}; "
+                f"current owner is {owner_subtype!r}"
+            )
+        if counterparty_subtype != "software":
+            return "fail", (
+                f"binding requires counterparty subtype 'software'; "
+                f"current counterparty is {counterparty_subtype!r}"
+            )
+        return "pass", None
+    # connection
+    rule = CONNECTION_RULES[new_connection_type]
+    if owner_subtype not in rule["owner"]:
+        return "fail", (
+            f"connection_type {new_connection_type!r} requires owner subtype in "
+            f"{sorted(rule['owner'])}; current owner is {owner_subtype!r}"
+        )
+    if counterparty_subtype not in rule["counterparty"]:
+        return "fail", (
+            f"connection_type {new_connection_type!r} requires counterparty subtype in "
+            f"{sorted(rule['counterparty'])}; current counterparty is {counterparty_subtype!r}"
+        )
+    return "pass", None
+
+
+@router.post(
+    "/{contract_id}/subtype-proposals",
+    response_model=ContractSubtypeShiftCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def propose_contract_subtype_shift(
+    contract_id: uuid.UUID,
+    payload: ContractSubtypeShiftCreate,
+    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    session: AsyncSession = Depends(get_session),
+) -> ContractSubtypeShiftCreateResponse:
+    contract = (
+        await session.execute(
+            select(Contract).where(Contract.id == contract_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if contract is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found"
+        )
+
+    _validate_contract_shift_payload(current=contract, payload=payload)
+
+    owner = await session.get(Part, contract.owner_part_id)
+    counterparty = await session.get(Part, contract.counterparty_part_id)
+    validation, fail_reason = _check_contract_shift_source_target(
+        owner_subtype=owner.subtype,
+        counterparty_subtype=counterparty.subtype,
+        new_subtype=payload.new_subtype,
+        new_connection_type=payload.new_connection_type,
+    )
+    if validation == "fail":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"shift would violate source/target rule of new subtype: "
+                f"{fail_reason}. Either shift the endpoint parts first, or "
+                f"pick a different new_subtype."
+            ),
+        )
+
+    latest = await _latest_active_contract_version(session, contract.id)
+    body_md = latest.markdown if latest else None
+    impact = SubtypeShiftImpact(
+        body_realign_required=body_realign_required(body_md, payload.new_subtype),
+        source_target_validation=validation,
+        # Contract shifts never cascade to other rows by themselves —
+        # the contract's own endpoints aren't changed by the shift,
+        # and contracts don't carry inbound references from elsewhere.
+        related_rows_potentially_affected=[],
+    )
+
+    proposal = ContractSubtypeProposal(
+        contract_id=contract.id,
+        current_subtype_at_propose=contract.subtype,
+        current_connection_type_at_propose=contract.connection_type,
+        new_subtype=payload.new_subtype,
+        new_connection_type=payload.new_connection_type,
+        rationale=payload.rationale,
+        proposer_actor=x_actor,
+        body_realign_required=impact.body_realign_required,
+        status="proposal",
+    )
+    session.add(proposal)
+    await session.flush()
+    proposal_id = proposal.id
+    await session.commit()
+
+    return ContractSubtypeShiftCreateResponse(
+        proposal_id=proposal_id,
+        contract_id=contract.id,
+        current_subtype=contract.subtype,
+        current_connection_type=contract.connection_type,
+        new_subtype=payload.new_subtype,
+        new_connection_type=payload.new_connection_type,
+        impact=impact,
+        status="proposal",
+    )
+
+
+@router.get(
+    "/{contract_id}/subtype-proposals",
+    response_model=ContractSubtypeShiftListResponse,
+)
+async def list_contract_subtype_shifts(
+    contract_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+) -> ContractSubtypeShiftListResponse:
+    contract = await session.get(Contract, contract_id)
+    if contract is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found"
+        )
+
+    rows = (
+        await session.execute(
+            select(ContractSubtypeProposal)
+            .where(ContractSubtypeProposal.contract_id == contract_id)
+            .order_by(ContractSubtypeProposal.created_at.desc())
+        )
+    ).scalars().all()
+
+    entries: list[ContractSubtypeShiftEntry] = []
+    for r in rows:
+        impact = SubtypeShiftImpact(
+            body_realign_required=r.body_realign_required,
+            # Source/target validation is a propose-time check; the
+            # outcome is reflected in whether the proposal was created
+            # at all (a 'fail' result 422s instead of writing a row).
+            # On read we report 'pass' for any row that exists.
+            source_target_validation="pass",
+            related_rows_potentially_affected=[],
+        )
+        entries.append(
+            ContractSubtypeShiftEntry(
+                proposal_id=r.id,
+                current_subtype=r.current_subtype_at_propose,
+                current_connection_type=r.current_connection_type_at_propose,
+                new_subtype=r.new_subtype,
+                new_connection_type=r.new_connection_type,
+                rationale=r.rationale,
+                proposer_actor=r.proposer_actor,
+                impact=impact,
+                status=r.status,
+                created_at=r.created_at,
+                accepted_at=r.accepted_at,
+                accepted_by=r.accepted_by,
+            )
+        )
+
+    return ContractSubtypeShiftListResponse(
+        contract_id=contract.id,
+        current_subtype=contract.subtype,
+        current_connection_type=contract.connection_type,
+        proposals=entries,
+    )
+
+
+@router.post(
+    "/{contract_id}/subtype-proposals/{proposal_id}/accept",
+    response_model=ContractSubtypeShiftAcceptResponse,
+)
+async def accept_contract_subtype_shift(
+    contract_id: uuid.UUID,
+    proposal_id: uuid.UUID,
+    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    single_operator: bool = Query(default=False),
+    session: AsyncSession = Depends(get_session),
+) -> ContractSubtypeShiftAcceptResponse:
+    contract = (
+        await session.execute(
+            select(Contract).where(Contract.id == contract_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if contract is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found"
+        )
+
+    proposal = (
+        await session.execute(
+            select(ContractSubtypeProposal).where(
+                ContractSubtypeProposal.id == proposal_id,
+                ContractSubtypeProposal.contract_id == contract.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if proposal is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Subtype-shift proposal {proposal_id} not found for contract {contract.id}",
+        )
+    if proposal.status != "proposal":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"proposal {proposal_id} is in status {proposal.status!r}; "
+                f"only 'proposal' rows can be accepted"
+            ),
+        )
+
+    enforce_two_party(
+        proposer_actor=proposal.proposer_actor,
+        acceptor_actor=x_actor,
+        single_operator=single_operator,
+    )
+
+    # Re-validate at accept time: endpoint parts may have shifted
+    # since the proposal was filed, breaking the rule that passed at
+    # propose time.
+    owner = await session.get(Part, contract.owner_part_id)
+    counterparty = await session.get(Part, contract.counterparty_part_id)
+    validation, fail_reason = _check_contract_shift_source_target(
+        owner_subtype=owner.subtype,
+        counterparty_subtype=counterparty.subtype,
+        new_subtype=proposal.new_subtype,
+        new_connection_type=proposal.new_connection_type,
+    )
+    if validation == "fail":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"shift can no longer apply: {fail_reason}. The endpoint "
+                f"parts may have shifted since this proposal was filed; "
+                f"file a fresh proposal once the endpoints are stable."
+            ),
+        )
+
+    is_noop = (
+        proposal.new_subtype == contract.subtype
+        and proposal.new_connection_type == contract.connection_type
+    )
+    if is_noop:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"no-op accept: contract is already at the proposed shape "
+                f"(a concurrent shift may have landed); this proposal is stale"
+            ),
+        )
+
+    now = datetime.now(timezone.utc)
+    shifted_from_subtype = contract.subtype
+    shifted_from_connection_type = contract.connection_type
+    contract.subtype = proposal.new_subtype
+    contract.connection_type = proposal.new_connection_type
+    contract.subtype_shifted_from = shifted_from_subtype
+    contract.connection_type_shifted_from = shifted_from_connection_type
+    contract.subtype_shifted_at = now
+    proposal.status = "accepted"
+    proposal.accepted_at = now
+    proposal.accepted_by = x_actor
+
+    await session.commit()
+
+    return ContractSubtypeShiftAcceptResponse(
+        proposal_id=proposal.id,
+        contract_id=contract.id,
+        shifted_from_subtype=shifted_from_subtype,
+        shifted_to_subtype=proposal.new_subtype,
+        shifted_from_connection_type=shifted_from_connection_type,
+        shifted_to_connection_type=proposal.new_connection_type,
+        accepted_at=now,
+        accepted_by=x_actor,
+        body_realign_required=proposal.body_realign_required,
+    )

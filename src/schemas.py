@@ -279,6 +279,12 @@ class ContractDetail(BaseModel):
 class VersionHistoryItem(BaseModel):
     version: str
     updated_at: datetime
+    # `kind` distinguishes a normal body version bump from a subtype shift
+    # acceptance event (#33). Subtype shifts do not change the body version
+    # — they record a structural transition under the same version
+    # number — so the history endpoint emits both kinds in chronological
+    # order with this discriminator.
+    kind: Literal["body_bump", "subtype_shift"] = "body_bump"
 
 
 class VersionHistoryResponse(BaseModel):
@@ -354,3 +360,132 @@ class TemplateProposalAcceptResponse(BaseModel):
     promoted_from_version: str
     active_version: str
     accepted_at: datetime
+
+
+# ---------- Subtype-shift proposals (#33) ----------
+#
+# Subtype shifts are a separate propose/accept flow from content
+# proposals. The body is not mutated; the row's structural
+# discriminator (parts: subtype; contracts: subtype + connection_type)
+# is the only thing that changes on accept. Two-party sign-off is
+# enforced via the X-Actor request header (proposer's actor ≠
+# acceptor's actor) with `?single_operator=true` as an explicit
+# override for solo setups.
+
+
+class RelatedRowAffected(BaseModel):
+    """A row whose validation may break post-shift; informational only.
+
+    Acceptance does not auto-cascade — the user files separate shift
+    proposals on each affected row if needed.
+    """
+
+    contract_id: uuid.UUID | None = None
+    part_name: str | None = None
+    owner: str | None = None
+    counterparty: str | None = None
+    subtype: str
+    reason: str
+
+
+class SubtypeShiftImpact(BaseModel):
+    body_realign_required: bool
+    # `pass`/`fail` for contract shifts where the source/target rule of
+    # the new subtype is checked against the row's current endpoints;
+    # `n/a` for part shifts (parts have no source/target rule).
+    source_target_validation: Literal["pass", "fail", "n/a"]
+    related_rows_potentially_affected: list[RelatedRowAffected]
+
+
+class PartSubtypeShiftCreate(BaseModel):
+    new_subtype: PartSubtype
+    rationale: str = Field(..., min_length=1, max_length=2000)
+
+
+class PartSubtypeShiftEntry(BaseModel):
+    proposal_id: uuid.UUID
+    current_subtype: str
+    new_subtype: str
+    rationale: str
+    proposer_actor: str | None
+    impact: SubtypeShiftImpact
+    status: Literal["proposal", "accepted"]
+    created_at: datetime
+    accepted_at: datetime | None = None
+    accepted_by: str | None = None
+
+
+class PartSubtypeShiftCreateResponse(BaseModel):
+    proposal_id: uuid.UUID
+    part_name: str
+    current_subtype: str
+    new_subtype: str
+    impact: SubtypeShiftImpact
+    status: Literal["proposal"]
+
+
+class PartSubtypeShiftListResponse(BaseModel):
+    part_name: str
+    current_subtype: str
+    proposals: list[PartSubtypeShiftEntry]
+
+
+class PartSubtypeShiftAcceptResponse(BaseModel):
+    proposal_id: uuid.UUID
+    part_name: str
+    shifted_from: str
+    shifted_to: str
+    accepted_at: datetime
+    accepted_by: str | None
+    body_realign_required: bool
+
+
+class ContractSubtypeShiftCreate(BaseModel):
+    new_subtype: ContractSubtype
+    new_connection_type: ConnectionType | None = None
+    rationale: str = Field(..., min_length=1, max_length=2000)
+
+
+class ContractSubtypeShiftEntry(BaseModel):
+    proposal_id: uuid.UUID
+    current_subtype: str
+    current_connection_type: str | None
+    new_subtype: str
+    new_connection_type: str | None
+    rationale: str
+    proposer_actor: str | None
+    impact: SubtypeShiftImpact
+    status: Literal["proposal", "accepted"]
+    created_at: datetime
+    accepted_at: datetime | None = None
+    accepted_by: str | None = None
+
+
+class ContractSubtypeShiftCreateResponse(BaseModel):
+    proposal_id: uuid.UUID
+    contract_id: uuid.UUID
+    current_subtype: str
+    current_connection_type: str | None
+    new_subtype: str
+    new_connection_type: str | None
+    impact: SubtypeShiftImpact
+    status: Literal["proposal"]
+
+
+class ContractSubtypeShiftListResponse(BaseModel):
+    contract_id: uuid.UUID
+    current_subtype: str
+    current_connection_type: str | None
+    proposals: list[ContractSubtypeShiftEntry]
+
+
+class ContractSubtypeShiftAcceptResponse(BaseModel):
+    proposal_id: uuid.UUID
+    contract_id: uuid.UUID
+    shifted_from_subtype: str
+    shifted_to_subtype: str
+    shifted_from_connection_type: str | None
+    shifted_to_connection_type: str | None
+    accepted_at: datetime
+    accepted_by: str | None
+    body_realign_required: bool

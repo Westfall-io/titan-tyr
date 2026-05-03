@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -46,8 +47,18 @@ class Part(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    # Subtype-shift bookkeeping (#33). Populated on the most recent
+    # accepted PartSubtypeProposal; nullable so unshifted parts have
+    # no value. See part_subtype_proposals for the full timeline.
+    subtype_shifted_from: Mapped[str | None] = mapped_column(String, nullable=True)
+    subtype_shifted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     versions: Mapped[list["PartVersion"]] = relationship(
+        back_populates="part", cascade="all, delete-orphan", passive_deletes=True
+    )
+    subtype_proposals: Mapped[list["PartSubtypeProposal"]] = relationship(
         back_populates="part", cascade="all, delete-orphan", passive_deletes=True
     )
 
@@ -136,10 +147,25 @@ class Contract(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    # Subtype-shift bookkeeping (#33). Populated on the most recent
+    # accepted ContractSubtypeProposal; nullable so unshifted contracts
+    # have no value. The `from` columns capture both subtype and
+    # connection_type so a contract that shifted away from `connection`
+    # retains its prior label for the audit trail.
+    subtype_shifted_from: Mapped[str | None] = mapped_column(String, nullable=True)
+    connection_type_shifted_from: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
+    subtype_shifted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     owner: Mapped[Part] = relationship(foreign_keys=[owner_part_id])
     counterparty: Mapped[Part] = relationship(foreign_keys=[counterparty_part_id])
     versions: Mapped[list["ContractVersion"]] = relationship(
+        back_populates="contract", cascade="all, delete-orphan", passive_deletes=True
+    )
+    subtype_proposals: Mapped[list["ContractSubtypeProposal"]] = relationship(
         back_populates="contract", cascade="all, delete-orphan", passive_deletes=True
     )
 
@@ -292,3 +318,123 @@ class ContractVersion(Base):
     promoted_from_prerelease: Mapped[str | None] = mapped_column(String, nullable=True)
 
     contract: Mapped[Contract] = relationship(back_populates="versions")
+
+
+# ---------- Subtype-shift proposals (#33) ----------
+#
+# Subtype shifts are a separate propose/accept flow from content
+# (body) proposals. They mutate the row's structural discriminator —
+# `parts.subtype` for parts; `contracts.subtype` (+ connection_type)
+# for contracts — without touching the body or version. Two-party
+# sign-off is enforced at the router layer via X-Actor headers.
+
+
+class PartSubtypeProposal(Base):
+    __tablename__ = "part_subtype_proposals"
+    __table_args__ = (
+        Index(
+            "ix_part_subtype_proposals_part_id_status",
+            "part_id",
+            "status",
+        ),
+        CheckConstraint(
+            "status IN ('proposal', 'accepted')",
+            name="ck_part_subtype_proposals_status_allowed",
+        ),
+        CheckConstraint(
+            "new_subtype IN ('software', 'container', 'image', 'pod', 'compose')",
+            name="ck_part_subtype_proposals_new_subtype_allowed",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    part_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("parts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # Snapshot of `parts.subtype` at propose time. Useful for reconstructing
+    # the impact preview after the fact and for the impact endpoint.
+    current_subtype_at_propose: Mapped[str] = mapped_column(String, nullable=False)
+    new_subtype: Mapped[str] = mapped_column(String, nullable=False)
+    rationale: Mapped[str] = mapped_column(String, nullable=False)
+    proposer_actor: Mapped[str | None] = mapped_column(String, nullable=True)
+    body_realign_required: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    accepted_by: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    part: Mapped[Part] = relationship(back_populates="subtype_proposals")
+
+
+class ContractSubtypeProposal(Base):
+    __tablename__ = "contract_subtype_proposals"
+    __table_args__ = (
+        Index(
+            "ix_contract_subtype_proposals_contract_id_status",
+            "contract_id",
+            "status",
+        ),
+        CheckConstraint(
+            "status IN ('proposal', 'accepted')",
+            name="ck_contract_subtype_proposals_status_allowed",
+        ),
+        CheckConstraint(
+            "new_subtype IN ('interaction', 'binding', 'connection')",
+            name="ck_contract_subtype_proposals_new_subtype_allowed",
+        ),
+        CheckConstraint(
+            "(new_subtype = 'connection' AND new_connection_type IS NOT NULL) "
+            "OR (new_subtype <> 'connection' AND new_connection_type IS NULL)",
+            name="ck_contract_subtype_proposals_connection_type_required",
+        ),
+        CheckConstraint(
+            "new_connection_type IS NULL OR new_connection_type IN "
+            "('builds-from', 'instantiates', 'runs', "
+            "'member-of', 'depends-on', 'submodule')",
+            name="ck_contract_subtype_proposals_connection_type_allowed",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    contract_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("contracts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    current_subtype_at_propose: Mapped[str] = mapped_column(String, nullable=False)
+    current_connection_type_at_propose: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
+    new_subtype: Mapped[str] = mapped_column(String, nullable=False)
+    new_connection_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    rationale: Mapped[str] = mapped_column(String, nullable=False)
+    proposer_actor: Mapped[str | None] = mapped_column(String, nullable=True)
+    body_realign_required: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    accepted_by: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    contract: Mapped[Contract] = relationship(back_populates="subtype_proposals")

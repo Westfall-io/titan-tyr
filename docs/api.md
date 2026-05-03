@@ -529,12 +529,18 @@ Pagination follows the conventions described above.
 > `/parts/{name}/contracts`, and the response key flipped from
 > `software` to `part`.
 
-### `GET /parts/{name}/history` — accepted version timeline (paginated)
+### `GET /parts/{name}/history` — accepted timeline (paginated)
 
-Lists every version of this part, most-recent first. One entry per
-row in `part_versions` (every PUT appends a row). **Markdown is
-not included** — fetch full bodies via `GET /parts/{name}` for the
-current head; per-version body retrieval is out of scope today.
+Lists every accepted change to this part, most-recent first. Two
+event kinds are merged into one stream:
+
+- `body_bump` — one entry per row in `part_versions` (every PUT
+  appends a row).
+- `subtype_shift` — one entry per accepted row in
+  `part_subtype_proposals` (see [Subtype shifts](#subtype-shifts)).
+
+**Markdown is not included** — fetch the current head body via
+`GET /parts/{name}`; per-version body retrieval is out of scope today.
 
 ```sh
 curl -H 'Authorization: Bearer sysmlv2' \
@@ -545,13 +551,23 @@ curl -H 'Authorization: Bearer sysmlv2' \
 ```json
 {
   "results": [
-    { "version": "1.2.0", "updated_at": "2026-04-15T09:14:00Z" },
-    { "version": "1.1.1", "updated_at": "2026-03-22T17:02:11Z" },
-    { "version": "1.0.0", "updated_at": "2026-02-01T08:30:00Z" }
+    { "kind": "subtype_shift", "version": "1.2.0", "updated_at": "2026-05-02T11:00:00Z" },
+    { "kind": "body_bump",     "version": "1.2.0", "updated_at": "2026-04-15T09:14:00Z" },
+    { "kind": "body_bump",     "version": "1.1.1", "updated_at": "2026-03-22T17:02:11Z" },
+    { "kind": "body_bump",     "version": "1.0.0", "updated_at": "2026-02-01T08:30:00Z" }
   ],
   "next": null
 }
 ```
+
+For `subtype_shift` entries, `version` is the latest body version at
+shift time (the shift does not bump the version) and `updated_at` is
+the proposal's `accepted_at`. For `body_bump` entries, `updated_at`
+is the version row's `created_at`.
+
+> **Backwards compat**: `kind` defaults to `"body_bump"` when omitted
+> by older clients' parsers; pre-v0.15.0 history responses lacked the
+> field entirely and are equivalent to "all `body_bump`".
 
 Pagination follows the conventions described above.
 
@@ -791,12 +807,18 @@ contract's immutable `subtype`:
 
 `404` if the contract does not exist or has no active version yet.
 
-### `GET /contracts/{contract_id}/history` — accepted version timeline (paginated)
+### `GET /contracts/{contract_id}/history` — accepted timeline (paginated)
 
-Lists every accepted version of this contract, most-recent first. One
-entry per `status='active'` row in `contract_versions` — superseded RC
-proposals are **not** included (consult
-`GET /contracts/{contract_id}/proposals` for the proposal pipeline).
+Lists every accepted change to this contract, most-recent first. Two
+event kinds are merged into one stream:
+
+- `body_bump` — one entry per `status='active'` row in
+  `contract_versions`. Superseded RC proposals are **not** included
+  (consult `GET /contracts/{contract_id}/proposals` for the proposal
+  pipeline).
+- `subtype_shift` — one entry per accepted row in
+  `contract_subtype_proposals` (see [Subtype shifts](#subtype-shifts)).
+
 **Markdown is not included.**
 
 ```sh
@@ -808,17 +830,26 @@ curl -H 'Authorization: Bearer sysmlv2' \
 ```json
 {
   "results": [
-    { "version": "1.2.0", "updated_at": "2026-04-15T09:14:00Z" },
-    { "version": "1.1.1", "updated_at": "2026-03-22T17:02:11Z" },
-    { "version": "1.0.0", "updated_at": "2026-02-01T08:30:00Z" }
+    { "kind": "subtype_shift", "version": "1.2.0", "updated_at": "2026-05-02T11:00:00Z" },
+    { "kind": "body_bump",     "version": "1.2.0", "updated_at": "2026-04-15T09:14:00Z" },
+    { "kind": "body_bump",     "version": "1.1.1", "updated_at": "2026-03-22T17:02:11Z" },
+    { "kind": "body_bump",     "version": "1.0.0", "updated_at": "2026-02-01T08:30:00Z" }
   ],
   "next": null
 }
 ```
 
-`updated_at` is the row's `accepted_at` when it was promoted from a
-proposal, otherwise its `created_at` (e.g. the initial `1.0.0` written
-by `POST /contracts`). Pagination follows the conventions above.
+For `body_bump` entries, `updated_at` is the row's `accepted_at` when
+it was promoted from a proposal, otherwise its `created_at` (e.g. the
+initial `1.0.0` written by `POST /contracts`). For `subtype_shift`
+entries, `version` is the latest body version at shift time (the
+shift does not bump the version) and `updated_at` is the proposal's
+`accepted_at`.
+
+> **Backwards compat**: pre-v0.15.0 history responses lacked the
+> `kind` field; all entries are `body_bump` for those.
+
+Pagination follows the conventions above.
 
 Errors:
 - `404 Not Found` — contract id does not exist.
@@ -916,6 +947,256 @@ Errors:
   already accepted), or you are accepting an RC whose stable target
   already exists.
 - `422 Unprocessable Entity` — malformed version in the path.
+
+---
+
+## Subtype shifts
+
+> **New in v0.15.0** (#33). Six endpoints — three on parts, three on
+> contracts — let an operator correct a row's structural subtype
+> (and, for connection contracts, the `connection_type` label)
+> *without* mutating the body or bumping the version. This is the
+> deliberate counterpart to content proposals (above): content
+> changes go through `/proposals`; structural mis-classification
+> goes through `/subtype-proposals`.
+
+The flow is **propose → accept**, mirroring content proposals, but
+the two flows are stored in separate tables and listed via separate
+endpoints. Acceptance only flips the row's `subtype`
+(and stamps `subtype_shifted_from` / `subtype_shifted_at`); the
+body bytes and the latest version are untouched.
+
+### Two-party rule (X-Actor handshake)
+
+Both `POST .../subtype-proposals` and `POST
+.../subtype-proposals/{id}/accept` accept an `X-Actor: <identity>`
+header. The proposer's actor is recorded on the proposal row; the
+acceptor's actor is checked against it.
+
+| Proposer  | Acceptor  | `?single_operator` | Result                                                  |
+| --------- | --------- | ------------------ | ------------------------------------------------------- |
+| set       | different | not set            | `200` accept                                            |
+| set       | same      | not set            | `422` — same actor cannot both propose and accept       |
+| set       | same      | `=true`            | `200` accept (override for solo setups)                 |
+| anonymous | any       | n/a                | `200` accept — rule unenforceable, accept proceeds      |
+| any       | anonymous | n/a                | `200` accept — rule unenforceable, accept proceeds      |
+
+The header is the only signal until real auth lands. Skill layers
+should warn loudly when either side is anonymous.
+
+### Soft-warn vs hard-block
+
+- **Part shifts soft-warn.** The propose response includes
+  `impact.related_rows_potentially_affected` — a list of contracts
+  that would become structurally invalid under the new part subtype
+  — but acceptance does **not** block. Each affected contract needs
+  its own subsequent shift; the impact preview is informational.
+- **Contract shifts hard-block.** The propose endpoint validates the
+  new subtype's source/target rule against the current endpoint
+  parts and returns `422` if it would fail. Fix the endpoint parts
+  (via their own subtype shifts) before retrying.
+
+### Body-realign signal
+
+The propose response also includes
+`impact.body_realign_required: bool`. `true` means the body's
+first-line stamp (`<!-- template: <kind>@<version> -->`) names a
+template kind that no longer matches the new subtype. Acceptance
+does not touch the body — file a follow-up content proposal that
+re-stamps to `<new-subtype>@<active-template-version>`.
+
+### `POST /parts/{name}/subtype-proposals` — propose a part shift
+
+```sh
+curl -X POST -H 'Authorization: Bearer sysmlv2' \
+     -H 'Content-Type: application/json' \
+     -H 'X-Actor: alice' \
+     -d '{ "new_subtype": "container", "rationale": "registered as software but actually represents the prod deployment instance" }' \
+     http://localhost:8000/parts/payments-service/subtype-proposals
+```
+
+`new_subtype` ∈ `{software, container, image, pod, compose}`.
+`rationale` is required (1–2000 chars).
+
+`201` response:
+```json
+{
+  "proposal_id": "9b1f...",
+  "current_subtype": "software",
+  "new_subtype": "container",
+  "impact": {
+    "body_realign_required": true,
+    "source_target_validation": "n/a",
+    "related_rows_potentially_affected": [
+      {
+        "contract_id": "ab12...",
+        "owner": "payments-service",
+        "counterparty": "orders-service",
+        "subtype": "interaction",
+        "reason": "(informational) interaction allows any/any; no rule broken"
+      }
+    ]
+  },
+  "status": "proposal"
+}
+```
+
+`source_target_validation` is `"n/a"` for parts (the rule is per
+contract, not per part).
+
+Errors:
+- `404 Not Found` — part not registered.
+- `409 Conflict` — `new_subtype == current` (no-op).
+- `422 Unprocessable Entity` — unknown `new_subtype`, missing
+  rationale, or rationale length out of bounds.
+
+### `GET /parts/{name}/subtype-proposals` — list shift proposals
+
+Returns every part-shift proposal regardless of status (open and
+historical). Filter client-side by `status == "proposal"` for the
+acceptable subset.
+
+`200` response:
+```json
+{
+  "name": "payments-service",
+  "current_subtype": "software",
+  "proposals": [
+    {
+      "proposal_id": "9b1f...",
+      "new_subtype": "container",
+      "rationale": "...",
+      "proposer_actor": "alice",
+      "status": "proposal",
+      "impact": { "body_realign_required": true, "source_target_validation": "n/a", "related_rows_potentially_affected": [] },
+      "created_at": "2026-05-02T10:30:00Z",
+      "accepted_at": null,
+      "acceptor_actor": null
+    }
+  ]
+}
+```
+
+Errors:
+- `404 Not Found` — part not registered.
+
+### `POST /parts/{name}/subtype-proposals/{proposal_id}/accept` — promote a part shift
+
+```sh
+curl -X POST -H 'Authorization: Bearer sysmlv2' \
+     -H 'X-Actor: bob' \
+     'http://localhost:8000/parts/payments-service/subtype-proposals/9b1f.../accept?single_operator=false'
+```
+
+`?single_operator=true` overrides the two-party rule for solo
+setups (see table above).
+
+`200` response:
+```json
+{
+  "name": "payments-service",
+  "previous_subtype": "software",
+  "new_subtype": "container",
+  "subtype_shifted_at": "2026-05-02T11:00:00Z",
+  "acceptor_actor": "bob"
+}
+```
+
+After this, `GET /parts/payments-service` returns
+`subtype: "container"` with the body, version, and version history
+unchanged. The shift event surfaces in
+`GET /parts/payments-service/history` as a `subtype_shift` entry.
+
+Errors:
+- `404 Not Found` — part name or `proposal_id` does not exist.
+- `409 Conflict` — proposal already accepted, or no-op (the part
+  has shifted independently to the same subtype since propose time).
+- `422 Unprocessable Entity` — `proposer_actor == acceptor_actor`
+  without `?single_operator=true`.
+
+### `POST /contracts/{contract_id}/subtype-proposals` — propose a contract shift
+
+```sh
+curl -X POST -H 'Authorization: Bearer sysmlv2' \
+     -H 'Content-Type: application/json' \
+     -H 'X-Actor: alice' \
+     -d '{ "new_subtype": "binding", "new_connection_type": null, "rationale": "owner is actually a container, this is environment-specific" }' \
+     http://localhost:8000/contracts/ab12.../subtype-proposals
+```
+
+`new_subtype` ∈ `{interaction, binding, connection}`.
+`new_connection_type` is **required iff** `new_subtype == "connection"`
+and ∈ `{builds-from, instantiates, runs, member-of, depends-on, submodule}`;
+must be `null` for the other two subtypes.
+
+A label-only shift (subtype stays `connection`, label changes) is
+**not** a no-op and is allowed; the new label's per-label
+source/target rule is re-validated.
+
+`201` response:
+```json
+{
+  "proposal_id": "7d3e...",
+  "current_subtype": "interaction",
+  "current_connection_type": null,
+  "new_subtype": "binding",
+  "new_connection_type": null,
+  "impact": {
+    "body_realign_required": true,
+    "source_target_validation": "pass",
+    "related_rows_potentially_affected": []
+  },
+  "status": "proposal"
+}
+```
+
+Errors:
+- `404 Not Found` — contract not found.
+- `409 Conflict` — no-op (subtype + connection_type both match
+  current).
+- `422 Unprocessable Entity` — `new_connection_type` missing iff
+  `new_subtype == "connection"` (or set otherwise), the new
+  subtype's source/target rule fails against the current endpoint
+  parts (**hard-block**), or rationale missing / out of bounds.
+
+### `GET /contracts/{contract_id}/subtype-proposals` — list shift proposals
+
+Same shape as the parts listing. Open and historical proposals are
+both returned; filter by `status == "proposal"` for acceptable.
+
+### `POST /contracts/{contract_id}/subtype-proposals/{proposal_id}/accept` — promote a contract shift
+
+```sh
+curl -X POST -H 'Authorization: Bearer sysmlv2' \
+     -H 'X-Actor: bob' \
+     'http://localhost:8000/contracts/ab12.../subtype-proposals/7d3e.../accept'
+```
+
+`200` response:
+```json
+{
+  "contract_id": "ab12...",
+  "previous_subtype": "interaction",
+  "previous_connection_type": null,
+  "new_subtype": "binding",
+  "new_connection_type": null,
+  "subtype_shifted_at": "2026-05-02T11:00:00Z",
+  "acceptor_actor": "bob"
+}
+```
+
+The accept endpoint **re-validates** the source/target rule against
+the current endpoint parts (which may have shifted independently
+since propose time). A proposal that was valid at propose time and
+no longer is hard-blocks here too, with `422`.
+
+Errors:
+- `404 Not Found` — contract or `proposal_id` does not exist.
+- `409 Conflict` — proposal already accepted, or no-op (the
+  contract has shifted independently to the same shape).
+- `422 Unprocessable Entity` — `proposer_actor == acceptor_actor`
+  without `?single_operator=true`, or source/target rule now fails
+  against current endpoint subtypes (re-propose if still wanted).
 
 ---
 

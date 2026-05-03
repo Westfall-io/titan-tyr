@@ -109,16 +109,62 @@ gave you:
 
 ### 3. List open proposals on the chosen contract
 
+A contract can have **two kinds of open proposal**:
+
+1. **Content proposal** — body change at a new RC version. The
+   default and most common path; the rest of this skill walks
+   through accepting one.
+2. **Subtype-shift proposal** (#33) — structural change to the
+   contract's `subtype` and/or `connection_type`. The body is
+   untouched; the version is not bumped. A different endpoint, a
+   different request shape, but the same proposer-doesn't-accept
+   rule applies.
+
+Check both surfaces before deciding which to accept:
+
 ```sh
+# Content proposals (RCs)
 curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
   "$TITAN_TYR_URL/contracts/{contract_id}/proposals"
+
+# Subtype-shift proposals
+curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
+  "$TITAN_TYR_URL/contracts/{contract_id}/subtype-proposals"
 ```
 
-Show `active_version` and the full list of open proposals
+If a **subtype-shift proposal** is open with `status == "proposal"`,
+flag it to the user and branch:
+
+> There's an open subtype-shift proposal on this contract:
+>   `<old-subtype>` → `<new-subtype>` (proposed by `<actor>`,
+>   "<rationale>"). Accept the shift, accept a content proposal, or
+>   list everything?
+
+The shift accept goes through a different endpoint:
+
+```sh
+curl -fsS -X POST \
+  -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
+  -H "X-Actor: $TITAN_TYR_ACTOR" \
+  "$TITAN_TYR_URL/contracts/{contract_id}/subtype-proposals/{proposal_id}/accept"
+```
+
+Same proposer-doesn't-accept rule (X-Actor header; pass
+`?single_operator=true` for solo setups). On accept, the contract's
+`subtype` (and `connection_type` if applicable) flips; body and
+version are unchanged. After acceptance, surface the shift's
+`body_realign_required` flag — if true, follow up with
+`/propose-contract-change` to re-stamp the body.
+
+For content proposals, continue with the rest of this skill.
+
+Show `active_version` and the full list of open content proposals
 (version + created_at). They must see what's available before picking.
 
-If `proposals` is empty, **stop**: there is nothing to accept. Tell
-the user — they likely want `/propose-contract-change` first.
+If both `proposals` and `subtype-proposals` are empty, **stop**:
+there is nothing to accept. Tell the user — they likely want
+`/propose-contract-change` (or `/propose-contract-subtype-shift`)
+first.
 
 **Always re-fetch this list, even if you saw it earlier in the
 session.** Cross-team coordination loops mean the counterparty may
