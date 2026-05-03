@@ -117,9 +117,19 @@ Show `active_version` and the full list of open proposals
 (version + created_at). They must see what's available before picking.
 
 If `proposals` is empty, **stop**: there is nothing to accept. Tell
-the user — they likely want the propose flow first (currently raw
-`POST /contracts/{contract_id}/proposals`; sibling skill is on
-the roadmap).
+the user — they likely want `/propose-contract-change` first.
+
+**Always re-fetch this list, even if you saw it earlier in the
+session.** Cross-team coordination loops mean the counterparty may
+have posted a higher RC since you last looked — accepting an older
+RC silently overwrites their refinements with stale content.
+
+**Multi-RC for the same target.** If the listing shows multiple RCs
+for the same target (e.g. `1.2.0-rc1`, `1.2.0-rc2`), the **latest
+RC supersedes** the earlier ones — the earlier RCs are review
+artifacts kept for history. Default to the latest. If the user asks
+for an older RC, double-check that's intentional; they probably
+mean the latest.
 
 ### 4. Confirm the target version
 
@@ -170,6 +180,22 @@ print("".join(diff))
 
 If the diff is empty (proposal body identical to active), surface that
 loud — accepting will succeed but is a no-op for readers.
+
+**Also show the diff vs the prior RC** if the proposal you're
+accepting is `<target>-rcN` with N > 1 and `<target>-rc(N-1)` (or
+any earlier RC of the same target) is in the proposals list. The
+"what changed since the last RC" diff is the most useful view when
+the counterparty has revised an RC you originally drafted — it
+makes their additions reviewable in isolation, not buried inside the
+full vs-active diff. Label them clearly:
+
+```
+--- changes since rc1 (counterparty's revision) ---
+[diff between rc1 and rc2]
+
+--- net change vs active 1.1.1 (what will land) ---
+[diff between active and rc2]
+```
 
 ### 6. Confirm
 
@@ -256,10 +282,16 @@ Don't auto-do them — surface them and ask.
   proposals have a parallel endpoint
   (`POST /templates/{kind}/proposals/{version}/accept`) — that's
   `/accept-template-proposal`'s job.
-- **No propose-contract-change skill yet.** The propose half of the
-  contract loop is currently raw
-  `POST /contracts/{contract_id}/proposals`. A sibling skill mirroring
-  `/propose-template-change` is on the roadmap.
+- **Don't accept stable before the implementation lands.** If the
+  proposal commits the provider to behavior the API doesn't yet
+  serve (a new endpoint, a new field, a stricter obligation), accepting
+  the bare stable version creates a contract that is actively wrong
+  about runtime — consumers will read it, build against it, and break.
+  Stay on `-rcN` until the provider has shipped the implementation
+  and the consumer has verified end-to-end. The owner-side accept
+  happens *after* implementation, not before. RC iterations carry no
+  such risk because consumers are expected to treat them as
+  pre-release.
 - **No --data file is needed**, so the JSON-via-file scratch dance the
   register/update skills use does not apply here.
 - **There is no reject endpoint.** If you don't like a proposal, the

@@ -155,6 +155,15 @@ then propose the bare `<target>` once both sides agree. Acceptance of
 the bare `<target>` will create the new active version; the RCs stay
 in the database for posterity.
 
+**Implementation-pending changes start as `-rc1`, not bare stable.**
+If the proposal commits the provider to behavior the API doesn't yet
+serve (a new endpoint, a new field, a stricter obligation),
+post as `<target>-rc1` even when there's no negotiation expected.
+Bare stable comes after the provider has implemented and the consumer
+has verified end-to-end — accepting stable earlier creates a contract
+that lies about runtime. (See the symmetric guard in
+`/accept-contract-proposal`.)
+
 If you can compute "the next sensible version" given the user's intent
 (e.g. they said "this is breaking" and active is `1.2.0`), suggest it
 and let the user override.

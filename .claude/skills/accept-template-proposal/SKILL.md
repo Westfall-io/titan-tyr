@@ -158,6 +158,16 @@ similar). Don't auto-do them — surface them and ask.
   technical constraint.
 - **No --data file is needed**, so the JSON-via-file scratch dance the
   other two skills use does not apply here.
+- **Don't accept stable before downstream is ready.** Templates are
+  filled at registration time and the stamp is preserved per-resource,
+  so accepting a stable template change while no software/contract has
+  migrated isn't catastrophic — but it does immediately become the
+  template every new registration sees. If the new template adds
+  required sections or restructures a fill rule, leave it on `-rcN`
+  until the register/update skills have been updated to match (or at
+  minimum until you've documented the migration plan in the proposal
+  body). The lower-stakes analogue of the contract version of this
+  rule.
 - **There is no reject endpoint.** If you don't like a proposal, the
   response is to counter-propose a higher version that reflects what
   you do want, then accept that. Proposals can't be torn down — they
