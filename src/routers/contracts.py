@@ -36,11 +36,13 @@ router = APIRouter(prefix="/contracts", tags=["contracts"], dependencies=[Depend
 
 # Per-label From/To Part subtype rules for connection contracts (#32).
 # `allowed_owner` / `allowed_counterparty` are sets of allowed subtype
-# strings. Subtype strings referenced here that don't yet exist as Part
-# subtypes (today: 'compose') are detected at registration and rejected
-# with a "not yet implemented" error rather than silently 404'ing on
-# the part lookup.
-_PART_SUBTYPES_IMPLEMENTED: set[str] = {"software", "container", "image", "pod"}
+# strings. With #37 every Part subtype referenced by the rule table is
+# implemented; the deferred-subtype check below is now a no-op for the
+# current rule set, but stays in place as a guard for any future rule
+# that references a not-yet-implemented subtype.
+_PART_SUBTYPES_IMPLEMENTED: set[str] = {
+    "software", "container", "image", "pod", "compose",
+}
 
 # Binding contracts express the runtime address at which a software part
 # is reachable. Originally container-only; extended to pod in #36 (the

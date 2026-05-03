@@ -306,12 +306,11 @@ class TestBindingSubtype:
 class TestConnectionSubtype:
     """Connection contracts (#32): structural binding with no data flow.
 
-    Six labels distinguish the kinds of structural binding. Five
-    (`depends-on`, `submodule`, `builds-from`, `instantiates`,
-    `runs`) work today; only `member-of` references a Part subtype
-    (`compose`) that isn't implemented yet — it rejects at
-    registration with a 'not yet implemented' error rather than
-    silently 404'ing on the part lookup.
+    All six labels (`depends-on`, `submodule`, `builds-from`,
+    `instantiates`, `runs`, `member-of`) work end-to-end after #37.
+    The router still has a deferred-subtype guard for any future
+    rule that references a not-yet-implemented Part subtype, but no
+    current rule trips it.
     """
 
     async def test_register_depends_on_container_to_container(self, client):
@@ -581,9 +580,25 @@ class TestConnectionSubtype:
         assert "container" in detail
         assert "pod" in detail
 
-    async def test_member_of_rejected_compose_not_implemented(self, client):
-        # `member-of` requires a compose counterparty; compose subtype
-        # isn't implemented yet.
+    async def test_member_of_container_to_compose(self, client):
+        # `member-of` is container → compose. Unblocked by #37.
+        await _register_part(client, "payments-prod", subtype="container")
+        await _register_part(client, "watchervault-stack", subtype="compose")
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "payments-prod",
+                "counterparty_part": "watchervault-stack",
+                "subtype": "connection",
+                "connection_type": "member-of",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["connection_type"] == "member-of"
+
+    async def test_member_of_counterparty_must_be_compose(self, client):
+        # Container → container with member-of is rejected.
         await _register_part(client, "ctr", subtype="container")
         await _register_part(client, "other", subtype="container")
         r = await client.post(
@@ -597,9 +612,25 @@ class TestConnectionSubtype:
             },
         )
         assert r.status_code == 422
-        detail = r.json()["detail"]
-        assert "compose" in detail
-        assert "not yet implemented" in detail
+        assert "compose" in r.json()["detail"]
+
+    async def test_member_of_owner_must_be_container(self, client):
+        # Software → compose with member-of is rejected; owner must
+        # be a container.
+        await _register_part(client, "svc", subtype="software")
+        await _register_part(client, "stack", subtype="compose")
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "svc",
+                "counterparty_part": "stack",
+                "subtype": "connection",
+                "connection_type": "member-of",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 422
+        assert "container" in r.json()["detail"]
 
     async def test_connection_type_returned_on_get(self, client):
         await _register_part(client, "c1", subtype="container")

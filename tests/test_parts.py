@@ -650,7 +650,7 @@ class TestSubtype:
             "/parts",
             json={
                 "name": "bad-subtype",
-                "subtype": "compose",  # Compose is deferred per #37
+                "subtype": "nonsense",
                 "repo_uri": "u",
                 "markdown": "m",
             },
@@ -682,7 +682,7 @@ class TestSubtype:
         assert "f-soft" not in names
 
     async def test_list_filter_unknown_subtype_rejected(self, client):
-        r = await client.get("/parts?subtype=compose")
+        r = await client.get("/parts?subtype=nonsense")
         assert r.status_code == 422
 
     async def test_subtype_not_mutable_via_put(self, client):
@@ -846,3 +846,34 @@ class TestPodSubtype:
         names = {e["name"] for e in pod_only["results"]}
         assert "p-pod" in names
         assert "p-soft" not in names
+
+
+class TestComposeSubtype:
+    async def test_register_compose(self, client):
+        r = await client.post(
+            "/parts",
+            json={
+                "name": "watchervault-stack",
+                "subtype": "compose",
+                "repo_uri": "https://example.com/repo",
+                "markdown": "# watchervault-stack\n\nDocker Compose stack.",
+            },
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["subtype"] == "compose"
+
+    async def test_list_filter_subtype_compose(self, client):
+        await _register(client, name="cs-soft", subtype="software")
+        await client.post(
+            "/parts",
+            json={
+                "name": "cs-stack",
+                "subtype": "compose",
+                "repo_uri": "u",
+                "markdown": "m",
+            },
+        )
+        compose_only = (await client.get("/parts?subtype=compose")).json()
+        names = {e["name"] for e in compose_only["results"]}
+        assert "cs-stack" in names
+        assert "cs-soft" not in names

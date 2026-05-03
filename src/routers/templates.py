@@ -26,7 +26,7 @@ router = APIRouter(
 )
 
 VALID_KINDS = (
-    "software", "container", "image", "pod",
+    "software", "container", "image", "pod", "compose",
     "interaction", "binding", "connection",
 )
 

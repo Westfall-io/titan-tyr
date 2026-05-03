@@ -23,6 +23,7 @@ SEED_BINDING_TEMPLATE = "# binding template seed\n\n## Provider obligations\nsee
 SEED_CONNECTION_TEMPLATE = "# connection template seed\n\n## What this connection records\nseed body\n"
 SEED_IMAGE_TEMPLATE = "# image template seed\n\n## Purpose\nseed body\n"
 SEED_POD_TEMPLATE = "# pod template seed\n\n## Purpose\nseed body\n"
+SEED_COMPOSE_TEMPLATE = "# compose template seed\n\n## Purpose\nseed body\n"
 
 
 def _container_dsn() -> str:
@@ -75,6 +76,7 @@ async def db_session(engine) -> AsyncIterator[AsyncSession]:
             ("container", SEED_CONTAINER_TEMPLATE),
             ("image", SEED_IMAGE_TEMPLATE),
             ("pod", SEED_POD_TEMPLATE),
+            ("compose", SEED_COMPOSE_TEMPLATE),
             ("interaction", SEED_INTERACTION_TEMPLATE),
             ("binding", SEED_BINDING_TEMPLATE),
             ("connection", SEED_CONNECTION_TEMPLATE),

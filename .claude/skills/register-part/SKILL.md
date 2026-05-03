@@ -1,14 +1,14 @@
 ---
 name: register-part
-description: Register a part with the titan-tyr API. A part is one of titan-tyr's typed nodes — currently subtype `software` (a codebase / deployable boundary), `image` (a built artifact between source and container), `container` (a running instance of an image), or `pod` (the K8s sibling of container — a scheduled unit of one or more co-located containers). Use when the user wants to add a new node to WatcherVault's graph — e.g. "register this repo with titan-tyr", "register the prod payments container", "register the payments image", "register the payments pod", "create a part for X". Branches on subtype: fetches the matching template (`/templates/software`, `/templates/image`, `/templates/container`, or `/templates/pod`), helps the user fill it in, then POSTs to `/parts`.
+description: Register a part with the titan-tyr API. A part is one of titan-tyr's typed nodes — currently subtype `software` (a codebase / deployable boundary), `image` (a built artifact between source and container), `container` (a running instance of an image), `pod` (the K8s sibling of container), or `compose` (a Docker Compose stack — metadata about a compose file). Use when the user wants to add a new node to WatcherVault's graph — e.g. "register this repo with titan-tyr", "register the prod payments container", "register the payments image", "register the payments pod", "register the watchervault stack", "create a part for X". Branches on subtype: fetches the matching template (`/templates/software`, `/templates/image`, `/templates/container`, `/templates/pod`, or `/templates/compose`), helps the user fill it in, then POSTs to `/parts`.
 ---
 
 # register-part
 
 You are helping the user register a part with titan-tyr. **Parts** are
 the typed nodes in titan-tyr's graph; contracts (edges) connect them.
-Per #23 / #35 / #36, parts come in subtypes — currently `software`,
-`image`, `container`, and `pod`.
+Per #23 / #35 / #36 / #37, parts come in subtypes — currently
+`software`, `image`, `container`, `pod`, and `compose`.
 This skill walks through the **node creation** path: `POST /parts`.
 
 ## Server location
@@ -53,10 +53,12 @@ Branch on what the user is registering:
 | `image`     | A built artifact (tagged Docker image, Helm chart version, packaged binary). Sits between the source repo (`software`) and the running instance (`container` / `pod`). |
 | `container` | A running instance of an image at a specific address — the live form of some software (typically a Docker / Compose runtime). |
 | `pod`       | The K8s sibling of `container` — a scheduled unit of one or more co-located containers sharing a network namespace and storage. Use this for K8s-orchestrated runtimes; use `container` for Docker / Compose. |
+| `compose`   | A Docker Compose stack — a collection of services declared in a `compose.yaml`. Metadata *about* the file; the file itself remains the source of truth. The `member-of` Connection ties container parts into this stack. |
 
 If the user said something ambiguous ("register this service"), ask:
 "Software (the codebase), image (the built artifact), container (a
-Docker / Compose runtime), or pod (a K8s runtime)?"
+Docker / Compose runtime), pod (a K8s runtime), or compose (a stack
+of services)?"
 
 The subtype determines the template you fetch in step 4.
 
@@ -67,9 +69,9 @@ before the request — don't invent values:
 
 | Field               | Source                                                                                     |
 | ------------------- | ------------------------------------------------------------------------------------------ |
-| `name`              | Unique identifier across **all** parts (one namespace, software + image + container + pod share it). Ask the user; suggest the repo name (for software), `<service>-image` (for images), `<image-name>-<env>` (for containers), or `<service>-pod` (for pods). |
-| `subtype`           | From step 2: `"software"`, `"image"`, `"container"`, or `"pod"`.                          |
-| `repo_uri`          | Git URL. For software: read `git config --get remote.origin.url`; confirm. For image: typically the same repo as the software it builds from. For container: the repo that defines the image / compose / deploy spec. For pod: the repo that owns the K8s manifest (Helm chart, kustomize overlay, raw YAML). |
+| `name`              | Unique identifier across **all** parts (one namespace, software + image + container + pod + compose share it). Ask the user; suggest the repo name (for software), `<service>-image` (for images), `<image-name>-<env>` (for containers), `<service>-pod` (for pods), or `<repo>-stack` (for compose stacks). |
+| `subtype`           | From step 2: `"software"`, `"image"`, `"container"`, `"pod"`, or `"compose"`.             |
+| `repo_uri`          | Git URL. For software: read `git config --get remote.origin.url`; confirm. For image: typically the same repo as the software it builds from. For container: the repo that defines the image / compose / deploy spec. For pod: the repo that owns the K8s manifest (Helm chart, kustomize overlay, raw YAML). For compose: the repo that owns the compose file. |
 | `issue_tracker_uri` | Optional. Where to file tickets if not the repo's default. Must be `https://`. |
 | `aliases`           | Optional list of colloquial labels other agents may use to refer to this part (`payments`, `billing`, `front end`, `前端`, `payments-prod`). Used by `GET /parts?match=<query>` for fuzzy lookup. Per-entry: 1–128 chars, no control chars/newlines, Unicode allowed; case-preserved on storage; case-insensitive dedupe within payload. Cross-part collisions allowed. |
 | `markdown`          | The filled-in part-template body for this subtype (see step 5).                            |
@@ -91,6 +93,9 @@ curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" "$TITAN_TYR_URL/templates/
 
 # subtype=pod
 curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" "$TITAN_TYR_URL/templates/pod"
+
+# subtype=compose
+curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" "$TITAN_TYR_URL/templates/compose"
 ```
 
 The template body is `text/markdown`. To get the **active template
@@ -163,6 +168,11 @@ guidance here, that's a signal to `/propose-template-change` instead.
   pod points at the image being run. **Ensure those parts are already
   registered** before continuing (the connection contracts written in
   step 10 will need them).
+- **`compose`** — the body has `Services`, `Network topology`,
+  `Volume mounts`, and `Env-var overlay strategy` tables. Each
+  service row references a Container Part by name. The Compose Part
+  is metadata *about* the file — keep it consistent with the file
+  but don't try to make it parseable as compose YAML.
 
 ### 7. Preview before submitting
 
@@ -195,6 +205,11 @@ For `subtype=pod`, additionally pre-flight that the software part
 referenced in the body's `runs` Connection and the image part(s)
 referenced in `instantiates` rows actually exist.
 
+For `subtype=compose`, additionally pre-flight that each container
+part listed in the body's `Services` table actually exists. The
+`member-of` Connections that wire those containers to this stack
+should follow registration (see step 10).
+
 ### 9. Submit
 
 **Scratch files must live inside the project.** Use `.scratch/` at the
@@ -212,7 +227,7 @@ python3 -c "
 import json, pathlib
 print(json.dumps({
     'name': 'payments-service',
-    'subtype': 'software',                      # or 'image' / 'container' / 'pod'
+    'subtype': 'software',                      # or 'image' / 'container' / 'pod' / 'compose'
     'repo_uri': 'https://github.com/example/payments-service',
     # 'aliases': ['payments', 'billing'],       # uncomment if the user gave any
     'markdown': pathlib.Path('.scratch/body.md').read_text(),
@@ -247,6 +262,10 @@ For pods: ask if the user wants to register the `runs` connection
 software, runtime address), and one `instantiates` connection per
 container in the pod (image → pod). Do NOT do this automatically.
 
+For compose stacks: ask if the user wants to register one
+`member-of` connection per container service in the stack (container
+→ compose). Do NOT do this automatically.
+
 For images: ask if the user wants to register the `builds-from`
 connection linking this image to the software part it is built from
 (one `POST /contracts` subtype=connection, connection_type=builds-from,
@@ -269,11 +288,12 @@ do this automatically.
 ## Notes
 
 - **One namespace.** `name` is unique across software, image,
-  container, AND pod parts. A common pattern is `<service>` for the
-  software part, `<service>-image` for the canonical image built
-  from it, `<service>-<env>` for the container, and `<service>-pod`
-  for the K8s pod (`payments`, `payments-image`, `payments-prod`,
-  `payments-pod`).
+  container, pod, AND compose parts. A common pattern is `<service>`
+  for the software part, `<service>-image` for the canonical image
+  built from it, `<service>-<env>` for the container, `<service>-pod`
+  for the K8s pod, and `<repo>-stack` for the Compose stack
+  (`payments`, `payments-image`, `payments-prod`, `payments-pod`,
+  `watchervault-stack`).
 - **Subtype is structural.** It can't be changed after registration
   (no PUT path mutates it). If you really need a different subtype,
   register a new part.

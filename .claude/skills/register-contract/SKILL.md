@@ -83,11 +83,9 @@ one of six labels:
 | `depends-on`      | `container`         | `container`               | Startup ordering within a compose stack              |
 | `submodule`       | `software`          | `software`                | One repository includes another via `.gitmodules`   |
 
-Labels referencing Part subtypes that are **not yet implemented**
-(`compose`) reject at registration. Today every arm except
-`member-of` works end-to-end. If the user picks `member-of`, surface
-that early and ask whether to proceed (the API will 422 with a clear
-"not yet implemented" message) or pick a different label.
+All six labels work end-to-end after #37. The router still has a
+deferred-subtype guard for any future rule that references a
+not-yet-implemented Part subtype, but no current rule trips it.
 
 The subtype determines which template you fetch in step 7 and shapes
 the validation in step 4.
@@ -147,11 +145,11 @@ match the rule's allow-set. Two failure modes worth distinguishing:
 1. **Wrong subtype for an implemented label.** E.g. `depends-on` with
    `owner.subtype == "software"`. Tell the user the rule, suggest the
    correct subtype (or a different label that fits what they have).
-2. **Label requires an un-implemented Part subtype.** Only
-   `member-of` is affected today: it references `compose`, which
-   doesn't exist yet. Surface this as "not yet implemented; tracked
-   in <follow-up issue>" and ask whether to abort or pick a
-   different label.
+2. **Label requires an un-implemented Part subtype.** No current
+   label is affected after #37 — every arm has both Part subtypes
+   shipped. The router still surfaces a clear "not yet implemented"
+   error if a future rule references a missing subtype; if the user
+   sees that error today, treat it as a regression and stop.
 
 If either check fails, **stop early** — don't POST.
 
@@ -388,12 +386,11 @@ been added yet"), surface them — don't auto-do.
   contract markdown body if it matters to humans, not in a JSON field.
 - **Don't put a `Version` field inside the markdown body** — the API
   tracks it on the version row separately.
-- **`compose` Part subtype is deferred.** It blocks the `member-of`
-  label entirely. When it lands, the rule table in step 2 doesn't
-  change but the "not yet implemented" branch in step 4 collapses
-  for `member-of`. (`image` shipped in #35; `pod` shipped in #36 —
-  both `builds-from` and the full `instantiates` / `runs` /
-  `binding` arms now work end-to-end.)
+- **All Part subtypes referenced by the connection rule table are
+  implemented as of #37.** `image` shipped in #35, `pod` in #36,
+  `compose` in #37 — every `connection_type` arm works end-to-end.
+  The deferred-subtype check in the router stays in place as a
+  guard for any future rule that references a missing subtype.
 - **The contract template's fill rules are identical to the part
   template's.** If those rules grow, update both register skills in
   lockstep — same as the propose/accept pair.
