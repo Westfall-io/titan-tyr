@@ -1,6 +1,7 @@
 from tests.conftest import (
+    SEED_BINDING_TEMPLATE,
     SEED_CONTAINER_TEMPLATE,
-    SEED_CONTRACT_TEMPLATE,
+    SEED_INTERACTION_TEMPLATE,
     SEED_SOFTWARE_TEMPLATE,
 )
 
@@ -12,17 +13,23 @@ class TestGetTemplate:
         assert "text/markdown" in r.headers["content-type"]
         assert r.text == SEED_SOFTWARE_TEMPLATE
 
-    async def test_contract_template(self, client):
-        r = await client.get("/templates/contract")
+    async def test_interaction_template(self, client):
+        r = await client.get("/templates/interaction")
         assert r.status_code == 200
         assert "text/markdown" in r.headers["content-type"]
-        assert r.text == SEED_CONTRACT_TEMPLATE
+        assert r.text == SEED_INTERACTION_TEMPLATE
 
     async def test_container_template(self, client):
         r = await client.get("/templates/container")
         assert r.status_code == 200
         assert "text/markdown" in r.headers["content-type"]
         assert r.text == SEED_CONTAINER_TEMPLATE
+
+    async def test_binding_template(self, client):
+        r = await client.get("/templates/binding")
+        assert r.status_code == 200
+        assert "text/markdown" in r.headers["content-type"]
+        assert r.text == SEED_BINDING_TEMPLATE
 
     async def test_unknown_kind_404(self, client):
         r = await client.get("/templates/nonexistent")
@@ -86,7 +93,7 @@ class TestListProposals:
         assert versions == ["1.1.0-rc1", "1.1.0", "2.0.0"]
 
     async def test_empty_listing(self, client):
-        r = await client.get("/templates/contract/proposals")
+        r = await client.get("/templates/interaction/proposals")
         assert r.status_code == 200
         assert r.json()["proposals"] == []
 

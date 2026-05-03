@@ -60,11 +60,11 @@ gave you:
     "$TITAN_TYR_URL/parts/{name}/contracts?limit=100"
   ```
 
-  Each entry has `contract_id`, `owner`, `counterparty`, `version`,
-  `updated_at`. Render them as a numbered list (`owner → counterparty
-  v<version>`) and ask which one. If there's only one, suggest it as
-  the default. `404` → unknown software; stop and offer
-  `/find-part`.
+  Each entry has `contract_id`, `owner`, `counterparty`, `subtype`,
+  `version`, `updated_at`. Render them as a numbered list
+  (`owner → counterparty [<subtype>] v<version>`) and ask which one.
+  If there's only one, suggest it as the default. `404` → unknown
+  part; stop and offer `/find-part`.
 
 - **They gave nothing.** List all contracts (paginated):
 
@@ -73,9 +73,10 @@ gave you:
     "$TITAN_TYR_URL/contracts?limit=100"
   ```
 
-  Render `owner → counterparty v<version>` and ask which one. If the
-  result set is paginated (`next` is non-null), warn that you've shown
-  the first page and offer to drill in by software name instead.
+  Render `owner → counterparty [<subtype>] v<version>` and ask which
+  one. If the result set is paginated (`next` is non-null), warn that
+  you've shown the first page and offer to drill in by part name (or
+  by `?subtype=<interaction|binding>`) instead.
 
 ### 3. Fetch the current active body
 
@@ -229,7 +230,7 @@ curl -fsS -X POST \
 
 On `201`, summarise:
 
-> Proposed `<version>` for contract `<owner> → <counterparty>`
+> Proposed `<version>` for `<subtype>` contract `<owner> → <counterparty>`
 > (`<contract_id>`). Status: `proposal`.
 >
 > List open proposals:

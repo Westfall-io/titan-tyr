@@ -17,8 +17,9 @@ from src.main import create_app
 from src.models import Template, TemplateVersion
 
 SEED_SOFTWARE_TEMPLATE = "# software template seed\n\n## Purpose\nseed body\n"
-SEED_CONTRACT_TEMPLATE = "# contract template seed\n\n## Provider obligations\nseed body\n"
+SEED_INTERACTION_TEMPLATE = "# interaction template seed\n\n## Provider obligations\nseed body\n"
 SEED_CONTAINER_TEMPLATE = "# container template seed\n\n## Purpose\nseed body\n"
+SEED_BINDING_TEMPLATE = "# binding template seed\n\n## Provider obligations\nseed body\n"
 
 
 def _container_dsn() -> str:
@@ -68,8 +69,9 @@ async def db_session(engine) -> AsyncIterator[AsyncSession]:
         # 0002 does in production.
         for kind, markdown in (
             ("software", SEED_SOFTWARE_TEMPLATE),
-            ("contract", SEED_CONTRACT_TEMPLATE),
             ("container", SEED_CONTAINER_TEMPLATE),
+            ("interaction", SEED_INTERACTION_TEMPLATE),
+            ("binding", SEED_BINDING_TEMPLATE),
         ):
             tpl = Template(kind=kind)
             session.add(tpl)

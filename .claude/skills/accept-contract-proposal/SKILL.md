@@ -89,11 +89,11 @@ gave you:
     "$TITAN_TYR_URL/parts/{name}/contracts?limit=100"
   ```
 
-  Each entry has `contract_id`, `owner`, `counterparty`, `version`,
-  `updated_at`. Render them as a numbered list (`owner → counterparty
-  v<version>`) and ask which one. If there's only one, suggest it as
-  the default. `404` → unknown software; stop and offer
-  `/find-part`.
+  Each entry has `contract_id`, `owner`, `counterparty`, `subtype`,
+  `version`, `updated_at`. Render them as a numbered list
+  (`owner → counterparty [<subtype>] v<version>`) and ask which one.
+  If there's only one, suggest it as the default. `404` → unknown
+  part; stop and offer `/find-part`.
 
 - **They gave nothing.** List all contracts (paginated):
 
@@ -102,9 +102,10 @@ gave you:
     "$TITAN_TYR_URL/contracts?limit=100"
   ```
 
-  Render `owner → counterparty v<version>` and ask which one. If the
-  result set is paginated (`next` is non-null), warn that you've shown
-  the first page and offer to drill in by software name instead.
+  Render `owner → counterparty [<subtype>] v<version>` and ask which
+  one. If the result set is paginated (`next` is non-null), warn that
+  you've shown the first page and offer to drill in by part name (or
+  by `?subtype=<interaction|binding>`) instead.
 
 ### 3. List open proposals on the chosen contract
 
@@ -226,7 +227,7 @@ No request body — the path is the entire input.
 
 On `200`, summarise the response:
 
-> Accepted. Contract `<owner> → <counterparty>` is now at
+> Accepted. `<subtype>` contract `<owner> → <counterparty>` is now at
 > `<active_version>` (promoted from `<promoted_from_version>` at
 > `<accepted_at>`).
 >

@@ -8,8 +8,11 @@ titan-tyr is a small FastAPI service that records:
 - **Parts** — typed nodes in the graph. Each part has a `subtype`
   discriminator: `software` (a codebase / deployable boundary) or
   `container` (a running instance of an image).
-- **Interface contracts** — directed edges between two parts
-  describing how one talks to the other.
+- **Contracts** — directed edges between two parts describing how
+  one talks to the other. Each contract has a `subtype`:
+  `interaction` (protocol/schema-level — env-agnostic) or `binding`
+  (deployment address bound from a container to a software part —
+  env-specific).
 
 Both nodes and edges carry a versioned markdown body. The latest
 version is what reads return. Contracts additionally support
@@ -40,9 +43,9 @@ proposal ──▶│ POST /…/proposals     POST /…/{ver}/accept       │
 - **RC pre-release support** (`1.3.0-rc1`, `1.3.0-rc2`, …) on contract
   and template proposals, with full history preserved on acceptance.
 - **Templates are versioned and proposable too.** The `software`,
-  `container`, and `contract` markdown templates served by the API
-  live in Postgres alongside everything else, mutated through the
-  same propose/accept flow.
+  `container`, `interaction`, and `binding` markdown templates served
+  by the API live in Postgres alongside everything else, mutated
+  through the same propose/accept flow.
 - **First-class migrations.** Alembic with autogenerate, a `MetaData`
   naming convention so diffs stay reproducible, and a CI policy of
   running `alembic check` against the model.
@@ -71,7 +74,7 @@ DATABASE_URL='postgresql+asyncpg://titan:titan@localhost:5432/titan_tyr' \
 ```sh
 # Smoke test (no auth required — the /health endpoint is the orchestrator probe)
 curl http://localhost:8000/health
-# → {"status":"ok","version":"0.9.0","db":"reachable"}
+# → {"status":"ok","version":"0.10.0","db":"reachable"}
 
 # Sanity check on the auth path
 curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/software
@@ -80,7 +83,7 @@ curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/software
 ## Run from Docker
 
 ```sh
-docker build -t titan-tyr:0.9.0 .
+docker build -t titan-tyr:0.10.0 .
 ```
 
 The image runs as a non-root `app` user, exposes port 8000, and bundles
@@ -92,12 +95,12 @@ step *before* the API container starts:
 # 1. Apply migrations (one-shot)
 docker run --rm \
   -e DATABASE_URL='postgresql+asyncpg://titan:titan@host.docker.internal:5432/titan_tyr' \
-  titan-tyr:0.9.0 alembic upgrade head
+  titan-tyr:0.10.0 alembic upgrade head
 
 # 2. Serve the API
 docker run --rm -p 8000:8000 \
   -e DATABASE_URL='postgresql+asyncpg://titan:titan@host.docker.internal:5432/titan_tyr' \
-  titan-tyr:0.9.0
+  titan-tyr:0.10.0
 ```
 
 (In Compose / Kubernetes, the migrate step is a `depends_on` job or an
@@ -162,9 +165,11 @@ auto-available in Claude Code when run from this repo. Invoke with
 - `/register-part` — walk through registering a part (software or
   container subtype) against a running titan-tyr. Branches on subtype
   and fetches the matching template.
-- `/register-contract` — register a new interface contract between two
-  parts already in titan-tyr. Picks the owner and counterparty via
-  `?match=`, fills the contract template, POSTs to `/contracts`.
+- `/register-contract` — register a new contract between two parts
+  already in titan-tyr. Branches on subtype (`interaction` for
+  protocol/schema agreements, `binding` for env-specific deployment
+  bindings). Picks the owner and counterparty via `?match=`, fetches
+  the matching template, POSTs to `/contracts`.
 - `/update-part` — append a new version to a registered part. Detects
   template-version drift and helps migrate.
 - `/learn-part` — look up everything titan-tyr knows about a
@@ -173,8 +178,9 @@ auto-available in Claude Code when run from this repo. Invoke with
 - `/find-part` — resolve a colloquial label or partial name
   ("front end", "billing") to a canonical part slug via
   `GET /parts?match=`. Read-only.
-- `/propose-template-change` — draft and POST a proposal to update the
-  `software`, `container`, or `contract` template. Does not auto-accept.
+- `/propose-template-change` — draft and POST a proposal to update one
+  of titan-tyr's templates (`software`, `container`, `interaction`,
+  `binding`). Does not auto-accept.
 - `/propose-contract-change` — draft and POST a proposal to amend an
   existing interface contract. Helps pick the contract, opens the
   active body for in-place editing, shows a unified diff. Does not

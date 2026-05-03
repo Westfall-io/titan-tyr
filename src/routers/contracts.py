@@ -19,6 +19,7 @@ from src.pagination import (
 )
 from src.routers.parts import _latest_active_contract_version, _list_active_contracts
 from src.schemas import (
+    CONTRACT_SUBTYPES,
     ContractCreate,
     ContractCreateResponse,
     ContractDetail,
@@ -53,6 +54,27 @@ async def register_contract(
     owner = await _resolve_part(session, payload.owner_part)
     counterparty = await _resolve_part(session, payload.counterparty_part)
 
+    # Subtype-specific source/target enforcement. Today only `binding` has
+    # rules; `interaction` accepts any (part, part) pair, preserving today's
+    # behaviour.
+    if payload.subtype == "binding":
+        if owner.subtype != "container":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"binding contracts require owner_part subtype 'container'; "
+                    f"{owner.name!r} is {owner.subtype!r}"
+                ),
+            )
+        if counterparty.subtype != "software":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"binding contracts require counterparty_part subtype 'software'; "
+                    f"{counterparty.name!r} is {counterparty.subtype!r}"
+                ),
+            )
+
     version = Version.parse(payload.version, allow_prerelease=False)
 
     existing = (
@@ -72,6 +94,7 @@ async def register_contract(
     contract = Contract(
         owner_part_id=owner.id,
         counterparty_part_id=counterparty.id,
+        subtype=payload.subtype,
     )
     session.add(contract)
     await session.flush()
@@ -92,6 +115,7 @@ async def register_contract(
         contract_id=contract.id,
         owner=owner.name,
         counterparty=counterparty.name,
+        subtype=payload.subtype,
         version=str(version),
         status="active",
     )
@@ -101,6 +125,7 @@ async def register_contract(
 async def list_or_search_contracts(
     owner: str | None = Query(default=None),
     counterparty: str | None = Query(default=None),
+    subtype: str | None = Query(default=None),
     after: str | None = Query(default=None),
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     session: AsyncSession = Depends(get_session),
@@ -112,11 +137,19 @@ async def list_or_search_contracts(
             detail="owner and counterparty must be supplied together for search; supply neither to list.",
         )
 
+    if subtype is not None and subtype not in CONTRACT_SUBTYPES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"subtype must be one of {sorted(CONTRACT_SUBTYPES)}; got {subtype!r}"
+            ),
+        )
+
     if owner is None:
         # List mode: paginated summary of every contract with an active version.
         limit = validate_limit(limit)
         items, next_cursor = await _list_active_contracts(
-            session, after=after, limit=limit, touching_part_id=None
+            session, after=after, limit=limit, touching_part_id=None, subtype=subtype
         )
         return ContractListResponse(results=items, next=next_cursor)
 
@@ -136,6 +169,8 @@ async def list_or_search_contracts(
             ),
         )
     )
+    if subtype is not None:
+        stmt = stmt.where(Contract.subtype == subtype)
     contracts = (await session.execute(stmt)).scalars().all()
 
     results: list[ContractSearchResult] = []
@@ -150,6 +185,7 @@ async def list_or_search_contracts(
                 contract_id=c.id,
                 owner=owner_name,
                 counterparty=cp_name,
+                subtype=c.subtype,
                 version=str(Version(latest.version_major, latest.version_minor, latest.version_patch)),
                 markdown=latest.markdown,
                 updated_at=latest.accepted_at or latest.created_at,
@@ -175,6 +211,7 @@ async def get_contract(
         contract_id=contract.id,
         owner=owner,
         counterparty=counterparty,
+        subtype=contract.subtype,
         version=str(Version(latest.version_major, latest.version_minor, latest.version_patch)),
         markdown=latest.markdown,
         updated_at=latest.accepted_at or latest.created_at,

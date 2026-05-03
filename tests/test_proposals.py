@@ -6,7 +6,7 @@ async def _bootstrap(client):
         assert r.status_code == 201, r.text
     r = await client.post(
         "/contracts",
-        json={"owner_part": "a", "counterparty_part": "b", "markdown": "v1.0.0"},
+        json={"owner_part": "a", "counterparty_part": "b", "subtype": "interaction", "markdown": "v1.0.0"},
     )
     assert r.status_code == 201
     return r.json()["contract_id"]

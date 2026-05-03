@@ -37,8 +37,8 @@ model will land in a future capability update.
 | Concept       | Stored as                                          | Notes                                               |
 | ------------- | -------------------------------------------------- | --------------------------------------------------- |
 | Part          | row in `parts` + N `part_versions`                 | Identified by unique name. Carries a `subtype` discriminator (`software` or `container`). |
-| Contract edge | row in `contracts` + N `contract_versions`         | Directed: `owner_part → counterparty_part`.         |
-| Template      | row in `templates` + N `template_versions`         | Three singletons keyed by `kind ∈ {software, container, contract}`. Served by `GET /templates/{kind}`. |
+| Contract edge | row in `contracts` + N `contract_versions`         | Directed: `owner_part → counterparty_part`. Carries a `subtype` discriminator (`interaction` or `binding`). |
+| Template      | row in `templates` + N `template_versions`         | Four singletons keyed by `kind ∈ {software, container, interaction, binding}` — one per part subtype, one per contract subtype. Served by `GET /templates/{kind}`. |
 | Proposal      | a `contract_versions` or `template_versions` row with `status='proposal'` | Lives on its parent until accepted or superseded.   |
 
 ### Schema
@@ -71,6 +71,7 @@ CREATE TABLE contracts (
   id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   owner_part_id        UUID NOT NULL REFERENCES parts(id),
   counterparty_part_id UUID NOT NULL REFERENCES parts(id),
+  subtype              TEXT NOT NULL CHECK (subtype IN ('interaction', 'binding')),
   created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (owner_part_id, counterparty_part_id),
   CHECK  (owner_part_id <> counterparty_part_id)
@@ -100,7 +101,7 @@ CREATE INDEX ON contract_versions (contract_id, status);
 
 CREATE TABLE templates (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  kind        TEXT NOT NULL UNIQUE CHECK (kind IN ('software', 'container', 'contract')),
+  kind        TEXT NOT NULL UNIQUE CHECK (kind IN ('software', 'container', 'interaction', 'binding')),
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -127,11 +128,19 @@ CREATE INDEX ON template_versions
 CREATE INDEX ON template_versions (template_id, status);
 ```
 
-The three `templates` rows (`kind='software'`, `kind='container'`,
-`kind='contract'`) are seeded by the templates migrations
-(`software` + `contract` in `0002_templates`, `container` in
-`0005_software_to_part_subtype` alongside the table rename). The
-`template_versions` schema is structurally identical to
+The four `templates` rows (`kind='software'`, `kind='container'`,
+`kind='interaction'`, `kind='binding'`) are seeded by the templates
+migrations:
+
+- `software` + `contract` (the original interaction template, before
+  the rename) in `0002_templates`
+- `container` in `0005_software_to_part_subtype` alongside the table
+  rename
+- `binding` in `0006_contract_subtype_and_binding`, which also renames
+  the existing `kind='contract'` row to `kind='interaction'` to match
+  the new contract subtype names
+
+The `template_versions` schema is structurally identical to
 `contract_versions` — same proposal/RC machinery, same accept-time
 invariants — because templates are mutated through the same
 propose-then-accept flow.
@@ -241,11 +250,14 @@ otherwise noted. Every endpoint requires the bearer password above.
 ### Templates
 
 Templates are stored in Postgres as versioned markdown, exactly like
-contracts — same propose/accept/RC machinery. There are three
-templates, identified by `kind ∈ {software, container, contract}`.
-The initial v1.0.0 of `software` and `contract` is seeded by
-`0002_templates`; `container` is seeded by
-`0005_software_to_part_subtype` alongside the table rename.
+contracts — same propose/accept/RC machinery. There are four
+templates, identified by `kind ∈ {software, container, interaction,
+binding}` — one per part subtype, one per contract subtype. The
+initial v1.0.0 of `software` and `contract` (later renamed to
+`interaction`) is seeded by `0002_templates`; `container` is seeded by
+`0005_software_to_part_subtype`; `binding` is seeded by
+`0006_contract_subtype_and_binding`, which also performs the
+`contract` → `interaction` kind rename.
 
 #### `GET /templates/{kind}` — latest active template
 
@@ -253,7 +265,7 @@ Returns the latest stable active version as `text/markdown`. RC
 suffixes are never returned here — same visibility rule that contracts
 follow.
 
-`404` if `kind` is not one of `software`, `container`, `contract`.
+`404` if `kind` is not one of `software`, `container`, `interaction`, `binding`.
 
 #### `POST /templates/{kind}/proposals` — propose a change
 
@@ -411,19 +423,34 @@ for the body.
 
 ### Contracts
 
-#### `POST /contracts` — register a new interface contract
+Every contract carries a `subtype` discriminator (`interaction` or
+`binding`). It is required at registration and immutable afterward.
+The unique constraint is on `(owner_part_id, counterparty_part_id)` —
+subtype is **not** part of the key, so `A → B` holds at most one
+contract total, not one per subtype.
+
+| Subtype       | What it represents                                                            | Source (owner_part) | Target (counterparty_part) |
+| ------------- | ----------------------------------------------------------------------------- | ------------------- | -------------------------- |
+| `interaction` | Protocol/schema-level agreement (HTTP API, queue topic, RPC). Env-agnostic.   | any                 | any                        |
+| `binding`     | Deployment address binding from a container to a software part. Env-specific. | `container`         | `software`                 |
+
+#### `POST /contracts` — register a new contract
 
 Request:
 ```json
 {
   "owner_part":        "payments-service",
   "counterparty_part": "orders-service",
+  "subtype":           "interaction",
   "markdown":          "...",
   "version":           "1.0.0"
 }
 ```
 
-`version` is optional and defaults to `"1.0.0"`.
+`subtype` is required. For `binding`, the API additionally enforces
+`owner_part.subtype == "container"` and
+`counterparty_part.subtype == "software"`. `version` is optional and
+defaults to `"1.0.0"`.
 
 Response `201`:
 ```json
@@ -431,15 +458,18 @@ Response `201`:
   "contract_id":  "ab12cd34-...",
   "owner":        "payments-service",
   "counterparty": "orders-service",
+  "subtype":      "interaction",
   "version":      "1.0.0",
   "status":       "active"
 }
 ```
 
 Errors:
-- `409 Conflict` if a contract already exists for that ordered pair.
-  Use proposals to change it.
+- `409 Conflict` if a contract already exists for that ordered pair
+  (in any subtype). Use proposals to change it.
 - `404 Not Found` if either part is unknown.
+- `422 Unprocessable Entity` for missing/unknown `subtype`, or for
+  `binding` source/target subtype mismatch.
 
 #### `GET /contracts?owner={a}&counterparty={b}` — search contracts between two parts
 
@@ -453,6 +483,7 @@ named parts, in either direction. Zero, one, or two results.
       "contract_id":  "ab12cd34-...",
       "owner":        "payments-service",
       "counterparty": "orders-service",
+      "subtype":      "interaction",
       "version":      "1.2.0",
       "markdown":     "...",
       "updated_at":   "2026-04-15T09:14:00Z"
@@ -461,9 +492,14 @@ named parts, in either direction. Zero, one, or two results.
 }
 ```
 
+The list mode (no `owner` / `counterparty`) and search mode both accept
+an optional `?subtype=<interaction|binding>` filter to narrow results
+to a single subtype.
+
 #### `GET /contracts/{contract_id}` — latest active version of a contract
 
-Returns the most recent `status='active'` version of that contract.
+Returns the most recent `status='active'` version of that contract,
+including the contract's immutable `subtype`.
 
 ### Proposals
 
@@ -584,11 +620,12 @@ src/
 alembic/
   env.py              Wired to src.models.Base.metadata for autogenerate
   versions/
-    0001_initial.py                       software + contracts + *_versions
-    0002_templates.py                     templates + template_versions, seeded with v1.0.0 of software + contract
-    0003_software_issue_tracker_uri.py    optional issue_tracker_uri on software
-    0004_software_aliases.py              aliases TEXT[] on software
-    0005_software_to_part_subtype.py      rename software→parts, add subtype, seed container template v1.0.0
+    0001_initial.py                          software + contracts + *_versions
+    0002_templates.py                        templates + template_versions, seeded with v1.0.0 of software + contract
+    0003_software_issue_tracker_uri.py       optional issue_tracker_uri on software
+    0004_software_aliases.py                 aliases TEXT[] on software
+    0005_software_to_part_subtype.py         rename software→parts, add parts.subtype, seed container template v1.0.0
+    0006_contract_subtype_and_binding.py     add contracts.subtype, rename templates.kind 'contract'→'interaction', seed binding template v1.0.0
 alembic.ini
 tests/
 pyproject.toml

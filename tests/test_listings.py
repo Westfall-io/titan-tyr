@@ -17,6 +17,7 @@ async def _register_contract(client, owner, counterparty, markdown="m"):
         json={
             "owner_part": owner,
             "counterparty_part": counterparty,
+            "subtype": "interaction",
             "markdown": markdown,
         },
     )

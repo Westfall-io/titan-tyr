@@ -350,11 +350,15 @@ async def _list_active_contracts(
     after: str | None,
     limit: int,
     touching_part_id=None,
+    subtype: str | None = None,
 ) -> tuple[list[ContractListItem], str | None]:
     """Paginated listing of contracts with their latest active version.
 
     `touching_part_id`, if provided, restricts results to contracts where the
     part is owner or counterparty. Otherwise lists every contract.
+
+    `subtype`, if provided, restricts results to contracts of that subtype
+    (validated by the caller against CONTRACT_SUBTYPES).
     """
     latest_active = (
         select(
@@ -382,6 +386,7 @@ async def _list_active_contracts(
     stmt = (
         select(
             Contract.id,
+            Contract.subtype,
             owner_alias.c.name.label("owner_name"),
             cp_alias.c.name.label("cp_name"),
             latest_active.c.cv_major,
@@ -402,6 +407,9 @@ async def _list_active_contracts(
                 Contract.counterparty_part_id == touching_part_id,
             )
         )
+
+    if subtype is not None:
+        stmt = stmt.where(Contract.subtype == subtype)
 
     # Pagination order key: COALESCE(accepted_at, created_at) per row, plus id.
     # Use accepted_at if present; otherwise created_at. We compute the value in
@@ -427,12 +435,13 @@ async def _list_active_contracts(
     items: list[ContractListItem] = []
     last_t = None
     last_id = None
-    for c_id, owner_name, cp_name, vmaj, vmin, vpat, vts, accepted_at in rows:
+    for c_id, c_subtype, owner_name, cp_name, vmaj, vmin, vpat, vts, accepted_at in rows:
         items.append(
             ContractListItem(
                 contract_id=c_id,
                 owner=owner_name,
                 counterparty=cp_name,
+                subtype=c_subtype,
                 version=str(Version(vmaj, vmin, vpat)),
                 updated_at=accepted_at or vts,
             )

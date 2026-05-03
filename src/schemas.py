@@ -21,6 +21,9 @@ PART_NAME_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 PART_SUBTYPES: tuple[str, ...] = ("software", "container")
 PartSubtype = Literal["software", "container"]
 
+CONTRACT_SUBTYPES: tuple[str, ...] = ("interaction", "binding")
+ContractSubtype = Literal["interaction", "binding"]
+
 
 def _validate_part_name(v: str) -> str:
     if not PART_NAME_PATTERN.fullmatch(v):
@@ -181,6 +184,7 @@ class ContractListItem(BaseModel):
     contract_id: uuid.UUID
     owner: str
     counterparty: str
+    subtype: ContractSubtype
     version: str
     updated_at: datetime
 
@@ -202,6 +206,7 @@ class PartContractsListResponse(BaseModel):
 class ContractCreate(BaseModel):
     owner_part: str
     counterparty_part: str
+    subtype: ContractSubtype
     markdown: str
     version: str = "1.0.0"
 
@@ -214,6 +219,7 @@ class ContractCreateResponse(BaseModel):
     contract_id: uuid.UUID
     owner: str
     counterparty: str
+    subtype: ContractSubtype
     version: str
     status: str
 
@@ -222,6 +228,7 @@ class ContractSearchResult(BaseModel):
     contract_id: uuid.UUID
     owner: str
     counterparty: str
+    subtype: ContractSubtype
     version: str
     markdown: str
     updated_at: datetime
@@ -235,6 +242,7 @@ class ContractDetail(BaseModel):
     contract_id: uuid.UUID
     owner: str
     counterparty: str
+    subtype: ContractSubtype
     version: str
     markdown: str
     updated_at: datetime

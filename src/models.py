@@ -103,6 +103,10 @@ class Contract(Base):
             "owner_part_id <> counterparty_part_id",
             name="owner_ne_counterparty",
         ),
+        CheckConstraint(
+            "subtype IN ('interaction', 'binding')",
+            name="ck_contracts_subtype_allowed",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -116,6 +120,7 @@ class Contract(Base):
     counterparty_part_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("parts.id"), nullable=False
     )
+    subtype: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -131,7 +136,8 @@ class Template(Base):
     __tablename__ = "templates"
     __table_args__ = (
         CheckConstraint(
-            "kind IN ('software', 'contract', 'container')", name="kind_allowed"
+            "kind IN ('software', 'container', 'interaction', 'binding')",
+            name="kind_allowed",
         ),
     )
 

@@ -1,6 +1,6 @@
 ---
 name: accept-template-proposal
-description: Promote an open titan-tyr template proposal (software or contract) to the new active version. Use when the user wants to land a previously-proposed template change — e.g. "accept the template proposal", "promote 2.0.0-rc1 to active", "make this the new template". Lists open proposals, confirms which one to accept, and POSTs to /templates/{kind}/proposals/{version}/accept. Acceptance changes what every caller sees on `GET /templates/{kind}` — confirm before submitting.
+description: Promote an open titan-tyr template proposal (software, container, interaction, or binding) to the new active version. Use when the user wants to land a previously-proposed template change — e.g. "accept the template proposal", "promote 2.0.0-rc1 to active", "make this the new template". Lists open proposals, confirms which one to accept, and POSTs to /templates/{kind}/proposals/{version}/accept. Acceptance changes what every caller sees on `GET /templates/{kind}` — confirm before submitting.
 ---
 
 # accept-template-proposal

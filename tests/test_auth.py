@@ -18,8 +18,9 @@ class TestAuth:
 
     @pytest.mark.parametrize("path", [
         "/templates/software",
-        "/templates/contract",
         "/templates/container",
+        "/templates/interaction",
+        "/templates/binding",
         "/parts/anything",
     ])
     async def test_auth_required_on_get_endpoints(self, client, path):

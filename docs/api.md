@@ -123,25 +123,34 @@ there's an actual orchestrator that benefits from the distinction.
 
 ## Templates
 
-The three templates (`software`, `container`, `contract`) live in
-Postgres as versioned markdown. They are mutated through the same
-propose/accept flow as contracts — see Proposals below for the full
-RC behaviour, the shape carries over here unchanged.
+The four templates (`software`, `container`, `interaction`, `binding`)
+live in Postgres as versioned markdown. They are mutated through the
+same propose/accept flow as contracts — see Proposals below for the
+full RC behaviour, the shape carries over here unchanged.
 
-`software` and `container` are the two part subtypes; the matching
-template is fetched at registration time depending on which subtype
-the caller is creating.
+Every template kind matches a subtype: `software`/`container` are the
+two part subtypes; `interaction`/`binding` are the two contract
+subtypes. The matching template is fetched at registration time
+depending on which subtype the caller is creating.
+
+> **Breaking change in v0.10.0**: template kind `contract` was renamed
+> to `interaction` to match the new contract subtype names. Callers
+> hitting `/templates/contract` will get `404` — switch to
+> `/templates/interaction`. The body content is unchanged (the same
+> `templates` row, just with a renamed `kind`).
 
 ### `GET /templates/{kind}` — latest active template
 
 ```sh
 curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/software
 curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/container
+curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/interaction
+curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/binding
 ```
 
-`kind` ∈ `{software, container, contract}`. Response is `text/markdown`
-of the latest stable active version. RC-suffixed versions are never
-returned here.
+`kind` ∈ `{software, container, interaction, binding}`. Response is
+`text/markdown` of the latest stable active version. RC-suffixed
+versions are never returned here.
 
 `404` if `kind` is unknown.
 
@@ -469,6 +478,7 @@ curl -H 'Authorization: Bearer sysmlv2' \
       "contract_id": "ab12cd34-...",
       "owner": "payments-service",
       "counterparty": "orders-service",
+      "subtype": "interaction",
       "version": "1.2.0",
       "updated_at": "2026-04-15T09:14:00Z"
     }
@@ -517,7 +527,24 @@ Errors:
 
 ## Contracts
 
-### `POST /contracts` — register a new interface contract
+Contracts are directed edges between two parts. Every contract carries
+a `subtype` discriminator that selects which template was used to fill
+its body and which validation rules apply at registration:
+
+| Subtype       | What it represents                                                                | Source (owner_part) | Target (counterparty_part) |
+| ------------- | --------------------------------------------------------------------------------- | ------------------- | -------------------------- |
+| `interaction` | Protocol/schema-level agreement (HTTP API, queue topic, RPC). Env-agnostic.       | any                 | any                        |
+| `binding`     | Deployment address binding from a container to a software part. Env-specific.     | `container`         | `software`                 |
+
+The `subtype` field is required at registration time and is
+**immutable** afterward (no PUT path mutates it; subsequent versions
+go through propose/accept).
+
+The unique constraint is on `(owner_part_id, counterparty_part_id)` —
+subtype is **not** part of the key, so `A → B` can hold one contract
+total, not one per subtype.
+
+### `POST /contracts` — register a new contract
 
 ```sh
 curl -H 'Authorization: Bearer sysmlv2' \
@@ -525,11 +552,21 @@ curl -H 'Authorization: Bearer sysmlv2' \
      -d '{
        "owner_part": "payments-service",
        "counterparty_part": "orders-service",
+       "subtype": "interaction",
        "markdown": "...",
        "version": "1.0.0"
      }' \
      http://localhost:8000/contracts
 ```
+
+`subtype` is **required** and must be one of `interaction`, `binding`.
+
+For `binding` specifically, the API additionally enforces:
+- `owner_part.subtype == "container"`
+- `counterparty_part.subtype == "software"`
+
+`interaction` has no source/target subtype constraints — any (part,
+part) pair is valid (preserves today's behaviour).
 
 `version` is optional and defaults to `"1.0.0"`. Must be plain
 `MAJOR.MINOR.PATCH`.
@@ -540,6 +577,7 @@ curl -H 'Authorization: Bearer sysmlv2' \
   "contract_id": "ab12cd34-...",
   "owner": "payments-service",
   "counterparty": "orders-service",
+  "subtype": "interaction",
   "version": "1.0.0",
   "status": "active"
 }
@@ -548,11 +586,13 @@ curl -H 'Authorization: Bearer sysmlv2' \
 Errors:
 - `404 Not Found` — either part is unknown.
 - `409 Conflict` — a contract from `owner_part` to
-  `counterparty_part` already exists. To change it, use
+  `counterparty_part` already exists in any subtype. To change it, use
   `POST /contracts/{contract_id}/proposals`.
 - `422 Unprocessable Entity` — `owner_part == counterparty_part`,
-  malformed `version`, or either part reference is not a valid
-  slug (see Part name format above).
+  `subtype` missing or not one of `interaction`/`binding`, malformed
+  `version`, either part reference is not a valid slug (see Part name
+  format above), or `binding` source/target subtype mismatch (e.g. a
+  `binding` contract with a software owner).
 
 ### `GET /contracts` — list or search contracts
 
@@ -574,6 +614,7 @@ curl -H 'Authorization: Bearer sysmlv2' \
       "contract_id": "ab12cd34-...",
       "owner": "payments-service",
       "counterparty": "orders-service",
+      "subtype": "interaction",
       "version": "1.2.0",
       "markdown": "...",
       "updated_at": "2026-04-15T09:14:00Z"
@@ -599,6 +640,7 @@ curl -H 'Authorization: Bearer sysmlv2' \
       "contract_id": "ab12cd34-...",
       "owner": "payments-service",
       "counterparty": "orders-service",
+      "subtype": "interaction",
       "version": "1.2.0",
       "updated_at": "2026-04-15T09:14:00Z"
     }
@@ -606,6 +648,17 @@ curl -H 'Authorization: Bearer sysmlv2' \
   "next": null
 }
 ```
+
+#### `?subtype=<interaction|binding>` — filter by subtype
+
+```sh
+curl -H 'Authorization: Bearer sysmlv2' \
+  'http://localhost:8000/contracts?subtype=binding'
+```
+
+Restricts results to contracts of the named subtype. Combines with
+both modes (search and list). `422` if the value is anything other
+than `interaction` or `binding`.
 
 **Half-filter** (`?owner=…` alone or `?counterparty=…` alone) → `422`.
 Search requires both filters; list requires neither.
@@ -617,7 +670,20 @@ curl -H 'Authorization: Bearer sysmlv2' \
      http://localhost:8000/contracts/ab12cd34-1234-1234-1234-1234567890ab
 ```
 
-Returns the latest `status='active'` version.
+Returns the latest `status='active'` version. Response includes the
+contract's immutable `subtype`:
+
+```json
+{
+  "contract_id": "ab12cd34-...",
+  "owner": "payments-service",
+  "counterparty": "orders-service",
+  "subtype": "interaction",
+  "version": "1.2.0",
+  "markdown": "# payments-service ↔ orders-service\n...",
+  "updated_at": "2026-04-15T09:14:00Z"
+}
+```
 
 `404` if the contract does not exist or has no active version yet.
 

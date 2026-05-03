@@ -10,7 +10,7 @@ when you run it from the titan-tyr repo root. Type `/<skill-name>` to invoke.
 | [`update-part`](./update-part/SKILL.md)                   | Append a new version to an already-registered part. Detects template-version drift and helps migrate. |
 | [`learn-part`](./learn-part/SKILL.md)                     | Look up everything titan-tyr knows about a registered part — description, ticket-filing target, contracts. Read-only; returns structured JSON. |
 | [`find-part`](./find-part/SKILL.md)                       | Resolve a colloquial label or partial name (e.g. "front end") to a canonical part slug via `?match=`. Read-only; returns structured JSON. |
-| [`propose-template-change`](./propose-template-change/SKILL.md)   | Draft and POST a proposal to update the `software`, `container`, or `contract` template. Does not auto-accept. |
+| [`propose-template-change`](./propose-template-change/SKILL.md)   | Draft and POST a proposal to update one of titan-tyr's templates (`software`, `container`, `interaction`, `binding`). Does not auto-accept. |
 | [`propose-contract-change`](./propose-contract-change/SKILL.md)   | Draft and POST a proposal to amend an existing interface contract. Helps pick the contract, opens the active body for in-place editing, shows a unified diff. Does not auto-accept. |
 | [`accept-template-proposal`](./accept-template-proposal/SKILL.md) | Promote an open template proposal to the new active version. Mutates what every caller sees on the next `GET /templates/{kind}`. |
 | [`accept-contract-proposal`](./accept-contract-proposal/SKILL.md) | Promote an open contract proposal to the new active version. Helps pick the contract (by id, by part name, or from a list), shows a unified diff vs the active body, then POSTs accept. |

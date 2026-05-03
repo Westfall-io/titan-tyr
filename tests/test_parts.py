@@ -607,6 +607,7 @@ class TestMatchQuery:
             json={
                 "owner_part": "a",
                 "counterparty_part": "b",
+                "subtype": "interaction",
                 "markdown": "ab",
             },
         )
@@ -616,6 +617,7 @@ class TestMatchQuery:
             json={
                 "owner_part": "c",
                 "counterparty_part": "a",
+                "subtype": "interaction",
                 "markdown": "ca",
             },
         )
@@ -730,6 +732,7 @@ class TestContainerSubtype:
             json={
                 "owner_part": "payments-svc-prod",
                 "counterparty_part": "payments-svc",
+                "subtype": "binding",
                 "markdown": "# runs binding\n\nContainer hosts software at host:port.",
             },
         )
