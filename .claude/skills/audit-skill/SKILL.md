@@ -1,6 +1,6 @@
 ---
 name: audit-skill
-description: Review how a recently-invoked skill actually performed in this session. Use after another skill finishes — e.g. "audit how /register-part went", "review the propose-contract-change run", "audit the last skill". Loads the skill body, reconstructs the run from conversation context, classifies friction/bugs/stale references/missing guidance, and surfaces concrete fix suggestions. Does NOT auto-fix the skill, auto-file issues, or replay the run.
+description: Review how a recently-invoked skill actually performed in this session. Use after another skill finishes — e.g. "audit how /register-part went", "review the propose-contract-change run", "audit the last skill". Verifies the local skill body matches the canonical version in titan-tyr, reconstructs the run from conversation context, classifies friction/bugs/stale references/missing guidance, and surfaces concrete fix suggestions. Does NOT auto-fix the skill, auto-file issues, replay the run, or audit a stale local copy without explicit override.
 ---
 
 # audit-skill
@@ -39,6 +39,56 @@ what *happened*.
 | `notes` | no       | One-liner from the user flagging anything they want probed specifically. Without it, the audit leans on conversation context alone.                                              |
 
 ## Workflow
+
+### 0. Freshness check against canonical
+
+The skill body the audit reads must match the **canonical** version
+in `github.com/Westfall-io/titan-tyr` on `main`. If you audit a stale
+local copy, the friction you classify as a bug may already be fixed
+upstream — and any issue you draft is a duplicate that wastes review
+cycles.
+
+Fetch the canonical body and diff against the local copy before
+loading anything in step 1:
+
+```sh
+mkdir -p .scratch
+gh api "repos/Westfall-io/titan-tyr/contents/.claude/skills/<skill>/SKILL.md" \
+  --jq '.content' \
+  | base64 -d > .scratch/audit-canonical-<skill>.md
+
+diff -u .scratch/audit-canonical-<skill>.md .claude/skills/<skill>/SKILL.md
+```
+
+Branch on the result:
+
+| Result                                                | What to do                                                                                                                                                                                                                                                                          |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `gh api` returns `404`                                | Skill exists locally but not in canonical — likely a not-yet-upstreamed local skill. Tell the user; ask whether to audit the local-only version or stop.                                                                                                                              |
+| `diff` shows no differences                           | Local matches canonical. Continue to step 1.                                                                                                                                                                                                                                         |
+| `diff` shows differences AND repo is `titan-tyr` itself | Local has uncommitted changes (or is on a feature branch ahead of `main`) to this skill. Common when working *on* the skill. Ask the user explicitly: audit the local (in-progress) version, or the canonical `main` version? Both are legitimate; the user's intent decides.        |
+| `diff` shows differences AND repo is NOT `titan-tyr`   | Local copy is stale relative to canonical. **Stop and surface the diff.** The friction you hit may already be fixed upstream. Recommended path: sync the local copy from canonical, re-run the audited skill, and only audit if the friction persists. Override only on explicit user confirmation. |
+
+Detect "are we in titan-tyr itself" with:
+
+```sh
+git config --get remote.origin.url 2>/dev/null | grep -q 'titan-tyr' && echo "in titan-tyr" || echo "downstream"
+```
+
+Override message format when stale:
+
+> Your local `.claude/skills/<skill>/SKILL.md` is behind canonical
+> (`Westfall-io/titan-tyr@main`). The friction you observed may be
+> already fixed upstream — auditing against the stale local would
+> likely produce a duplicate of an existing or already-resolved
+> issue. Sync first (`gh api ... | base64 -d > .claude/skills/<skill>/SKILL.md`),
+> re-run `/<skill>`, and re-invoke this audit if friction persists.
+>
+> Audit anyway? (y/N)
+
+The override exists for legitimate edge cases — e.g. forks that
+intentionally diverge, or auditing a deliberately-pinned older
+version. It is **not** a default; the default is to stop.
 
 ### 1. Load the skill body
 
@@ -168,6 +218,12 @@ A clean audit is a real outcome, not a failure mode.
 - **No fabrication when context is gone.** If conversation compaction
   or a session boundary swallowed the run, say so and stop. Don't
   reconstruct from imagination.
+- **No auditing a stale local skill body.** Step 0 enforces this:
+  if the local copy diverges from canonical and you're not in the
+  `titan-tyr` repo itself, stop and surface the diff. Auditing a
+  stale local would dutifully classify already-fixed bugs as new ones
+  and draft duplicate issues. Override only on explicit user
+  confirmation, never as a default.
 
 ## Notes
 
@@ -182,6 +238,9 @@ A clean audit is a real outcome, not a failure mode.
   faithfully, the rest of the workflow is built on sand. Bias toward
   saying "I can't reconstruct this faithfully" over confident
   hallucination.
-- **No env vars needed.** Unlike the rest of the titan-tyr skills,
-  this one doesn't hit the API — it reads files in the repo and
-  conversation context. `TITAN_TYR_URL` is irrelevant here.
+- **No env vars needed for the audit itself.** Unlike the rest of the
+  titan-tyr skills, this one doesn't hit the titan-tyr API — it reads
+  files in the repo and conversation context. `TITAN_TYR_URL` is
+  irrelevant here. The freshness check in step 0 does need `gh` auth
+  to read from `Westfall-io/titan-tyr`; if `gh auth status` shows no
+  token, prompt the user to log in (`gh auth login`) before retrying.
