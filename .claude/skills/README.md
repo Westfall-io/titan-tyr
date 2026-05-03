@@ -14,6 +14,7 @@ when you run it from the titan-tyr repo root. Type `/<skill-name>` to invoke.
 | [`propose-contract-change`](./propose-contract-change/SKILL.md)   | Draft and POST a proposal to amend an existing interface contract. Helps pick the contract, opens the active body for in-place editing, shows a unified diff. Does not auto-accept. |
 | [`accept-template-proposal`](./accept-template-proposal/SKILL.md) | Promote an open template proposal to the new active version. Mutates what every caller sees on the next `GET /templates/{kind}`. |
 | [`accept-contract-proposal`](./accept-contract-proposal/SKILL.md) | Promote an open contract proposal to the new active version. Helps pick the contract (by id, by part name, or from a list), shows a unified diff vs the active body, then POSTs accept. |
+| [`audit-skill`](./audit-skill/SKILL.md)                           | Review how a recently-invoked skill actually performed in this session. Reads the skill body, reconstructs the run from conversation context, classifies bugs/friction/stale/missing-guidance gaps, and drafts fixes. Read-only — no auto-apply, no auto-file. |
 
 ## Configuration
 
