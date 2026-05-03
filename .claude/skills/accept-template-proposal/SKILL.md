@@ -44,8 +44,16 @@ curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
 - `401` → wrong token. Stop.
 - Connection refused → wrong URL or server down. Stop.
 
-Ask which template the user wants to accept against: **`software`** or
-**`contract`**.
+Ask which template the user wants to accept against. Four kinds today,
+one per part subtype and one per contract subtype:
+
+- **`software`** — for software parts (codebases / deployables)
+- **`container`** — for container parts (running instances)
+- **`interaction`** — for interaction contracts (env-agnostic, any pair)
+- **`binding`** — for binding contracts (container → software, env-specific)
+
+(The legacy `contract` kind was renamed to `interaction` in v0.10.0
+and is no longer accepted.)
 
 ### 2. List open proposals
 
@@ -125,6 +133,88 @@ Then flag any companion follow-ups the proposal body called out (it's
 a common pattern for the proposal markdown to note "update skill X" or
 similar). Don't auto-do them — surface them and ask.
 
+### 8. Audit downstream resources
+
+Acceptance shifts the template every *new* registration sees, but
+existing resources keep the stamp they were registered with. Every
+template promotion creates a tail of resources whose stamp now points
+at an older version than the one the API hands out. Each one should be
+re-stamped (or content-realigned, if the new template restructured a
+section).
+
+Pick the audit recipe based on the kind that just landed:
+
+| Accepted kind   | Audit query                                                                                                             | Then for each result                                                                              |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `software`      | `GET $TITAN_TYR_URL/parts?subtype=software&limit=100`                                                                   | `GET /parts/{name}`, read the stamp on line 1 of `markdown`. If older than active → realign needed. |
+| `container`     | `GET $TITAN_TYR_URL/parts?subtype=container&limit=100`                                                                  | Same — `GET /parts/{name}`, check stamp.                                                          |
+| `interaction`   | `GET $TITAN_TYR_URL/contracts?subtype=interaction&limit=100`                                                            | `GET /contracts/{contract_id}`, check stamp on line 1 of `markdown`.                              |
+| `binding`       | `GET $TITAN_TYR_URL/contracts?subtype=binding&limit=100`                                                                | `GET /contracts/{contract_id}`, check stamp.                                                      |
+
+A compact one-liner:
+
+```sh
+# example: software template just landed
+curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
+  "$TITAN_TYR_URL/parts?subtype=software&limit=100" \
+  | python3 -c "
+import json, sys, urllib.request, os
+listing = json.load(sys.stdin)
+for entry in listing['results']:
+    req = urllib.request.Request(
+        f\"{os.environ['TITAN_TYR_URL']}/parts/{entry['name']}\",
+        headers={'Authorization': f\"Bearer {os.environ.get('TITAN_TYR_TOKEN', 'sysmlv2')}\"})
+    body = json.load(urllib.request.urlopen(req))
+    stamp = body['markdown'].split(chr(10), 1)[0]
+    print(f\"{entry['name']:<40} {stamp}\")
+"
+```
+
+Surface the list to the user with a "needs realign" annotation on
+every entry whose stamp version is below the new active. **Don't
+auto-file the issues** — surface the list and let the user confirm
+scope first. Once confirmed, file one realign issue per resource on
+the *owner* side (see realign convention below).
+
+**Realign convention for contract templates** (`interaction`/`binding`):
+file the realign ticket on the **counterparty side only**, not on
+both sides of every contract. The contract owner naturally re-stamps
+during their own acceptance flow when they propose the next change;
+filing on both sides duplicates work. For part templates
+(`software`/`container`), file on the part owner — there's no
+counterparty for parts.
+
+### 9. Stamp-only patch-bump recipe
+
+When a contract body is correct in *content* but carries a stale
+*stamp* (the template was renamed/bumped after the contract body was
+last edited), the right fix is a **patch-bump whose only diff is the
+stamp line**. This is the recipe to recommend in step 8 realign
+tickets when the contract content needs no other changes.
+
+Mechanics:
+
+- **Owner repo** — propose `<active>.PATCH+1-rc1` against the contract,
+  diff = stamp line only, then accept.
+- **Counterparty repo** — propose `<active>.PATCH+1-rc1`, diff = stamp
+  line only. The owner accepts (per the proposer-doesn't-accept rule).
+- **RC, not bare stable.** Even though there's no negotiation,
+  proposing as `-rc1` keeps the recipe consistent with the rest of
+  the propose/accept flow and avoids confusion if a second clarification
+  needs to land before promotion.
+- **No changelog entry required**, but a one-liner like
+  `**X.Y.Z** — re-stamp body to <kind>@<version> (no behavior change).`
+  rounds out the body if you're touching the file anyway.
+
+Why this exists: when a contract proposal lands at the same time as a
+template proposal that renames or restructures the kind, an
+acceptance-order race can bake a now-invalid stamp into the active
+contract body. Once the active version is sealed, you can't supersede
+it with another `-rcN` against the same target (409 — the stable
+target's RC slot is gone). The patch-bump is the only recourse. See
+`/propose-contract-change` step 4b/5 for the pre-flight that prevents
+the race in the first place.
+
 ## Error handling
 
 | Status | Meaning                                                                   | What to do                                                                  |
@@ -160,7 +250,7 @@ similar). Don't auto-do them — surface them and ask.
   other two skills use does not apply here.
 - **Don't accept stable before downstream is ready.** Templates are
   filled at registration time and the stamp is preserved per-resource,
-  so accepting a stable template change while no software/contract has
+  so accepting a stable template change while no part/contract has
   migrated isn't catastrophic — but it does immediately become the
   template every new registration sees. If the new template adds
   required sections or restructures a fill rule, leave it on `-rcN`
