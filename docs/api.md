@@ -72,8 +72,9 @@ misconfiguration is loud, not silent.
 
 ### Listing pagination
 
-`GET /software`, `GET /contracts` (list mode), and
-`GET /software/{name}/contracts` are paginated.
+`GET /software`, `GET /contracts` (list mode),
+`GET /software/{name}/contracts`, `GET /software/{name}/history`, and
+`GET /contracts/{contract_id}/history` are paginated.
 
 - **Cursor-based.** Pass `?after=<cursor>` to continue from where the
   previous page ended. The cursor is an opaque base64-url-safe string;
@@ -102,12 +103,12 @@ No `Authorization` header required — orchestrators don't carry one.
 
 `200` response when the API can reach Postgres:
 ```json
-{ "status": "ok", "version": "0.7.2", "db": "reachable" }
+{ "status": "ok", "version": "0.8.0", "db": "reachable" }
 ```
 
 `503` response when the DB query fails:
 ```json
-{ "status": "degraded", "version": "0.7.2", "db": "unreachable" }
+{ "status": "degraded", "version": "0.8.0", "db": "unreachable" }
 ```
 
 `version` is the running titan-tyr package version (resolved from
@@ -434,6 +435,35 @@ Pagination follows the conventions described above.
 > `contracts` key with full markdown bodies. It now returns `results`
 > (no markdown) and a `next` cursor for pagination.
 
+### `GET /software/{name}/history` — accepted version timeline (paginated)
+
+Lists every version of this software node, most-recent first. One entry
+per row in `software_versions` (every PUT appends a row). **Markdown is
+not included** — fetch full bodies via `GET /software/{name}` for the
+current head; per-version body retrieval is out of scope today.
+
+```sh
+curl -H 'Authorization: Bearer sysmlv2' \
+     'http://localhost:8000/software/payments-service/history?limit=10'
+```
+
+`200` response:
+```json
+{
+  "results": [
+    { "version": "1.2.0", "updated_at": "2026-04-15T09:14:00Z" },
+    { "version": "1.1.1", "updated_at": "2026-03-22T17:02:11Z" },
+    { "version": "1.0.0", "updated_at": "2026-02-01T08:30:00Z" }
+  ],
+  "next": null
+}
+```
+
+Pagination follows the conventions described above.
+
+Errors:
+- `404 Not Found` — software not registered.
+
 ---
 
 ## Contracts
@@ -541,6 +571,38 @@ curl -H 'Authorization: Bearer sysmlv2' \
 Returns the latest `status='active'` version.
 
 `404` if the contract does not exist or has no active version yet.
+
+### `GET /contracts/{contract_id}/history` — accepted version timeline (paginated)
+
+Lists every accepted version of this contract, most-recent first. One
+entry per `status='active'` row in `contract_versions` — superseded RC
+proposals are **not** included (consult
+`GET /contracts/{contract_id}/proposals` for the proposal pipeline).
+**Markdown is not included.**
+
+```sh
+curl -H 'Authorization: Bearer sysmlv2' \
+     'http://localhost:8000/contracts/ab12cd34-1234-1234-1234-1234567890ab/history?limit=10'
+```
+
+`200` response:
+```json
+{
+  "results": [
+    { "version": "1.2.0", "updated_at": "2026-04-15T09:14:00Z" },
+    { "version": "1.1.1", "updated_at": "2026-03-22T17:02:11Z" },
+    { "version": "1.0.0", "updated_at": "2026-02-01T08:30:00Z" }
+  ],
+  "next": null
+}
+```
+
+`updated_at` is the row's `accepted_at` when it was promoted from a
+proposal, otherwise its `created_at` (e.g. the initial `1.0.0` written
+by `POST /contracts`). Pagination follows the conventions above.
+
+Errors:
+- `404 Not Found` — contract id does not exist.
 
 ---
 

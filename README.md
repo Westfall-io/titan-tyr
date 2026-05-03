@@ -69,7 +69,7 @@ DATABASE_URL='postgresql+asyncpg://titan:titan@localhost:5432/titan_tyr' \
 ```sh
 # Smoke test (no auth required — the /health endpoint is the orchestrator probe)
 curl http://localhost:8000/health
-# → {"status":"ok","version":"0.7.2","db":"reachable"}
+# → {"status":"ok","version":"0.8.0","db":"reachable"}
 
 # Sanity check on the auth path
 curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/software
@@ -78,7 +78,7 @@ curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/software
 ## Run from Docker
 
 ```sh
-docker build -t titan-tyr:0.7.2 .
+docker build -t titan-tyr:0.8.0 .
 ```
 
 The image runs as a non-root `app` user, exposes port 8000, and bundles
@@ -90,12 +90,12 @@ step *before* the API container starts:
 # 1. Apply migrations (one-shot)
 docker run --rm \
   -e DATABASE_URL='postgresql+asyncpg://titan:titan@host.docker.internal:5432/titan_tyr' \
-  titan-tyr:0.7.2 alembic upgrade head
+  titan-tyr:0.8.0 alembic upgrade head
 
 # 2. Serve the API
 docker run --rm -p 8000:8000 \
   -e DATABASE_URL='postgresql+asyncpg://titan:titan@host.docker.internal:5432/titan_tyr' \
-  titan-tyr:0.7.2
+  titan-tyr:0.8.0
 ```
 
 (In Compose / Kubernetes, the migrate step is a `depends_on` job or an

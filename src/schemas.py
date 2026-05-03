@@ -227,6 +227,19 @@ class ContractDetail(BaseModel):
     updated_at: datetime
 
 
+# ---------- Version history ----------
+
+
+class VersionHistoryItem(BaseModel):
+    version: str
+    updated_at: datetime
+
+
+class VersionHistoryResponse(BaseModel):
+    results: list[VersionHistoryItem]
+    next: str | None
+
+
 # ---------- Proposals ----------
 
 

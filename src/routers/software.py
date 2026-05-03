@@ -24,6 +24,8 @@ from src.schemas import (
     SoftwareListResponse,
     SoftwareUpdate,
     SoftwareUpdateResponse,
+    VersionHistoryItem,
+    VersionHistoryResponse,
 )
 from src.versioning import Version
 
@@ -240,6 +242,60 @@ async def update_software(
     session.add(sv)
     await session.commit()
     return SoftwareUpdateResponse(name=software.name, version=str(new_version))
+
+
+@router.get("/{name}/history", response_model=VersionHistoryResponse)
+async def get_software_history(
+    name: str,
+    after: str | None = Query(default=None),
+    limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    session: AsyncSession = Depends(get_session),
+) -> VersionHistoryResponse:
+    limit = validate_limit(limit)
+
+    software = (
+        await session.execute(select(Software.id).where(Software.name == name))
+    ).scalar_one_or_none()
+    if software is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Software {name!r} not found")
+
+    stmt = select(
+        SoftwareVersion.id,
+        SoftwareVersion.version_major,
+        SoftwareVersion.version_minor,
+        SoftwareVersion.version_patch,
+        SoftwareVersion.created_at,
+    ).where(SoftwareVersion.software_id == software)
+
+    if after is not None:
+        cursor_t, cursor_id = decode_cursor(after)
+        stmt = stmt.where(
+            tuple_(SoftwareVersion.created_at, SoftwareVersion.id)
+            < tuple_(cursor_t, cursor_id)
+        )
+
+    stmt = stmt.order_by(
+        SoftwareVersion.created_at.desc(), SoftwareVersion.id.desc()
+    ).limit(limit + 1)
+
+    rows = (await session.execute(stmt)).all()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+
+    items: list[VersionHistoryItem] = []
+    last_t = None
+    last_id = None
+    for sv_id, vmaj, vmin, vpat, vts in rows:
+        items.append(
+            VersionHistoryItem(
+                version=str(Version(vmaj, vmin, vpat)),
+                updated_at=vts,
+            )
+        )
+        last_t, last_id = vts, sv_id
+
+    next_cursor = encode_cursor(last_t, last_id) if has_more and last_t else None
+    return VersionHistoryResponse(results=items, next=next_cursor)
 
 
 @router.get("/{name}/contracts", response_model=SoftwareContractsListResponse)

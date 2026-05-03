@@ -4,13 +4,19 @@ import uuid
 from typing import Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth import require_password
 from src.db import get_session
 from src.models import Contract, ContractVersion, Software
-from src.pagination import DEFAULT_LIMIT, MAX_LIMIT, validate_limit
+from src.pagination import (
+    DEFAULT_LIMIT,
+    MAX_LIMIT,
+    decode_cursor,
+    encode_cursor,
+    validate_limit,
+)
 from src.routers.software import _latest_active_contract_version, _list_active_contracts
 from src.schemas import (
     ContractCreate,
@@ -19,6 +25,8 @@ from src.schemas import (
     ContractListResponse,
     ContractSearchResponse,
     ContractSearchResult,
+    VersionHistoryItem,
+    VersionHistoryResponse,
 )
 from src.versioning import Version
 
@@ -171,3 +179,62 @@ async def get_contract(
         markdown=latest.markdown,
         updated_at=latest.accepted_at or latest.created_at,
     )
+
+
+@router.get("/{contract_id}/history", response_model=VersionHistoryResponse)
+async def get_contract_history(
+    contract_id: uuid.UUID,
+    after: str | None = Query(default=None),
+    limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    session: AsyncSession = Depends(get_session),
+) -> VersionHistoryResponse:
+    limit = validate_limit(limit)
+
+    contract = await session.get(Contract, contract_id)
+    if contract is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found")
+
+    # Only accepted versions land in history. The active_must_be_stable check
+    # constraint on contract_versions guarantees status='active' rows have a
+    # NULL prerelease, so this naturally excludes superseded RC iterations.
+    stmt = select(
+        ContractVersion.id,
+        ContractVersion.version_major,
+        ContractVersion.version_minor,
+        ContractVersion.version_patch,
+        ContractVersion.created_at,
+        ContractVersion.accepted_at,
+    ).where(
+        ContractVersion.contract_id == contract_id,
+        ContractVersion.status == "active",
+    )
+
+    if after is not None:
+        cursor_t, cursor_id = decode_cursor(after)
+        stmt = stmt.where(
+            tuple_(ContractVersion.created_at, ContractVersion.id)
+            < tuple_(cursor_t, cursor_id)
+        )
+
+    stmt = stmt.order_by(
+        ContractVersion.created_at.desc(), ContractVersion.id.desc()
+    ).limit(limit + 1)
+
+    rows = (await session.execute(stmt)).all()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+
+    items: list[VersionHistoryItem] = []
+    last_t = None
+    last_id = None
+    for cv_id, vmaj, vmin, vpat, vcreated, vaccepted in rows:
+        items.append(
+            VersionHistoryItem(
+                version=str(Version(vmaj, vmin, vpat)),
+                updated_at=vaccepted or vcreated,
+            )
+        )
+        last_t, last_id = vcreated, cv_id
+
+    next_cursor = encode_cursor(last_t, last_id) if has_more and last_t else None
+    return VersionHistoryResponse(results=items, next=next_cursor)
