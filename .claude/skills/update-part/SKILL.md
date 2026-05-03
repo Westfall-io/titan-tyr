@@ -261,6 +261,14 @@ active template), or whether it only addressed content.
   confirmation gates (as in `/accept-template-proposal`) are not needed
   — `PUT /parts/{name}` only affects this one part's reads, not
   every caller's view of a template.
+- **Subtype is not editable here.** `PUT /parts/{name}` ignores any
+  `subtype` field. To correct a mis-classified subtype, file a shift
+  via `/propose-part-subtype-shift` (provider v0.15.0+, titan-tyr#33)
+  and land it via `/accept-part-subtype-shift`. The shift flow does
+  not bump the version or mutate the body — it's orthogonal to this
+  skill. If a shift accept flagged `body_realign_required`, the
+  follow-up is to call this skill (or a content proposal on a
+  contract) to re-stamp the body to the new subtype's template kind.
 - If the user is updating purely to close template drift, mention that
   the propose/accept of the new template version was already the
   cross-cutting change; this update is just bringing one node into

@@ -9,8 +9,8 @@ You are answering an agent's "tell me about part X" question by
 pulling everything titan-tyr knows about it: subtype, description,
 repo, ticket-filing target, version, and the contracts that touch it.
 Works for any registered part subtype (`software`, `image`,
-`container`) — the subtype discriminator is preserved in the response
-so callers can branch on it.
+`container`, `pod`, `compose`) — the subtype discriminator is
+preserved in the response so callers can branch on it.
 
 This skill is **read-only and non-mutating**. It composes existing
 titan-tyr GET endpoints into a single structured response so a
@@ -146,17 +146,29 @@ precedence.
 
 Field notes:
 
-- `part.subtype` is the discriminator (`software` | `container`) —
-  branch on it when the calling agent's behavior depends on whether
-  the target is a codebase or a running instance. E.g. binding
-  contracts only make sense as `container → software`; filing a bug
-  against a codebase is appropriate for `software` but for `container`
-  the right action is usually to find the underlying software part
-  via its inbound `binding` contract.
+- `part.subtype` is the discriminator (one of `software`, `image`,
+  `container`, `pod`, `compose`) — branch on it when the calling
+  agent's behavior depends on which dimension the target represents.
+  E.g. binding contracts only make sense with the runtime end as
+  `container` or `pod`; filing a bug against a codebase is appropriate
+  for `software` but for a runtime the right action is usually to find
+  the underlying software part via its inbound `binding` contract;
+  for an `image` the right action is usually to find the source repo
+  via its `builds-from` connection.
+- `part.subtype_shifted_from` / `part.subtype_shifted_at` (nullable)
+  surface when this part's subtype has been corrected post-registration
+  via the shift flow. `subtype_shifted_from` records the previous
+  subtype value at the most recent shift; `null` means the part has
+  never been shifted. Surface these to callers so they understand the
+  current `subtype` may differ from how the part was originally
+  registered.
 - `part.markdown` is the full body of the latest version (not the
   listing summary).
-- `contracts[].subtype` is the contract subtype (`interaction` |
-  `binding`).
+- `contracts[].subtype` is the contract subtype (one of `interaction`,
+  `binding`, `connection`).
+- `contracts[].connection_type` (nullable, `connection` only) is the
+  per-label sub-discriminator drawn from the closed enum
+  `{builds-from, instantiates, runs, member-of, depends-on, submodule}`.
 - `contracts[].markdown` is the full body of each contract's latest
   active version.
 - `truncated` is `true` when there were more contracts than the v1

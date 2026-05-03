@@ -294,9 +294,15 @@ do this automatically.
   for the K8s pod, and `<repo>-stack` for the Compose stack
   (`payments`, `payments-image`, `payments-prod`, `payments-pod`,
   `watchervault-stack`).
-- **Subtype is structural.** It can't be changed after registration
-  (no PUT path mutates it). If you really need a different subtype,
-  register a new part.
+- **Subtype is structural.** `PUT /parts/{name}` cannot change it.
+  To correct a mis-classified subtype post-registration without
+  losing the canonical name, version history, or existing contracts,
+  file a shift via `/propose-part-subtype-shift` (provider v0.15.0+,
+  titan-tyr#33) and land it via `/accept-part-subtype-shift`. The
+  shift flow flips `subtype` and stamps `subtype_shifted_from` /
+  `subtype_shifted_at` without bumping the version or mutating the
+  body. Only register a new part if you actually want a separate
+  node, not a corrected subtype.
 - **Do not** put a `Version` field inside the markdown body — the API
   tracks it on the version row separately. The template's header note
   explains why.

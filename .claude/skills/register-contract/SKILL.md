@@ -202,11 +202,15 @@ need.
 
 > **Note:** there's only one contract per directed pair regardless of
 > subtype. If the existing contract is the wrong subtype for what you
-> wanted (e.g. it's `interaction` and you wanted `binding`), the
-> resolution is *not* to register a second one — it's to discuss with
-> the counterparty whether the existing contract should be re-registered
-> as the other subtype (which today means tearing it down out-of-band;
-> there's no in-place subtype change). This is rare; flag and ask.
+> wanted (e.g. it's `interaction` and you wanted `binding`, or it's a
+> `connection` with the wrong `connection_type` label), the resolution
+> is *not* to register a second one — file an in-place correction via
+> `/propose-contract-subtype-shift` (provider v0.15.0+, titan-tyr#33).
+> The shift flow flips the subtype (and, for connection contracts, the
+> `connection_type` label) without bumping the version or mutating the
+> body, and runs through a separate two-party propose/accept handshake
+> via `/accept-contract-proposal`. Surface this as the path forward
+> rather than asking the user to tear the contract down out-of-band.
 
 If `results` is empty, continue.
 

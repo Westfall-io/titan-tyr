@@ -35,7 +35,7 @@ Don't guess. Don't default to localhost silently.
 | Input     | Required | Purpose                                                                                                                                                                                                |
 | --------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `query`   | yes      | The colloquial label or partial name to resolve. 1–128 chars. Case-insensitive substring match.                                                                                                        |
-| `subtype` | no       | Restrict results to a single part subtype: `software` or `container`. Use when the caller already knows which dimension they want — e.g. "the payments software" vs "the payments-prod container". Unknown values → `422`. |
+| `subtype` | no       | Restrict results to a single part subtype: one of `software`, `image`, `container`, `pod`, or `compose`. Use when the caller already knows which dimension they want — e.g. "the payments software" vs "the payments-prod container" vs "the payments image". Unknown values → `422`. |
 
 ## Workflow
 
@@ -76,8 +76,9 @@ The response is the standard paginated part listing
 (`{"results": [...], "next": ...}`). Trim each entry down to the
 fields a discovery caller actually needs, and surface the result count
 explicitly so the caller can branch. Preserve `subtype` on every entry
-— it's the discriminator that tells the calling agent whether they're
-looking at a software part or a container part:
+— it's the discriminator that tells the calling agent which kind of
+part they're looking at (one of `software`, `image`, `container`,
+`pod`, or `compose`):
 
 ```json
 {
@@ -138,20 +139,23 @@ disambiguate — that's the calling agent's job. The structured JSON
 return value is the contract.
 
 **Disambiguation via `subtype`.** Colloquial labels often collide
-across the part subtype dimension — e.g. `payments` may match both the
-software part `payments-service` and one or more container parts like
-`payments-prod`, `payments-staging`. If the calling agent already
-knows which dimension it cares about, pass `subtype` to cut the
-ambiguity at the API rather than after the fact. Example: filing a bug
-against the codebase → `subtype=software`; checking which environments
-of a service are deployed → `subtype=container`.
+across the five part subtypes — e.g. `payments` may match the
+software part `payments-service`, the image `payments-image`,
+container parts like `payments-prod` / `payments-staging`, the K8s
+pod `payments-pod`, and a compose stack member. If the calling agent
+already knows which dimension it cares about, pass `subtype` to cut
+the ambiguity at the API rather than after the fact. Examples:
+filing a bug against the codebase → `subtype=software`; checking
+which environments of a service are deployed → `subtype=container`
+or `subtype=pod`; finding the built artifact → `subtype=image`;
+listing services in a stack → `subtype=compose`.
 
 ## Error handling
 
 | Status | Meaning                                  | What to do                                                  |
 | ------ | ---------------------------------------- | ----------------------------------------------------------- |
 | `401`  | Bad bearer token                         | Stop. Tell user `TITAN_TYR_TOKEN` is wrong.                 |
-| `422`  | Query exceeds 128 characters, or `subtype` is not `software`/`container` | Stop. Surface `detail` so the caller can fix the offending input. |
+| `422`  | Query exceeds 128 characters, or `subtype` is not one of `software`/`image`/`container`/`pod`/`compose` | Stop. Surface `detail` so the caller can fix the offending input. |
 | `5xx`  | Server problem                           | Stop. Print response body verbatim.                         |
 
 ## Notes
