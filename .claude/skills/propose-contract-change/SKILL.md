@@ -52,8 +52,7 @@ gave you:
 
 - **They gave a `contract_id` (UUID).** Use it directly. Continue to
   step 3.
-- **They gave a software name.** List the contracts touching that
-  software:
+- **They gave a part name.** List the contracts touching that part:
 
   ```sh
   curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
@@ -110,6 +109,29 @@ Surface `active_version` and any open `proposals`. Two reasons:
   proposal, the right move is `<target>-rc2`, not jumping to a
   brand-new target. Ask which they intend.
 
+### 4b. Check the matching template's state
+
+The contract carries a template-version stamp; the new body in step 5
+will need to be checked against it. Fetch the template state now so
+you have it in hand:
+
+```sh
+# subtype came from step 3's contract body (interaction | binding)
+curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
+  "$TITAN_TYR_URL/templates/<subtype>/proposals" \
+  | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print('active:', d['active_version'])
+print('open proposals:', [p['version'] for p in d['proposals']])
+"
+```
+
+You will use the active version in step 5 (drift check) and use the
+open-proposals list to detect the **template-acceptance race** — the
+case where a contract body uses terminology or stamp from a template
+version that hasn't been accepted yet. See step 5.
+
 ### 5. Apply the change
 
 Default to **in-place editing** of the active body, not starting from
@@ -130,11 +152,43 @@ Common shapes:
 titan-tyr stores **full markdown bodies**, not diffs. Whatever shape
 the user gave you, the artifact you POST is the entire new body.
 
-If the contract carries a template-version stamp at the top
-(`<!-- template: contract@X.Y.Z -->`) and the active contract template
-has moved forward since this body was last edited, mention the drift
-to the user — but do not silently re-stamp without confirming.
-Re-stamping is a structural migration, not a content edit.
+**Template-stamp check.** Contract bodies carry a stamp at the top
+matching the contract's subtype:
+
+- `<!-- template: interaction@X.Y.Z -->` for `interaction` contracts
+- `<!-- template: binding@X.Y.Z -->` for `binding` contracts
+- `<!-- template: contract@X.Y.Z -->` is **legacy** — the `contract`
+  template kind was renamed to `interaction` in titan-tyr v0.10.0
+  (#24) and a sibling `binding` kind was added. Any modern contract
+  carrying `contract@` is by definition stamp-stale and must be
+  re-stamped to `interaction@` (or `binding@` if it's actually a
+  binding contract that escaped the rename).
+
+Compare the proposed body's stamp against the template state from
+step 4b:
+
+| Stamp state                                                 | What to do                                                                                                                                                                                                                                              |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stamp `kind` is `contract` (legacy)                         | Re-stamp to `<subtype>@<active-template-version>`. This is a structural migration; surface it as such, but do not skip it — a modern contract cannot keep the legacy stamp.                                                                              |
+| Stamp `kind` matches subtype, version == active             | No drift. Continue.                                                                                                                                                                                                                                     |
+| Stamp `kind` matches subtype, version older than active     | Body is using stale template terminology. Mention to the user; offer to re-stamp. Do not silently re-stamp.                                                                                                                                              |
+| Stamp `kind` matches subtype, version newer than active     | Body's stamp points at a template version that **isn't active yet**. See template-acceptance race below.                                                                                                                                                  |
+
+**Template-acceptance race.** If the proposed contract body's stamp
+references a template version that exists only as an open *template*
+proposal (not yet accepted), and you POST the contract proposal now,
+the body will sit in titan-tyr referencing a stamp that resolves to no
+active template. If the contract proposal then gets accepted before
+the template proposal does, the active body bakes in a phantom stamp
+— and you can't fix it via supersede (the stable target's RC slot is
+gone), only via a stamp-only patch-bump on the next version.
+
+The fix is ordering: **accept the template proposal first**, then
+propose the contract change. If you can't (separate parties, separate
+review windows), at minimum add an explicit acceptance-order note to
+the contract proposal's body so the human acceptor knows to wait.
+
+Stop and warn the user before proceeding when this case is detected.
 
 ### 6. Choose a version
 
