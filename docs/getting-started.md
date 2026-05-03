@@ -63,13 +63,13 @@ curl -s -H 'Authorization: Bearer sysmlv2' \
   http://localhost:8000/templates/software
 ```
 
-Then register a piece of software:
+Then register a part:
 
 ```sh
 curl -s -H 'Authorization: Bearer sysmlv2' \
      -H 'Content-Type: application/json' \
-     -d '{"name":"payments-service","repo_uri":"https://example.com/repo","markdown":"# payments-service"}' \
-     http://localhost:8000/software
+     -d '{"name":"payments-service","subtype":"software","repo_uri":"https://example.com/repo","markdown":"# payments-service"}' \
+     http://localhost:8000/parts
 ```
 
 ## Run the tests

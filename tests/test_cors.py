@@ -16,7 +16,7 @@ class TestPreflight:
     ])
     async def test_options_preflight_for_allowed_origin(self, client, origin):
         r = await client.options(
-            "/software",
+            "/parts",
             headers={
                 "Origin": origin,
                 "Access-Control-Request-Method": "GET",
@@ -40,7 +40,7 @@ class TestPreflight:
     ])
     async def test_options_preflight_for_disallowed_origin(self, client, origin):
         r = await client.options(
-            "/software",
+            "/parts",
             headers={
                 "Origin": origin,
                 "Access-Control-Request-Method": "GET",
@@ -55,16 +55,16 @@ class TestPreflight:
 class TestActualRequest:
     async def test_get_with_allowed_origin_returns_allow_origin_header(self, client):
         r = await client.get(
-            "/software", headers={"Origin": "http://localhost:8765"}
+            "/parts", headers={"Origin": "http://localhost:8765"}
         )
         assert r.status_code == 200
         assert r.headers.get("access-control-allow-origin") == "http://localhost:8765"
 
     async def test_post_with_allowed_origin_returns_allow_origin_header(self, client):
         r = await client.post(
-            "/software",
+            "/parts",
             headers={"Origin": "https://digitalforge.app"},
-            json={"name": "cors-test", "repo_uri": "u", "markdown": "m"},
+            json={"name": "cors-test", "subtype": "software", "repo_uri": "u", "markdown": "m"},
         )
         assert r.status_code == 201
         assert r.headers.get("access-control-allow-origin") == "https://digitalforge.app"
@@ -78,7 +78,7 @@ class TestActualRequest:
         assert r.headers.get("access-control-allow-origin") == "http://localhost:3000"
 
     async def test_get_with_disallowed_origin_omits_allow_origin_header(self, client):
-        r = await client.get("/software", headers={"Origin": "https://evil.com"})
+        r = await client.get("/parts", headers={"Origin": "https://evil.com"})
         # The endpoint still serves a 200 — CORS is enforced by the browser,
         # not the server. The server just declines to advertise the origin.
         assert r.status_code == 200
@@ -87,6 +87,6 @@ class TestActualRequest:
 
 class TestNonCorsUnaffected:
     async def test_request_without_origin_has_no_cors_headers(self, client):
-        r = await client.get("/software")
+        r = await client.get("/parts")
         assert r.status_code == 200
         assert "access-control-allow-origin" not in r.headers

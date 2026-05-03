@@ -200,7 +200,7 @@ class TestIntegration:
 
                 # Configured origin → allowed
                 r = await ac.get(
-                    "/software",
+                    "/parts",
                     headers={"Origin": "https://watchervault.example.com"},
                 )
                 assert r.status_code == 200
@@ -211,7 +211,7 @@ class TestIntegration:
 
                 # Default-regex origin → no longer allowed because env replaced the list
                 r = await ac.get(
-                    "/software", headers={"Origin": "https://digitalforge.app"}
+                    "/parts", headers={"Origin": "https://digitalforge.app"}
                 )
                 assert r.status_code == 200
                 assert "access-control-allow-origin" not in r.headers
@@ -227,7 +227,7 @@ class TestIntegration:
             async with AsyncClient(transport=transport, base_url="http://test") as ac:
                 ac.headers.update({"Authorization": f"Bearer {PASSWORD}"})
                 r = await ac.get(
-                    "/software", headers={"Origin": "https://evil.com"}
+                    "/parts", headers={"Origin": "https://evil.com"}
                 )
                 assert r.status_code == 200
                 assert r.headers.get("access-control-allow-origin") == "*"

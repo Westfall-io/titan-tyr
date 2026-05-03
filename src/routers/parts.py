@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth import require_password
 from src.db import get_session
-from src.models import Contract, ContractVersion, Software, SoftwareVersion
+from src.models import Contract, ContractVersion, Part, PartVersion
 from src.pagination import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
@@ -15,75 +15,87 @@ from src.pagination import (
     validate_limit,
 )
 from src.schemas import (
+    PART_SUBTYPES,
     ContractListItem,
-    SoftwareContractsListResponse,
-    SoftwareCreate,
-    SoftwareCreateResponse,
-    SoftwareDetail,
-    SoftwareListItem,
-    SoftwareListResponse,
-    SoftwareUpdate,
-    SoftwareUpdateResponse,
+    PartContractsListResponse,
+    PartCreate,
+    PartCreateResponse,
+    PartDetail,
+    PartListItem,
+    PartListResponse,
+    PartUpdate,
+    PartUpdateResponse,
     VersionHistoryItem,
     VersionHistoryResponse,
 )
 from src.versioning import Version
 
-router = APIRouter(prefix="/software", tags=["software"], dependencies=[Depends(require_password)])
+router = APIRouter(prefix="/parts", tags=["parts"], dependencies=[Depends(require_password)])
 
 
-async def _latest_software_version(session: AsyncSession, software_id) -> SoftwareVersion | None:
+async def _latest_part_version(session: AsyncSession, part_id) -> PartVersion | None:
     stmt = (
-        select(SoftwareVersion)
-        .where(SoftwareVersion.software_id == software_id)
+        select(PartVersion)
+        .where(PartVersion.part_id == part_id)
         .order_by(
-            SoftwareVersion.version_major.desc(),
-            SoftwareVersion.version_minor.desc(),
-            SoftwareVersion.version_patch.desc(),
+            PartVersion.version_major.desc(),
+            PartVersion.version_minor.desc(),
+            PartVersion.version_patch.desc(),
         )
         .limit(1)
     )
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
-@router.get("", response_model=SoftwareListResponse)
-async def list_software(
+@router.get("", response_model=PartListResponse)
+async def list_parts(
     after: str | None = Query(default=None),
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     match: str | None = Query(default=None, max_length=128),
+    subtype: str | None = Query(default=None),
     session: AsyncSession = Depends(get_session),
-) -> SoftwareListResponse:
+) -> PartListResponse:
     limit = validate_limit(limit)
+
+    if subtype is not None and subtype not in PART_SUBTYPES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"subtype must be one of {sorted(PART_SUBTYPES)}",
+        )
 
     latest_versions = (
         select(
-            SoftwareVersion.software_id.label("sv_software_id"),
-            SoftwareVersion.version_major.label("sv_major"),
-            SoftwareVersion.version_minor.label("sv_minor"),
-            SoftwareVersion.version_patch.label("sv_patch"),
-            SoftwareVersion.created_at.label("sv_created_at"),
+            PartVersion.part_id.label("pv_part_id"),
+            PartVersion.version_major.label("pv_major"),
+            PartVersion.version_minor.label("pv_minor"),
+            PartVersion.version_patch.label("pv_patch"),
+            PartVersion.created_at.label("pv_created_at"),
         )
-        .distinct(SoftwareVersion.software_id)
+        .distinct(PartVersion.part_id)
         .order_by(
-            SoftwareVersion.software_id,
-            SoftwareVersion.version_major.desc(),
-            SoftwareVersion.version_minor.desc(),
-            SoftwareVersion.version_patch.desc(),
+            PartVersion.part_id,
+            PartVersion.version_major.desc(),
+            PartVersion.version_minor.desc(),
+            PartVersion.version_patch.desc(),
         )
         .subquery()
     )
 
     stmt = select(
-        Software.id,
-        Software.name,
-        Software.repo_uri,
-        Software.issue_tracker_uri,
-        Software.aliases,
-        latest_versions.c.sv_major,
-        latest_versions.c.sv_minor,
-        latest_versions.c.sv_patch,
-        latest_versions.c.sv_created_at,
-    ).join(latest_versions, Software.id == latest_versions.c.sv_software_id)
+        Part.id,
+        Part.name,
+        Part.subtype,
+        Part.repo_uri,
+        Part.issue_tracker_uri,
+        Part.aliases,
+        latest_versions.c.pv_major,
+        latest_versions.c.pv_minor,
+        latest_versions.c.pv_patch,
+        latest_versions.c.pv_created_at,
+    ).join(latest_versions, Part.id == latest_versions.c.pv_part_id)
+
+    if subtype is not None:
+        stmt = stmt.where(Part.subtype == subtype)
 
     if match is not None:
         # Case-insensitive substring match against name OR any alias. The U+001F
@@ -94,8 +106,8 @@ async def list_software(
         pattern = f"%{escaped}%"
         stmt = stmt.where(
             or_(
-                Software.name.ilike(pattern, escape="\\"),
-                func.array_to_string(Software.aliases, "\x1f").ilike(
+                Part.name.ilike(pattern, escape="\\"),
+                func.array_to_string(Part.aliases, "\x1f").ilike(
                     pattern, escape="\\"
                 ),
             )
@@ -104,115 +116,123 @@ async def list_software(
     if after is not None:
         cursor_t, cursor_id = decode_cursor(after)
         stmt = stmt.where(
-            tuple_(latest_versions.c.sv_created_at, Software.id)
+            tuple_(latest_versions.c.pv_created_at, Part.id)
             < tuple_(cursor_t, cursor_id)
         )
 
     stmt = stmt.order_by(
-        latest_versions.c.sv_created_at.desc(), Software.id.desc()
+        latest_versions.c.pv_created_at.desc(), Part.id.desc()
     ).limit(limit + 1)
 
     rows = (await session.execute(stmt)).all()
     has_more = len(rows) > limit
     rows = rows[:limit]
 
-    items: list[SoftwareListItem] = []
+    items: list[PartListItem] = []
     last_t = None
     last_id = None
-    for sw_id, sw_name, sw_repo, sw_tracker, sw_aliases, vmaj, vmin, vpat, vts in rows:
+    for p_id, p_name, p_subtype, p_repo, p_tracker, p_aliases, vmaj, vmin, vpat, vts in rows:
         items.append(
-            SoftwareListItem(
-                id=sw_id,
-                name=sw_name,
-                repo_uri=sw_repo,
-                issue_tracker_uri=sw_tracker,
-                aliases=list(sw_aliases or []),
+            PartListItem(
+                id=p_id,
+                name=p_name,
+                subtype=p_subtype,
+                repo_uri=p_repo,
+                issue_tracker_uri=p_tracker,
+                aliases=list(p_aliases or []),
                 version=str(Version(vmaj, vmin, vpat)),
                 updated_at=vts,
             )
         )
-        last_t, last_id = vts, sw_id
+        last_t, last_id = vts, p_id
 
     next_cursor = encode_cursor(last_t, last_id) if has_more and last_t else None
-    return SoftwareListResponse(results=items, next=next_cursor)
+    return PartListResponse(results=items, next=next_cursor)
 
 
-@router.post("", response_model=SoftwareCreateResponse, status_code=status.HTTP_201_CREATED)
-async def register_software(
-    payload: SoftwareCreate,
+@router.post("", response_model=PartCreateResponse, status_code=status.HTTP_201_CREATED)
+async def register_part(
+    payload: PartCreate,
     session: AsyncSession = Depends(get_session),
-) -> SoftwareCreateResponse:
+) -> PartCreateResponse:
     version = Version.parse(payload.version, allow_prerelease=False)
     existing = (
-        await session.execute(select(Software.id).where(Software.name == payload.name))
+        await session.execute(select(Part.id).where(Part.name == payload.name))
     ).scalar_one_or_none()
     if existing is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Software {payload.name!r} already exists",
+            detail=f"Part {payload.name!r} already exists",
         )
-    software = Software(
+    part = Part(
         name=payload.name,
+        subtype=payload.subtype,
         repo_uri=payload.repo_uri,
         issue_tracker_uri=payload.issue_tracker_uri,
         aliases=payload.aliases,
     )
-    session.add(software)
+    session.add(part)
     await session.flush()
-    sv = SoftwareVersion(
-        software_id=software.id,
+    pv = PartVersion(
+        part_id=part.id,
         version_major=version.major,
         version_minor=version.minor,
         version_patch=version.patch,
         markdown=payload.markdown,
     )
-    session.add(sv)
+    session.add(pv)
     await session.commit()
-    return SoftwareCreateResponse(id=software.id, name=software.name, version=str(version))
+    return PartCreateResponse(
+        id=part.id,
+        name=part.name,
+        subtype=part.subtype,
+        version=str(version),
+    )
 
 
-@router.get("/{name}", response_model=SoftwareDetail)
-async def get_software(
+@router.get("/{name}", response_model=PartDetail)
+async def get_part(
     name: str,
     session: AsyncSession = Depends(get_session),
-) -> SoftwareDetail:
-    software = (
-        await session.execute(select(Software).where(Software.name == name))
+) -> PartDetail:
+    part = (
+        await session.execute(select(Part).where(Part.name == name))
     ).scalar_one_or_none()
-    if software is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Software {name!r} not found")
-    latest = await _latest_software_version(session, software.id)
-    if latest is None:  # invariant: every software row has at least one version
-        raise HTTPException(status_code=500, detail="Software has no versions")
+    if part is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Part {name!r} not found")
+    latest = await _latest_part_version(session, part.id)
+    if latest is None:  # invariant: every part row has at least one version
+        raise HTTPException(status_code=500, detail="Part has no versions")
     version = Version(latest.version_major, latest.version_minor, latest.version_patch)
-    return SoftwareDetail(
-        id=software.id,
-        name=software.name,
-        repo_uri=software.repo_uri,
-        issue_tracker_uri=software.issue_tracker_uri,
-        aliases=list(software.aliases or []),
+    return PartDetail(
+        id=part.id,
+        name=part.name,
+        subtype=part.subtype,
+        repo_uri=part.repo_uri,
+        issue_tracker_uri=part.issue_tracker_uri,
+        aliases=list(part.aliases or []),
         version=str(version),
         markdown=latest.markdown,
         updated_at=latest.created_at,
     )
 
 
-@router.put("/{name}", response_model=SoftwareUpdateResponse)
-async def update_software(
+@router.put("/{name}", response_model=PartUpdateResponse)
+async def update_part(
     name: str,
-    payload: SoftwareUpdate,
+    payload: PartUpdate,
     session: AsyncSession = Depends(get_session),
-) -> SoftwareUpdateResponse:
-    software = (
+) -> PartUpdateResponse:
+    part = (
         await session.execute(
-            select(Software).where(Software.name == name).with_for_update()
+            select(Part).where(Part.name == name).with_for_update()
         )
     ).scalar_one_or_none()
-    if software is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Software {name!r} not found")
+    if part is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Part {name!r} not found")
 
     new_version = Version.parse(payload.version, allow_prerelease=False)
-    latest = await _latest_software_version(session, software.id)
+    latest = await _latest_part_version(session, part.id)
     if latest is not None:
         latest_v = Version(latest.version_major, latest.version_minor, latest.version_patch)
         if not (new_version > latest_v):
@@ -224,28 +244,30 @@ async def update_software(
     # PATCH semantics on row-level metadata fields. Absent = unchanged.
     # repo_uri rejects null at the schema layer (required, can't be cleared);
     # issue_tracker_uri allows null to clear; aliases treats null as clear
-    # (collapse to []).
+    # (collapse to []). Subtype is intentionally not mutable on update — a
+    # part's kind is structural, not a content field; if you want a different
+    # subtype, register a new part.
     if "repo_uri" in payload.model_fields_set:
-        software.repo_uri = payload.repo_uri
+        part.repo_uri = payload.repo_uri
     if "issue_tracker_uri" in payload.model_fields_set:
-        software.issue_tracker_uri = payload.issue_tracker_uri
+        part.issue_tracker_uri = payload.issue_tracker_uri
     if "aliases" in payload.model_fields_set:
-        software.aliases = payload.aliases or []
+        part.aliases = payload.aliases or []
 
-    sv = SoftwareVersion(
-        software_id=software.id,
+    pv = PartVersion(
+        part_id=part.id,
         version_major=new_version.major,
         version_minor=new_version.minor,
         version_patch=new_version.patch,
         markdown=payload.markdown,
     )
-    session.add(sv)
+    session.add(pv)
     await session.commit()
-    return SoftwareUpdateResponse(name=software.name, version=str(new_version))
+    return PartUpdateResponse(name=part.name, version=str(new_version))
 
 
 @router.get("/{name}/history", response_model=VersionHistoryResponse)
-async def get_software_history(
+async def get_part_history(
     name: str,
     after: str | None = Query(default=None),
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
@@ -253,29 +275,29 @@ async def get_software_history(
 ) -> VersionHistoryResponse:
     limit = validate_limit(limit)
 
-    software = (
-        await session.execute(select(Software.id).where(Software.name == name))
+    part = (
+        await session.execute(select(Part.id).where(Part.name == name))
     ).scalar_one_or_none()
-    if software is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Software {name!r} not found")
+    if part is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Part {name!r} not found")
 
     stmt = select(
-        SoftwareVersion.id,
-        SoftwareVersion.version_major,
-        SoftwareVersion.version_minor,
-        SoftwareVersion.version_patch,
-        SoftwareVersion.created_at,
-    ).where(SoftwareVersion.software_id == software)
+        PartVersion.id,
+        PartVersion.version_major,
+        PartVersion.version_minor,
+        PartVersion.version_patch,
+        PartVersion.created_at,
+    ).where(PartVersion.part_id == part)
 
     if after is not None:
         cursor_t, cursor_id = decode_cursor(after)
         stmt = stmt.where(
-            tuple_(SoftwareVersion.created_at, SoftwareVersion.id)
+            tuple_(PartVersion.created_at, PartVersion.id)
             < tuple_(cursor_t, cursor_id)
         )
 
     stmt = stmt.order_by(
-        SoftwareVersion.created_at.desc(), SoftwareVersion.id.desc()
+        PartVersion.created_at.desc(), PartVersion.id.desc()
     ).limit(limit + 1)
 
     rows = (await session.execute(stmt)).all()
@@ -285,41 +307,41 @@ async def get_software_history(
     items: list[VersionHistoryItem] = []
     last_t = None
     last_id = None
-    for sv_id, vmaj, vmin, vpat, vts in rows:
+    for pv_id, vmaj, vmin, vpat, vts in rows:
         items.append(
             VersionHistoryItem(
                 version=str(Version(vmaj, vmin, vpat)),
                 updated_at=vts,
             )
         )
-        last_t, last_id = vts, sv_id
+        last_t, last_id = vts, pv_id
 
     next_cursor = encode_cursor(last_t, last_id) if has_more and last_t else None
     return VersionHistoryResponse(results=items, next=next_cursor)
 
 
-@router.get("/{name}/contracts", response_model=SoftwareContractsListResponse)
-async def list_software_contracts(
+@router.get("/{name}/contracts", response_model=PartContractsListResponse)
+async def list_part_contracts(
     name: str,
     after: str | None = Query(default=None),
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     session: AsyncSession = Depends(get_session),
-) -> SoftwareContractsListResponse:
+) -> PartContractsListResponse:
     limit = validate_limit(limit)
 
-    software = (
-        await session.execute(select(Software).where(Software.name == name))
+    part = (
+        await session.execute(select(Part).where(Part.name == name))
     ).scalar_one_or_none()
-    if software is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Software {name!r} not found")
+    if part is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Part {name!r} not found")
 
     items, next_cursor = await _list_active_contracts(
         session,
         after=after,
         limit=limit,
-        touching_software_id=software.id,
+        touching_part_id=part.id,
     )
-    return SoftwareContractsListResponse(software=software.name, results=items, next=next_cursor)
+    return PartContractsListResponse(part=part.name, results=items, next=next_cursor)
 
 
 async def _list_active_contracts(
@@ -327,12 +349,12 @@ async def _list_active_contracts(
     *,
     after: str | None,
     limit: int,
-    touching_software_id=None,
+    touching_part_id=None,
 ) -> tuple[list[ContractListItem], str | None]:
     """Paginated listing of contracts with their latest active version.
 
-    `touching_software_id`, if provided, restricts results to contracts where the
-    software is owner or counterparty. Otherwise lists every contract.
+    `touching_part_id`, if provided, restricts results to contracts where the
+    part is owner or counterparty. Otherwise lists every contract.
     """
     latest_active = (
         select(
@@ -354,8 +376,8 @@ async def _list_active_contracts(
         .subquery()
     )
 
-    owner_alias = Software.__table__.alias("owner_sw")
-    cp_alias = Software.__table__.alias("cp_sw")
+    owner_alias = Part.__table__.alias("owner_pt")
+    cp_alias = Part.__table__.alias("cp_pt")
 
     stmt = (
         select(
@@ -369,15 +391,15 @@ async def _list_active_contracts(
             latest_active.c.cv_accepted_at,
         )
         .join(latest_active, Contract.id == latest_active.c.cv_contract_id)
-        .join(owner_alias, owner_alias.c.id == Contract.owner_software_id)
-        .join(cp_alias, cp_alias.c.id == Contract.counterparty_software_id)
+        .join(owner_alias, owner_alias.c.id == Contract.owner_part_id)
+        .join(cp_alias, cp_alias.c.id == Contract.counterparty_part_id)
     )
 
-    if touching_software_id is not None:
+    if touching_part_id is not None:
         stmt = stmt.where(
             or_(
-                Contract.owner_software_id == touching_software_id,
-                Contract.counterparty_software_id == touching_software_id,
+                Contract.owner_part_id == touching_part_id,
+                Contract.counterparty_part_id == touching_part_id,
             )
         )
 

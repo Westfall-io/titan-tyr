@@ -20,8 +20,14 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.db import Base
 
 
-class Software(Base):
-    __tablename__ = "software"
+class Part(Base):
+    __tablename__ = "parts"
+    __table_args__ = (
+        CheckConstraint(
+            "subtype IN ('software', 'container')",
+            name="ck_parts_subtype_allowed",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -29,6 +35,7 @@ class Software(Base):
         server_default=text("gen_random_uuid()"),
     )
     name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    subtype: Mapped[str] = mapped_column(String, nullable=False)
     repo_uri: Mapped[str] = mapped_column(String, nullable=False)
     issue_tracker_uri: Mapped[str | None] = mapped_column(String, nullable=True)
     aliases: Mapped[list[str]] = mapped_column(
@@ -40,24 +47,24 @@ class Software(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
-    versions: Mapped[list["SoftwareVersion"]] = relationship(
-        back_populates="software", cascade="all, delete-orphan", passive_deletes=True
+    versions: Mapped[list["PartVersion"]] = relationship(
+        back_populates="part", cascade="all, delete-orphan", passive_deletes=True
     )
 
 
-class SoftwareVersion(Base):
-    __tablename__ = "software_versions"
+class PartVersion(Base):
+    __tablename__ = "part_versions"
     __table_args__ = (
         UniqueConstraint(
-            "software_id",
+            "part_id",
             "version_major",
             "version_minor",
             "version_patch",
-            name="uq_software_versions_version",
+            name="uq_part_versions_version",
         ),
         Index(
-            "ix_software_versions_software_id_version",
-            "software_id",
+            "ix_part_versions_part_id_version",
+            "part_id",
             text("version_major DESC"),
             text("version_minor DESC"),
             text("version_patch DESC"),
@@ -72,9 +79,9 @@ class SoftwareVersion(Base):
         primary_key=True,
         server_default=text("gen_random_uuid()"),
     )
-    software_id: Mapped[uuid.UUID] = mapped_column(
+    part_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("software.id", ondelete="CASCADE"),
+        ForeignKey("parts.id", ondelete="CASCADE"),
         nullable=False,
     )
     version_major: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -85,15 +92,15 @@ class SoftwareVersion(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
-    software: Mapped[Software] = relationship(back_populates="versions")
+    part: Mapped[Part] = relationship(back_populates="versions")
 
 
 class Contract(Base):
     __tablename__ = "contracts"
     __table_args__ = (
-        UniqueConstraint("owner_software_id", "counterparty_software_id"),
+        UniqueConstraint("owner_part_id", "counterparty_part_id"),
         CheckConstraint(
-            "owner_software_id <> counterparty_software_id",
+            "owner_part_id <> counterparty_part_id",
             name="owner_ne_counterparty",
         ),
     )
@@ -103,18 +110,18 @@ class Contract(Base):
         primary_key=True,
         server_default=text("gen_random_uuid()"),
     )
-    owner_software_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("software.id"), nullable=False
+    owner_part_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("parts.id"), nullable=False
     )
-    counterparty_software_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("software.id"), nullable=False
+    counterparty_part_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("parts.id"), nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
-    owner: Mapped[Software] = relationship(foreign_keys=[owner_software_id])
-    counterparty: Mapped[Software] = relationship(foreign_keys=[counterparty_software_id])
+    owner: Mapped[Part] = relationship(foreign_keys=[owner_part_id])
+    counterparty: Mapped[Part] = relationship(foreign_keys=[counterparty_part_id])
     versions: Mapped[list["ContractVersion"]] = relationship(
         back_populates="contract", cascade="all, delete-orphan", passive_deletes=True
     )
@@ -123,7 +130,9 @@ class Contract(Base):
 class Template(Base):
     __tablename__ = "templates"
     __table_args__ = (
-        CheckConstraint("kind IN ('software', 'contract')", name="kind_allowed"),
+        CheckConstraint(
+            "kind IN ('software', 'contract', 'container')", name="kind_allowed"
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -207,7 +216,6 @@ class TemplateVersion(Base):
 class ContractVersion(Base):
     __tablename__ = "contract_versions"
     __table_args__ = (
-        # NULLS NOT DISTINCT requires PG 15+; this is the canonical schema.
         Index(
             "uq_contract_versions_contract_id_version_prerelease",
             "contract_id",

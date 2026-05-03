@@ -1,9 +1,9 @@
 ---
-name: learn-software
-description: Look up everything titan-tyr knows about a registered software node — its description, aliases, version, where to file tickets, and any contracts touching it. Use when an agent needs to understand another software before acting (filing a bug against it, integrating with it, summarising a conversation involving it). Returns structured JSON. Distinct from /find-software (the discovery flow when the target name isn't known yet).
+name: learn-part
+description: Look up everything titan-tyr knows about a registered part — its description, aliases, version, where to file tickets, and any contracts touching it. Use when an agent needs to understand another part before acting (filing a bug against it, integrating with it, summarising a conversation involving it). Returns structured JSON. Distinct from /find-part (the discovery flow when the target name isn't known yet).
 ---
 
-# learn-software
+# learn-part
 
 You are answering an agent's "tell me about software X" question by
 pulling everything titan-tyr knows about it: description, repo,
@@ -36,10 +36,10 @@ Don't guess. Don't default to localhost silently.
 | `target` | yes      | Canonical software name (slug) to look up.                                               |
 | `caller` | no       | The software the requesting agent represents. When provided, contracts are filtered to caller↔target. When absent, every contract touching `target` is returned. |
 
-`/learn-software` does **not** do interactive discovery. If the agent
-doesn't know which canonical name to ask for, call `/find-software`
-first — it uses `GET /software?match=<query>` to resolve a colloquial
-label to a canonical slug, then hand the slug to `/learn-software`.
+`/learn-part` does **not** do interactive discovery. If the agent
+doesn't know which canonical name to ask for, call `/find-part`
+first — it uses `GET /parts?match=<query>` to resolve a colloquial
+label to a canonical slug, then hand the slug to `/learn-part`.
 
 ## Workflow
 
@@ -58,7 +58,7 @@ curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
 
 ```sh
 curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
-  "$TITAN_TYR_URL/software/$target"
+  "$TITAN_TYR_URL/parts/$target"
 ```
 
 - `200` → continue to step 3.
@@ -69,7 +69,7 @@ curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
 
 ```sh
 curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
-  "$TITAN_TYR_URL/software/$target/contracts?limit=100"
+  "$TITAN_TYR_URL/parts/$target/contracts?limit=100"
 ```
 
 The listing endpoint is paginated. For v1, fetch the first page
@@ -157,7 +157,7 @@ labels (`front end` → `admin-ui`):
 
 ```sh
 curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
-  "$TITAN_TYR_URL/software?match=$target&limit=100"
+  "$TITAN_TYR_URL/parts?match=$target&limit=100"
 ```
 
 Return each hit's `name` and `aliases` as `suggestions`. If `?match=`
@@ -173,13 +173,13 @@ the agent sees what *is* there. Otherwise return an empty list.
     {"name": "admin-ui", "aliases": ["front end"]},
     {"name": "user-ui", "aliases": []}
   ],
-  "hint": "No software named '<target>' is registered. The closest matches by name or alias are listed in `suggestions`. Pick one and call /learn-software again, or call /register-software to add it."
+  "hint": "No software named '<target>' is registered. The closest matches by name or alias are listed in `suggestions`. Pick one and call /learn-part again, or call /register-part to add it."
 }
 ```
 
 ## Caller-side composition notes
 
-`/learn-software` is meant to be called from another agent's context.
+`/learn-part` is meant to be called from another agent's context.
 The structured JSON return value is the contract — agents parse the
 fields they need. The skill itself does not print prose summaries
 or render the response for human consumption; that's the calling
@@ -189,7 +189,7 @@ A common composition:
 
 1. Calling agent has a request like "file a bug against payments-service
    about the timeout we observed."
-2. Calls `/learn-software target=payments-service caller=<self>`.
+2. Calls `/learn-part target=payments-service caller=<self>`.
 3. Reads `ticket_filing.resolved_to` to know where to file.
 4. Reads `contracts` to understand the interface that observed the
    timeout.
@@ -211,10 +211,10 @@ A common composition:
   if hot paths emerge.)
 - The unknown-target lookup uses the server's `?match=` endpoint so
   alias resolution lives in one place (the API) and stays consistent
-  across `/learn-software`, `/find-software`, and any other consumer.
-- Counterparty fan-out (fetching the *other* software's full
+  across `/learn-part`, `/find-part`, and any other consumer.
+- Counterparty fan-out (fetching the *other* part's full
   description for each contract) is out of scope for v1. The contract
-  entries carry the counterparty's name — call `/learn-software` again
+  entries carry the counterparty's name — call `/learn-part` again
   on that name if the agent needs more.
 - Pagination across contract listings is left to v2. The current cap
   (100 first-page entries) is enough for the registered scale today

@@ -13,7 +13,7 @@ explicit next step (`POST /templates/{kind}/proposals/{version}/accept`).
 
 ## Server location
 
-Same env vars as `register-software`:
+Same env vars as `register-part`:
 
 | Variable          | Required | Purpose                                          |
 | ----------------- | -------- | ------------------------------------------------ |
@@ -178,7 +178,7 @@ you asked for that.")
   `<target>` and accept. All RCs are preserved in the database for
   history; only the final stable becomes active.
 - If you're proposing a change that itself updates the **fill rules**
-  documented in the `register-software` skill, mention it in the
+  documented in the `register-part` skill, mention it in the
   proposal body so reviewers know to update the skill in lockstep.
 - This skill is for **template content**, not for the API's behavior.
   Endpoint changes go through the regular PR / DESIGN.md flow, not

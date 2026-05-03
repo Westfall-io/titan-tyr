@@ -5,15 +5,15 @@ when you run it from the titan-tyr repo root. Type `/<skill-name>` to invoke.
 
 | Skill                                                            | What it does                                                          |
 | ---------------------------------------------------------------- | --------------------------------------------------------------------- |
-| [`register-software`](./register-software/SKILL.md)               | Register a software node with a running titan-tyr instance.           |
-| [`register-contract`](./register-contract/SKILL.md)               | Register a new interface contract between two software nodes already in titan-tyr. Picks owner+counterparty via `?match=`, fills the contract template, POSTs to `/contracts`. |
-| [`update-software`](./update-software/SKILL.md)                   | Append a new version to an already-registered software node. Detects template-version drift and helps migrate. |
-| [`learn-software`](./learn-software/SKILL.md)                     | Look up everything titan-tyr knows about a registered software node — description, ticket-filing target, contracts. Read-only; returns structured JSON. |
-| [`find-software`](./find-software/SKILL.md)                       | Resolve a colloquial label or partial name (e.g. "front end") to a canonical software slug via `?match=`. Read-only; returns structured JSON. |
-| [`propose-template-change`](./propose-template-change/SKILL.md)   | Draft and POST a proposal to update the `software` or `contract` template. Does not auto-accept. |
+| [`register-part`](./register-part/SKILL.md)               | Register a part with a running titan-tyr instance.           |
+| [`register-contract`](./register-contract/SKILL.md)               | Register a new interface contract between two parts already in titan-tyr. Picks owner+counterparty via `?match=`, fills the contract template, POSTs to `/contracts`. |
+| [`update-part`](./update-part/SKILL.md)                   | Append a new version to an already-registered part. Detects template-version drift and helps migrate. |
+| [`learn-part`](./learn-part/SKILL.md)                     | Look up everything titan-tyr knows about a registered part — description, ticket-filing target, contracts. Read-only; returns structured JSON. |
+| [`find-part`](./find-part/SKILL.md)                       | Resolve a colloquial label or partial name (e.g. "front end") to a canonical part slug via `?match=`. Read-only; returns structured JSON. |
+| [`propose-template-change`](./propose-template-change/SKILL.md)   | Draft and POST a proposal to update the `software`, `container`, or `contract` template. Does not auto-accept. |
 | [`propose-contract-change`](./propose-contract-change/SKILL.md)   | Draft and POST a proposal to amend an existing interface contract. Helps pick the contract, opens the active body for in-place editing, shows a unified diff. Does not auto-accept. |
 | [`accept-template-proposal`](./accept-template-proposal/SKILL.md) | Promote an open template proposal to the new active version. Mutates what every caller sees on the next `GET /templates/{kind}`. |
-| [`accept-contract-proposal`](./accept-contract-proposal/SKILL.md) | Promote an open contract proposal to the new active version. Helps pick the contract (by id, by software, or from a list), shows a unified diff vs the active body, then POSTs accept. |
+| [`accept-contract-proposal`](./accept-contract-proposal/SKILL.md) | Promote an open contract proposal to the new active version. Helps pick the contract (by id, by part name, or from a list), shows a unified diff vs the active body, then POSTs accept. |
 
 ## Configuration
 

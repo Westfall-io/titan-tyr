@@ -19,7 +19,8 @@ class TestAuth:
     @pytest.mark.parametrize("path", [
         "/templates/software",
         "/templates/contract",
-        "/software/anything",
+        "/templates/container",
+        "/parts/anything",
     ])
     async def test_auth_required_on_get_endpoints(self, client, path):
         client.headers.pop("Authorization", None)
@@ -28,5 +29,8 @@ class TestAuth:
 
     async def test_auth_required_on_post(self, client):
         client.headers.pop("Authorization", None)
-        r = await client.post("/software", json={"name": "n", "repo_uri": "u", "markdown": "m"})
+        r = await client.post(
+            "/parts",
+            json={"name": "n", "subtype": "software", "repo_uri": "u", "markdown": "m"},
+        )
         assert r.status_code == 401

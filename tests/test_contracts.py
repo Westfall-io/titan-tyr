@@ -1,8 +1,8 @@
 async def _register_pair(client, owner="a", counterparty="b"):
     for name in (owner, counterparty):
         r = await client.post(
-            "/software",
-            json={"name": name, "repo_uri": "u", "markdown": "m"},
+            "/parts",
+            json={"name": name, "subtype": "software", "repo_uri": "u", "markdown": "m"},
         )
         assert r.status_code == 201, r.text
 
@@ -11,8 +11,8 @@ async def _new_contract(client, owner="a", counterparty="b", version="1.0.0"):
     r = await client.post(
         "/contracts",
         json={
-            "owner_software": owner,
-            "counterparty_software": counterparty,
+            "owner_part": owner,
+            "counterparty_part": counterparty,
             "markdown": "contract md",
             "version": version,
         },
@@ -39,7 +39,7 @@ class TestRegister:
         await _register_pair(client, owner="a", counterparty="b")
         r = await client.post(
             "/contracts",
-            json={"owner_software": "a", "counterparty_software": "a", "markdown": "m"},
+            json={"owner_part": "a", "counterparty_part": "a", "markdown": "m"},
         )
         assert r.status_code == 422
 
@@ -47,7 +47,7 @@ class TestRegister:
         await _register_pair(client)
         r = await client.post(
             "/contracts",
-            json={"owner_software": "a", "counterparty_software": "ghost", "markdown": "m"},
+            json={"owner_part": "a", "counterparty_part": "ghost", "markdown": "m"},
         )
         assert r.status_code == 404
 
@@ -56,8 +56,8 @@ class TestRegister:
         r = await client.post(
             "/contracts",
             json={
-                "owner_software": "Bad Name",
-                "counterparty_software": "b",
+                "owner_part": "Bad Name",
+                "counterparty_part": "b",
                 "markdown": "m",
             },
         )
@@ -68,8 +68,8 @@ class TestRegister:
         r = await client.post(
             "/contracts",
             json={
-                "owner_software": "a",
-                "counterparty_software": "Has.Dot",
+                "owner_part": "a",
+                "counterparty_part": "Has.Dot",
                 "markdown": "m",
             },
         )
@@ -80,7 +80,7 @@ class TestRegister:
         await _new_contract(client)
         r = await client.post(
             "/contracts",
-            json={"owner_software": "a", "counterparty_software": "b", "markdown": "m"},
+            json={"owner_part": "a", "counterparty_part": "b", "markdown": "m"},
         )
         assert r.status_code == 409
 
@@ -89,8 +89,8 @@ class TestRegister:
         r = await client.post(
             "/contracts",
             json={
-                "owner_software": "a",
-                "counterparty_software": "b",
+                "owner_part": "a",
+                "counterparty_part": "b",
                 "markdown": "m",
                 "version": "1.0.0-rc1",
             },
@@ -123,7 +123,7 @@ class TestSearch:
     async def test_returns_both_directions(self, client):
         for n in ("a", "b"):
             await client.post(
-                "/software", json={"name": n, "repo_uri": "u", "markdown": "m"}
+                "/parts", json={"name": n, "subtype": "software", "repo_uri": "u", "markdown": "m"}
             )
         await _new_contract(client, owner="a", counterparty="b")
         await _new_contract(client, owner="b", counterparty="a")

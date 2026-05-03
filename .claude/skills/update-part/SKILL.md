@@ -1,13 +1,13 @@
 ---
-name: update-software
-description: Append a new version to a software node already registered with titan-tyr. Use when the user wants to update a registered software's body — e.g. "update my software registration", "bump titan-tyr's version", "my software is out of date with the template", "register a new version of X". Detects template-version drift, helps the user revise the body, and PUTs to /software/{name}. Distinct from /register-software, which creates new nodes.
+name: update-part
+description: Append a new version to a part already registered with titan-tyr. Use when the user wants to update a registered part's body — e.g. "update my software registration", "bump titan-tyr's version", "my part is out of date with the template", "register a new version of X". Detects template-version drift, helps the user revise the body, and PUTs to /parts/{name}. Distinct from /register-part, which creates new parts.
 ---
 
-# update-software
+# update-part
 
-You are appending a new version to a software node that already exists
-in titan-tyr. The endpoint is `PUT /software/{name}`. Each call adds
-one row to that software's `*_versions` history; reads always return
+You are appending a new version to a part that already exists
+in titan-tyr. The endpoint is `PUT /parts/{name}`. Each call adds
+one row to that part's `*_versions` history; reads always return
 the latest.
 
 There are two reasons to update:
@@ -59,7 +59,7 @@ Two reads, in parallel:
 
 ```sh
 curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
-  "$TITAN_TYR_URL/software/{name}"
+  "$TITAN_TYR_URL/parts/{name}"
 curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
   "$TITAN_TYR_URL/templates/software"
 ```
@@ -70,8 +70,8 @@ active template version off `GET /templates/software/proposals`'s
 `active_version` field (the markdown endpoint returns the body, not
 metadata).
 
-`404` on `/software/{name}` → the software is not registered. Stop
-and point at `/register-software`.
+`404` on `/parts/{name}` → the software is not registered. Stop
+and point at `/register-part`.
 
 ### 3. Detect template-version drift
 
@@ -112,7 +112,7 @@ Ask the user to confirm scope:
 - **Both.** Do the migration first (gives you a clean scaffold), then
   apply content changes on top.
 
-Apply the same generic fill rules as `/register-software`:
+Apply the same generic fill rules as `/register-part`:
 
 1. `<...>` placeholders are content slots; replace and drop brackets.
 2. Reserved meta-placeholders are filled by the skill:
@@ -131,12 +131,12 @@ body's shape onto a newer template version (anything beyond pure
 content edits), update the stamp
 `<!-- template: software@X.Y.Z -->` to the active template version
 *even though it's already a literal value*. The
-substitute-`<template-version>` rule from `/register-software` only
+substitute-`<template-version>` rule from `/register-part` only
 fires on registration, when the stamp is still a placeholder. On
 update the stamp is already a literal version string baked in at the
 last write — no `<...>` to substitute. If you don't re-type it, the
 stamp will silently lie about which template the body matches, and
-the next `/update-software` run will mis-detect drift in step 3.
+the next `/update-part` run will mis-detect drift in step 3.
 
 Conversely, on a **content-only** edit (no structural reshape), keep
 the stamp as-is. The body still matches the template version stamped
@@ -149,7 +149,7 @@ them, strip them on POST.
 
 ### 5. Optional: update row-level metadata (repo_uri, issue_tracker_uri, aliases)
 
-`PUT /software/{name}` accepts three optional row-level metadata fields
+`PUT /parts/{name}` accepts three optional row-level metadata fields
 with **PATCH semantics**. They share the same omit/value/null shape;
 the only differences are around what null means per field.
 
@@ -232,7 +232,7 @@ curl -fsS -X PUT \
      -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
      -H "Content-Type: application/json" \
      --data @.scratch/update-body.json \
-     "$TITAN_TYR_URL/software/{name}"
+     "$TITAN_TYR_URL/parts/{name}"
 ```
 
 ### 9. Report
@@ -240,7 +240,7 @@ curl -fsS -X PUT \
 On `200`, summarise:
 
 > Updated `<name>` to version `<new-version>`.
-> Read it back: `curl -H 'Authorization: Bearer sysmlv2' $TITAN_TYR_URL/software/<name>`
+> Read it back: `curl -H 'Authorization: Bearer sysmlv2' $TITAN_TYR_URL/parts/<name>`
 
 Note whether the update closed any template drift (stamp now matches
 active template), or whether it only addressed content.
@@ -250,21 +250,21 @@ active template), or whether it only addressed content.
 | Status | Meaning                                                             | What to do                                                                  |
 | ------ | ------------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | `401`  | Bad bearer token                                                    | Stop. Tell user `TITAN_TYR_TOKEN` is wrong.                                 |
-| `404`  | Software not registered                                             | Stop. Point at `/register-software`.                                        |
+| `404`  | Software not registered                                             | Stop. Point at `/register-part`.                                        |
 | `409`  | New `version` not strictly greater than current                     | Bump beyond current; suggest the next sensible value.                       |
 | `422`  | Malformed `version` (e.g. `1.0`, `1.0.0-rc1`)                       | Software versions are plain `MAJOR.MINOR.PATCH`, no RC suffix. Suggest a fix. |
 | `5xx`  | Server problem                                                      | Print response body verbatim. Do not retry.                                 |
 
 ## Notes
 
-- This skill mutates a single software node's history. Acceptance-style
+- This skill mutates a single part's history. Acceptance-style
   confirmation gates (as in `/accept-template-proposal`) are not needed
-  — `PUT /software/{name}` only affects this one software's reads, not
+  — `PUT /parts/{name}` only affects this one part's reads, not
   every caller's view of a template.
 - If the user is updating purely to close template drift, mention that
   the propose/accept of the new template version was already the
   cross-cutting change; this update is just bringing one node into
   compliance. Other registered software may still be on older
   templates.
-- `/register-software` and `/update-software` share the same generic
+- `/register-part` and `/update-part` share the same generic
   fill rules. If those rules grow, update both in lockstep.

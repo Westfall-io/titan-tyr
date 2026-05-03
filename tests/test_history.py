@@ -1,6 +1,6 @@
 """Per-resource version history endpoints (#20).
 
-GET /software/{name}/history
+GET /parts/{name}/history
 GET /contracts/{contract_id}/history
 
 Both: cursor-paginated, most-recent-first, default limit 50, max 100,
@@ -13,17 +13,17 @@ from __future__ import annotations
 import asyncio
 
 
-async def _register_software(client, name, repo="https://example.com/r"):
+async def _register_part(client, name, repo="https://example.com/r"):
     r = await client.post(
-        "/software",
-        json={"name": name, "repo_uri": repo, "markdown": f"# {name}"},
+        "/parts",
+        json={"name": name, "subtype": "software", "repo_uri": repo, "markdown": f"# {name}"},
     )
     assert r.status_code == 201, r.text
 
 
-async def _update_software(client, name, version, markdown=None):
+async def _update_part(client, name, version, markdown=None):
     r = await client.put(
-        f"/software/{name}",
+        f"/parts/{name}",
         json={"version": version, "markdown": markdown or f"# {name} {version}"},
     )
     assert r.status_code == 200, r.text
@@ -33,8 +33,8 @@ async def _register_contract(client, owner, counterparty, markdown="m"):
     r = await client.post(
         "/contracts",
         json={
-            "owner_software": owner,
-            "counterparty_software": counterparty,
+            "owner_part": owner,
+            "counterparty_part": counterparty,
             "markdown": markdown,
         },
     )
@@ -57,8 +57,8 @@ async def _accept(client, cid, version):
 
 class TestSoftwareHistory:
     async def test_single_version_after_register(self, client):
-        await _register_software(client, "svc")
-        r = await client.get("/software/svc/history")
+        await _register_part(client, "svc")
+        r = await client.get("/parts/svc/history")
         assert r.status_code == 200
         body = r.json()
         assert len(body["results"]) == 1
@@ -69,29 +69,29 @@ class TestSoftwareHistory:
         assert body["next"] is None
 
     async def test_multiple_versions_most_recent_first(self, client):
-        await _register_software(client, "svc")
+        await _register_part(client, "svc")
         await asyncio.sleep(0.01)
-        await _update_software(client, "svc", "1.1.0")
+        await _update_part(client, "svc", "1.1.0")
         await asyncio.sleep(0.01)
-        await _update_software(client, "svc", "2.0.0")
-        r = await client.get("/software/svc/history")
+        await _update_part(client, "svc", "2.0.0")
+        r = await client.get("/parts/svc/history")
         assert r.status_code == 200
         versions = [it["version"] for it in r.json()["results"]]
         assert versions == ["2.0.0", "1.1.0", "1.0.0"]
 
     async def test_paginates_with_cursor(self, client):
-        await _register_software(client, "svc")
+        await _register_part(client, "svc")
         for v in ("1.1.0", "1.2.0", "1.3.0", "1.4.0"):
             await asyncio.sleep(0.01)
-            await _update_software(client, "svc", v)
+            await _update_part(client, "svc", v)
         # 5 versions total. Walk in pages of 2.
-        page1 = (await client.get("/software/svc/history", params={"limit": 2})).json()
+        page1 = (await client.get("/parts/svc/history", params={"limit": 2})).json()
         assert [it["version"] for it in page1["results"]] == ["1.4.0", "1.3.0"]
         assert page1["next"] is not None
 
         page2 = (
             await client.get(
-                "/software/svc/history", params={"limit": 2, "after": page1["next"]}
+                "/parts/svc/history", params={"limit": 2, "after": page1["next"]}
             )
         ).json()
         assert [it["version"] for it in page2["results"]] == ["1.2.0", "1.1.0"]
@@ -99,42 +99,42 @@ class TestSoftwareHistory:
 
         page3 = (
             await client.get(
-                "/software/svc/history", params={"limit": 2, "after": page2["next"]}
+                "/parts/svc/history", params={"limit": 2, "after": page2["next"]}
             )
         ).json()
         assert [it["version"] for it in page3["results"]] == ["1.0.0"]
         assert page3["next"] is None
 
     async def test_404_when_software_missing(self, client):
-        r = await client.get("/software/nonesuch/history")
+        r = await client.get("/parts/nonesuch/history")
         assert r.status_code == 404
 
     async def test_invalid_cursor_rejected(self, client):
-        await _register_software(client, "svc")
-        r = await client.get("/software/svc/history", params={"after": "garbage"})
+        await _register_part(client, "svc")
+        r = await client.get("/parts/svc/history", params={"after": "garbage"})
         assert r.status_code == 422
 
     async def test_limit_out_of_range(self, client):
-        await _register_software(client, "svc")
-        r = await client.get("/software/svc/history", params={"limit": 0})
+        await _register_part(client, "svc")
+        r = await client.get("/parts/svc/history", params={"limit": 0})
         assert r.status_code == 422
-        r = await client.get("/software/svc/history", params={"limit": 101})
+        r = await client.get("/parts/svc/history", params={"limit": 101})
         assert r.status_code == 422
 
     async def test_history_is_per_software(self, client):
-        await _register_software(client, "a")
-        await _register_software(client, "b")
-        await _update_software(client, "a", "1.1.0")
+        await _register_part(client, "a")
+        await _register_part(client, "b")
+        await _update_part(client, "a", "1.1.0")
         # b should still show only its own 1.0.0
-        r = await client.get("/software/b/history")
+        r = await client.get("/parts/b/history")
         versions = [it["version"] for it in r.json()["results"]]
         assert versions == ["1.0.0"]
 
 
 class TestContractHistory:
     async def test_single_version_after_register(self, client):
-        await _register_software(client, "a")
-        await _register_software(client, "b")
+        await _register_part(client, "a")
+        await _register_part(client, "b")
         cid = await _register_contract(client, "a", "b")
         r = await client.get(f"/contracts/{cid}/history")
         assert r.status_code == 200
@@ -146,8 +146,8 @@ class TestContractHistory:
         assert body["next"] is None
 
     async def test_accepted_versions_most_recent_first(self, client):
-        await _register_software(client, "a")
-        await _register_software(client, "b")
+        await _register_part(client, "a")
+        await _register_part(client, "b")
         cid = await _register_contract(client, "a", "b")
         # Stable accept (no RC).
         await _propose(client, cid, "1.1.0")
@@ -164,8 +164,8 @@ class TestContractHistory:
 
     async def test_excludes_rc_proposals(self, client):
         """Both pending and superseded RC rows must not appear in history."""
-        await _register_software(client, "a")
-        await _register_software(client, "b")
+        await _register_part(client, "a")
+        await _register_part(client, "b")
         cid = await _register_contract(client, "a", "b")
         # RC1 proposed and superseded by RC2; RC2 then accepted (becomes stable).
         await _propose(client, cid, "1.1.0-rc1")
@@ -180,8 +180,8 @@ class TestContractHistory:
         assert versions == ["1.1.0", "1.0.0"]
 
     async def test_paginates_with_cursor(self, client):
-        await _register_software(client, "a")
-        await _register_software(client, "b")
+        await _register_part(client, "a")
+        await _register_part(client, "b")
         cid = await _register_contract(client, "a", "b")
         for v in ("1.1.0", "1.2.0", "1.3.0", "1.4.0"):
             await _propose(client, cid, v)
@@ -214,15 +214,15 @@ class TestContractHistory:
         assert r.status_code == 404
 
     async def test_invalid_cursor_rejected(self, client):
-        await _register_software(client, "a")
-        await _register_software(client, "b")
+        await _register_part(client, "a")
+        await _register_part(client, "b")
         cid = await _register_contract(client, "a", "b")
         r = await client.get(f"/contracts/{cid}/history", params={"after": "garbage"})
         assert r.status_code == 422
 
     async def test_limit_out_of_range(self, client):
-        await _register_software(client, "a")
-        await _register_software(client, "b")
+        await _register_part(client, "a")
+        await _register_part(client, "b")
         cid = await _register_contract(client, "a", "b")
         r = await client.get(f"/contracts/{cid}/history", params={"limit": 0})
         assert r.status_code == 422

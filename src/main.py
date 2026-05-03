@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.cors import resolve_cors_config
-from src.routers import contracts, health, proposals, software, templates
+from src.routers import contracts, health, parts, proposals, templates
 
 try:
     PROJECT_VERSION = _pkg_version("titan-tyr")
@@ -36,7 +36,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(templates.router)
-    app.include_router(software.router)
+    app.include_router(parts.router)
     app.include_router(contracts.router)
     app.include_router(proposals.router)
     return app

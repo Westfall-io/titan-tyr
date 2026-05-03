@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.auth import require_password
 from src.db import get_session
 from src.models import Contract, ContractVersion
-from src.routers.software import _latest_active_contract_version
+from src.routers.parts import _latest_active_contract_version
 from src.schemas import (
     ProposalAcceptResponse,
     ProposalCreate,

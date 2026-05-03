@@ -1,4 +1,8 @@
-from tests.conftest import SEED_CONTRACT_TEMPLATE, SEED_SOFTWARE_TEMPLATE
+from tests.conftest import (
+    SEED_CONTAINER_TEMPLATE,
+    SEED_CONTRACT_TEMPLATE,
+    SEED_SOFTWARE_TEMPLATE,
+)
 
 
 class TestGetTemplate:
@@ -13,6 +17,12 @@ class TestGetTemplate:
         assert r.status_code == 200
         assert "text/markdown" in r.headers["content-type"]
         assert r.text == SEED_CONTRACT_TEMPLATE
+
+    async def test_container_template(self, client):
+        r = await client.get("/templates/container")
+        assert r.status_code == 200
+        assert "text/markdown" in r.headers["content-type"]
+        assert r.text == SEED_CONTAINER_TEMPLATE
 
     async def test_unknown_kind_404(self, client):
         r = await client.get("/templates/nonexistent")

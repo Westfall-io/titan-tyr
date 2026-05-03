@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth import require_password
 from src.db import get_session
-from src.models import Contract, ContractVersion, Software
+from src.models import Contract, ContractVersion, Part
 from src.pagination import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
@@ -17,7 +17,7 @@ from src.pagination import (
     encode_cursor,
     validate_limit,
 )
-from src.routers.software import _latest_active_contract_version, _list_active_contracts
+from src.routers.parts import _latest_active_contract_version, _list_active_contracts
 from src.schemas import (
     ContractCreate,
     ContractCreateResponse,
@@ -33,11 +33,11 @@ from src.versioning import Version
 router = APIRouter(prefix="/contracts", tags=["contracts"], dependencies=[Depends(require_password)])
 
 
-async def _resolve_software(session: AsyncSession, name: str) -> Software:
-    sw = (await session.execute(select(Software).where(Software.name == name))).scalar_one_or_none()
-    if sw is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Software {name!r} not found")
-    return sw
+async def _resolve_part(session: AsyncSession, name: str) -> Part:
+    pt = (await session.execute(select(Part).where(Part.name == name))).scalar_one_or_none()
+    if pt is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Part {name!r} not found")
+    return pt
 
 
 @router.post("", response_model=ContractCreateResponse, status_code=status.HTTP_201_CREATED)
@@ -45,21 +45,21 @@ async def register_contract(
     payload: ContractCreate,
     session: AsyncSession = Depends(get_session),
 ) -> ContractCreateResponse:
-    if payload.owner_software == payload.counterparty_software:
+    if payload.owner_part == payload.counterparty_part:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="owner_software and counterparty_software must differ",
+            detail="owner_part and counterparty_part must differ",
         )
-    owner = await _resolve_software(session, payload.owner_software)
-    counterparty = await _resolve_software(session, payload.counterparty_software)
+    owner = await _resolve_part(session, payload.owner_part)
+    counterparty = await _resolve_part(session, payload.counterparty_part)
 
     version = Version.parse(payload.version, allow_prerelease=False)
 
     existing = (
         await session.execute(
             select(Contract.id).where(
-                Contract.owner_software_id == owner.id,
-                Contract.counterparty_software_id == counterparty.id,
+                Contract.owner_part_id == owner.id,
+                Contract.counterparty_part_id == counterparty.id,
             )
         )
     ).scalar_one_or_none()
@@ -70,8 +70,8 @@ async def register_contract(
         )
 
     contract = Contract(
-        owner_software_id=owner.id,
-        counterparty_software_id=counterparty.id,
+        owner_part_id=owner.id,
+        counterparty_part_id=counterparty.id,
     )
     session.add(contract)
     await session.flush()
@@ -116,23 +116,23 @@ async def list_or_search_contracts(
         # List mode: paginated summary of every contract with an active version.
         limit = validate_limit(limit)
         items, next_cursor = await _list_active_contracts(
-            session, after=after, limit=limit, touching_software_id=None
+            session, after=after, limit=limit, touching_part_id=None
         )
         return ContractListResponse(results=items, next=next_cursor)
 
     # Search mode: existing behaviour. Up to 2 results, full markdown.
-    a = await _resolve_software(session, owner)
-    b = await _resolve_software(session, counterparty)
+    a = await _resolve_part(session, owner)
+    b = await _resolve_part(session, counterparty)
 
     stmt = select(Contract).where(
         or_(
             and_(
-                Contract.owner_software_id == a.id,
-                Contract.counterparty_software_id == b.id,
+                Contract.owner_part_id == a.id,
+                Contract.counterparty_part_id == b.id,
             ),
             and_(
-                Contract.owner_software_id == b.id,
-                Contract.counterparty_software_id == a.id,
+                Contract.owner_part_id == b.id,
+                Contract.counterparty_part_id == a.id,
             ),
         )
     )
@@ -143,8 +143,8 @@ async def list_or_search_contracts(
         latest = await _latest_active_contract_version(session, c.id)
         if latest is None:
             continue
-        owner_name = (await session.get(Software, c.owner_software_id)).name
-        cp_name = (await session.get(Software, c.counterparty_software_id)).name
+        owner_name = (await session.get(Part, c.owner_part_id)).name
+        cp_name = (await session.get(Part, c.counterparty_part_id)).name
         results.append(
             ContractSearchResult(
                 contract_id=c.id,
@@ -169,8 +169,8 @@ async def get_contract(
     latest = await _latest_active_contract_version(session, contract_id)
     if latest is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contract has no active version")
-    owner = (await session.get(Software, contract.owner_software_id)).name
-    counterparty = (await session.get(Software, contract.counterparty_software_id)).name
+    owner = (await session.get(Part, contract.owner_part_id)).name
+    counterparty = (await session.get(Part, contract.counterparty_part_id)).name
     return ContractDetail(
         contract_id=contract.id,
         owner=owner,

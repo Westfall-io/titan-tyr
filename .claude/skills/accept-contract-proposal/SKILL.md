@@ -86,14 +86,14 @@ gave you:
 
   ```sh
   curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
-    "$TITAN_TYR_URL/software/{name}/contracts?limit=100"
+    "$TITAN_TYR_URL/parts/{name}/contracts?limit=100"
   ```
 
   Each entry has `contract_id`, `owner`, `counterparty`, `version`,
   `updated_at`. Render them as a numbered list (`owner → counterparty
   v<version>`) and ask which one. If there's only one, suggest it as
   the default. `404` → unknown software; stop and offer
-  `/find-software`.
+  `/find-part`.
 
 - **They gave nothing.** List all contracts (paginated):
 

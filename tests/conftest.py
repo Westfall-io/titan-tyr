@@ -18,6 +18,7 @@ from src.models import Template, TemplateVersion
 
 SEED_SOFTWARE_TEMPLATE = "# software template seed\n\n## Purpose\nseed body\n"
 SEED_CONTRACT_TEMPLATE = "# contract template seed\n\n## Provider obligations\nseed body\n"
+SEED_CONTAINER_TEMPLATE = "# container template seed\n\n## Purpose\nseed body\n"
 
 
 def _container_dsn() -> str:
@@ -68,6 +69,7 @@ async def db_session(engine) -> AsyncIterator[AsyncSession]:
         for kind, markdown in (
             ("software", SEED_SOFTWARE_TEMPLATE),
             ("contract", SEED_CONTRACT_TEMPLATE),
+            ("container", SEED_CONTAINER_TEMPLATE),
         ):
             tpl = Template(kind=kind)
             session.add(tpl)

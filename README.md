@@ -1,12 +1,14 @@
 # titan-tyr
 
-> A graph-shaped REST API for software and the interface contracts
+> A graph-shaped REST API for parts and the interface contracts
 > between them. Versioned markdown nodes and edges, all in Postgres.
 
 titan-tyr is a small FastAPI service that records:
 
-- **Software** — your services, libraries, repos. Each is a node.
-- **Interface contracts** — directed edges between two software nodes
+- **Parts** — typed nodes in the graph. Each part has a `subtype`
+  discriminator: `software` (a codebase / deployable boundary) or
+  `container` (a running instance of an image).
+- **Interface contracts** — directed edges between two parts
   describing how one talks to the other.
 
 Both nodes and edges carry a versioned markdown body. The latest
@@ -18,14 +20,14 @@ revised, and accepted as the new active version without losing history.
             ┌──────────────────────────────────────────────────┐
             │                  titan-tyr API                   │
             │                                                  │
-software ──▶│ POST /software        GET  /software/{name}      │
+   part ──▶│ POST /parts           GET  /parts/{name}         │
 contract ──▶│ POST /contracts       GET  /contracts/{id}       │
 proposal ──▶│ POST /…/proposals     POST /…/{ver}/accept       │
             │                                                  │
             └─────────────────────────┬────────────────────────┘
                                       │
                                   PostgreSQL
-                       (software, contracts, *_versions)
+                         (parts, contracts, *_versions)
 ```
 
 ## Features
@@ -37,10 +39,10 @@ proposal ──▶│ POST /…/proposals     POST /…/{ver}/accept       │
   refuses to interpret what a bump *means* — only the caller knows.
 - **RC pre-release support** (`1.3.0-rc1`, `1.3.0-rc2`, …) on contract
   and template proposals, with full history preserved on acceptance.
-- **Templates are versioned and proposable too.** The `software` and
-  `contract` markdown templates served by the API live in Postgres
-  alongside everything else, mutated through the same propose/accept
-  flow.
+- **Templates are versioned and proposable too.** The `software`,
+  `container`, and `contract` markdown templates served by the API
+  live in Postgres alongside everything else, mutated through the
+  same propose/accept flow.
 - **First-class migrations.** Alembic with autogenerate, a `MetaData`
   naming convention so diffs stay reproducible, and a CI policy of
   running `alembic check` against the model.
@@ -69,7 +71,7 @@ DATABASE_URL='postgresql+asyncpg://titan:titan@localhost:5432/titan_tyr' \
 ```sh
 # Smoke test (no auth required — the /health endpoint is the orchestrator probe)
 curl http://localhost:8000/health
-# → {"status":"ok","version":"0.8.0","db":"reachable"}
+# → {"status":"ok","version":"0.9.0","db":"reachable"}
 
 # Sanity check on the auth path
 curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/software
@@ -78,7 +80,7 @@ curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/software
 ## Run from Docker
 
 ```sh
-docker build -t titan-tyr:0.8.0 .
+docker build -t titan-tyr:0.9.0 .
 ```
 
 The image runs as a non-root `app` user, exposes port 8000, and bundles
@@ -90,12 +92,12 @@ step *before* the API container starts:
 # 1. Apply migrations (one-shot)
 docker run --rm \
   -e DATABASE_URL='postgresql+asyncpg://titan:titan@host.docker.internal:5432/titan_tyr' \
-  titan-tyr:0.8.0 alembic upgrade head
+  titan-tyr:0.9.0 alembic upgrade head
 
 # 2. Serve the API
 docker run --rm -p 8000:8000 \
   -e DATABASE_URL='postgresql+asyncpg://titan:titan@host.docker.internal:5432/titan_tyr' \
-  titan-tyr:0.8.0
+  titan-tyr:0.9.0
 ```
 
 (In Compose / Kubernetes, the migrate step is a `depends_on` job or an
@@ -134,7 +136,7 @@ module directly. To use an existing Postgres instead, set
 
 ```
 src/                FastAPI app, ORM models, schemas, routers, semver
-alembic/            Migrations (0001 = schema, 0002 = templates + seed)
+alembic/            Migrations (0001 = schema, 0002 = templates + seed, 0005 = software→part + subtype)
 tests/              Pytest + testcontainers
 docs/               getting-started, api reference (also see DESIGN.md)
 ```
@@ -157,21 +159,22 @@ auto-available in Claude Code when run from this repo. Invoke with
 `/<skill-name>`. They expect `TITAN_TYR_URL` (and optionally
 `TITAN_TYR_TOKEN`) in the environment.
 
-- `/register-software` — walk through registering a software node
-  against a running titan-tyr.
+- `/register-part` — walk through registering a part (software or
+  container subtype) against a running titan-tyr. Branches on subtype
+  and fetches the matching template.
 - `/register-contract` — register a new interface contract between two
-  software nodes already in titan-tyr. Picks the owner and counterparty
-  via `?match=`, fills the contract template, POSTs to `/contracts`.
-- `/update-software` — append a new version to a registered software
-  node. Detects template-version drift and helps migrate.
-- `/learn-software` — look up everything titan-tyr knows about a
-  registered software node (description, ticket-filing target,
-  contracts). Read-only; returns structured JSON.
-- `/find-software` — resolve a colloquial label or partial name
-  ("front end", "billing") to a canonical software slug via
-  `GET /software?match=`. Read-only.
+  parts already in titan-tyr. Picks the owner and counterparty via
+  `?match=`, fills the contract template, POSTs to `/contracts`.
+- `/update-part` — append a new version to a registered part. Detects
+  template-version drift and helps migrate.
+- `/learn-part` — look up everything titan-tyr knows about a
+  registered part (description, ticket-filing target, contracts).
+  Read-only; returns structured JSON.
+- `/find-part` — resolve a colloquial label or partial name
+  ("front end", "billing") to a canonical part slug via
+  `GET /parts?match=`. Read-only.
 - `/propose-template-change` — draft and POST a proposal to update the
-  `software` or `contract` template. Does not auto-accept.
+  `software`, `container`, or `contract` template. Does not auto-accept.
 - `/propose-contract-change` — draft and POST a proposal to amend an
   existing interface contract. Helps pick the contract, opens the
   active body for in-place editing, shows a unified diff. Does not
@@ -179,5 +182,5 @@ auto-available in Claude Code when run from this repo. Invoke with
 - `/accept-template-proposal` — promote an open template proposal to
   the new active version. Mutates what every caller sees.
 - `/accept-contract-proposal` — promote an open contract proposal to
-  the new active version. Helps pick the contract (by id, by software,
+  the new active version. Helps pick the contract (by id, by part name,
   or from a list), shows a unified diff vs the active body.

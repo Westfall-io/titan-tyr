@@ -1,18 +1,18 @@
 ---
-name: find-software
-description: Resolve a colloquial label or partial name to a canonical software slug registered with titan-tyr. Use when an agent or user knows the software by a nickname ("front end", "billing", "前端") but not the canonical slug. Wraps GET /software?match= and returns structured JSON. Read-only. Distinct from /learn-software (which needs the slug already and returns the full description + contracts).
+name: find-part
+description: Resolve a colloquial label or partial name to a canonical part slug registered with titan-tyr. Use when an agent or user knows the part by a nickname ("front end", "billing", "前端") but not the canonical slug. Wraps GET /parts?match= and returns structured JSON. Read-only. Distinct from /learn-part (which needs the slug already and returns the full description + contracts).
 ---
 
-# find-software
+# find-part
 
 You are resolving a colloquial label, partial name, or alias to a
-canonical software slug registered with titan-tyr. The endpoint is
-`GET /software?match=<query>`, which substring-matches case-insensitively
-against each software's `name` AND its `aliases`.
+canonical part slug registered with titan-tyr. The endpoint is
+`GET /parts?match=<query>`, which substring-matches case-insensitively
+against each part's `name` AND its `aliases`.
 
 This skill is **read-only and non-mutating**. It is the discovery
 front-end for the rest of the titan-tyr skill family — once it returns
-a slug, hand off to `/learn-software` for the full description.
+a slug, hand off to `/learn-part` for the full description.
 
 ## Server location
 
@@ -93,7 +93,7 @@ explicitly so the caller can branch:
     }
   ],
   "truncated": false,
-  "hint": "Multiple matches. Pick one and call /learn-software target=<name> for the full description and contracts."
+  "hint": "Multiple matches. Pick one and call /learn-part target=<name> for the full description and contracts."
 }
 ```
 
@@ -105,25 +105,25 @@ When `match_count == 0`, return:
   "query": "<original-query>",
   "match_count": 0,
   "results": [],
-  "hint": "No software matches '<query>' by name or alias. Try a shorter substring, or call /register-software to add it."
+  "hint": "No software matches '<query>' by name or alias. Try a shorter substring, or call /register-part to add it."
 }
 ```
 
-When `match_count == 1`, the hint becomes "Single match. Call /learn-software target=<name> for the full description and contracts."
+When `match_count == 1`, the hint becomes "Single match. Call /learn-part target=<name> for the full description and contracts."
 
 `truncated` is `true` if `next` came back non-null (more than 100 hits
 on the first page). v2 would page; v1 caps and signals.
 
 ## Caller-side composition notes
 
-`/find-software` is meant to be called from another agent's context.
+`/find-part` is meant to be called from another agent's context.
 Common composition:
 
 1. Agent has "file a bug against the front end."
-2. Calls `/find-software query="front end"`.
+2. Calls `/find-part query="front end"`.
 3. Reads `results[0].name` (or disambiguates if `match_count > 1`).
-4. Calls `/learn-software target=<that-name>` for full context.
-5. Acts on `ticket_filing.resolved_to` from learn-software.
+4. Calls `/learn-part target=<that-name>` for full context.
+5. Acts on `ticket_filing.resolved_to` from learn-part.
 
 The skill itself does not print prose summaries or ask the user to
 disambiguate — that's the calling agent's job. The structured JSON
@@ -148,4 +148,4 @@ return value is the contract.
   user queries containing them are matched literally — no special
   escaping needed here.
 - For the inverse direction ("I have the canonical slug, give me
-  everything"), call `/learn-software` instead.
+  everything"), call `/learn-part` instead.

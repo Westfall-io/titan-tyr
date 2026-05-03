@@ -1,18 +1,18 @@
 ---
 name: register-contract
-description: Register a new interface contract between two software nodes already in titan-tyr. Use when the user wants to create the binding agreement for how one piece of software talks to another — e.g. "register a contract from X to Y", "we need a contract between the API and the UI", "create the X↔Y interface contract". Picks the two software endpoints (with ?match= autocomplete), fetches the contract template, fills it, and POSTs to /contracts. Initial creation is `active` immediately — no propose/accept dance for v1.0.0; that's by design.
+description: Register a new interface contract between two parts already in titan-tyr. Use when the user wants to create the binding agreement for how one part talks to another — e.g. "register a contract from X to Y", "we need a contract between the API and the UI", "create the X↔Y interface contract". Picks the two part endpoints (with ?match= autocomplete), fetches the contract template, fills it, and POSTs to /contracts. Initial creation is `active` immediately — no propose/accept dance for v1.0.0; that's by design.
 ---
 
 # register-contract
 
 You are helping the user register a new interface contract — the
-binding agreement between two software nodes describing how one talks
-to the other. titan-tyr stores software as nodes and contracts as
+binding agreement between two parts describing how one talks
+to the other. titan-tyr stores parts as nodes and contracts as
 directed edges. This skill walks through the **edge creation** path:
 `POST /contracts`.
 
-Both software endpoints must already exist as registered nodes — if
-either is missing, hand off to `/register-software` first. Only one
+Both part endpoints must already exist as registered nodes — if
+either is missing, hand off to `/register-part` first. Only one
 contract can exist per directed pair (`A → B`); subsequent changes go
 through `/propose-contract-change` and `/accept-contract-proposal`.
 
@@ -51,31 +51,31 @@ curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
 
 ### 2. Resolve the two software endpoints
 
-`POST /contracts` requires `owner_software` and `counterparty_software`
-— both as canonical slugs of registered software nodes. Validate each
+`POST /contracts` requires `owner_part` and `counterparty_part`
+— both as canonical slugs of registered parts. Validate each
 against the live catalog using `?match=` so typos and colloquial labels
 get caught at this step, not later as a `404`.
 
 For each side (owner, then counterparty):
 
-- If the user gave a canonical slug, `GET /software/{name}` to confirm
+- If the user gave a canonical slug, `GET /parts/{name}` to confirm
   it exists. `404` → branch to "not registered" handling below.
 - If the user gave a colloquial label (`front end`, `payments`,
-  `mimiron`), use `GET /software?match=<label>`. Render hits as
+  `mimiron`), use `GET /parts?match=<label>`. Render hits as
   `<name> v<version> aliases=[...]` and ask which one. If exactly one
   hit, suggest it as the default.
 - If the user only described one side ("a contract for the UI"), help
   them pick the other interactively.
 
 **"Not registered" handling.** If either side doesn't exist as a
-software node, **stop**: the API will `404` and you can't proceed.
-Point the user at `/register-software` to create the missing node
+part, **stop**: the API will `404` and you can't proceed.
+Point the user at `/register-part` to create the missing node
 first, then come back.
 
 ### 3. Confirm direction
 
 Direction is meaningful: contracts are stored as a **directed** edge
-from `owner_software` to `counterparty_software`. The convention:
+from `owner_part` to `counterparty_part`. The convention:
 
 - **Owner** is typically the side that defines / publishes the
   interface — for an HTTP API, that's the server.
@@ -144,7 +144,7 @@ the human / agent doing the fill, not content to save. Read them,
 follow them, then strip them from the body you POST.
 
 Generic fill rules — these apply regardless of what's in the template
-(identical to `/register-software`):
+(identical to `/register-part`):
 
 1. **`<...>` placeholders are content slots.** Replace each with real
    content and drop the angle brackets.
@@ -179,7 +179,7 @@ that's a signal to `/propose-template-change` instead.
 ### 7. Preview before submitting
 
 Show the user **the full filled markdown body**, the chosen
-`owner_software` / `counterparty_software` (with direction restated),
+`owner_part` / `counterparty_part` (with direction restated),
 and the version you intend to submit (`1.0.0` unless the user has a
 reason to start higher). Ask "ready to register?" Do not POST until
 the user confirms. If they want changes, iterate — re-show after each
@@ -201,8 +201,8 @@ mkdir -p .scratch
 python3 -c "
 import json, pathlib
 print(json.dumps({
-    'owner_software': 'titan-tyr',
-    'counterparty_software': 'titan-mimiron',
+    'owner_part': 'titan-tyr',
+    'counterparty_part': 'titan-mimiron',
     'markdown': pathlib.Path('.scratch/contract-body.md').read_text(),
     'version': '1.0.0',
 }))
@@ -246,9 +246,9 @@ needs to drop the dev-server proxy"), surface them — don't auto-do.
 | Status | Meaning                                                                | What to do                                                                  |
 | ------ | ---------------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | `401`  | Bad bearer token                                                       | Stop. Tell user `TITAN_TYR_TOKEN` is wrong.                                 |
-| `404`  | Either `owner_software` or `counterparty_software` is unknown          | Re-resolve in step 2; route to `/register-software` if truly missing.       |
+| `404`  | Either `owner_part` or `counterparty_part` is unknown          | Re-resolve in step 2; route to `/register-part` if truly missing.       |
 | `409`  | A contract already exists in this direction                            | Stop. Show the existing `contract_id` (re-run the search from step 4) and route to `/propose-contract-change`. |
-| `422`  | `owner_software == counterparty_software`, malformed `version`, or either software reference fails the slug pattern | Fix and retry. `version` is plain `MAJOR.MINOR.PATCH`. |
+| `422`  | `owner_part == counterparty_part`, malformed `version`, or either software reference fails the slug pattern | Fix and retry. `version` is plain `MAJOR.MINOR.PATCH`. |
 | `500+` | Server problem                                                         | Print response body verbatim. Do not retry.                                 |
 
 ## Notes
@@ -262,7 +262,7 @@ needs to drop the dev-server proxy"), surface them — don't auto-do.
   contract-mutation endpoint where the result is `active` without an
   acceptance step. The propose/accept flow only exists for subsequent
   versions of an existing contract.
-- **No `owner` field beyond `owner_software`.** There is no per-caller
+- **No `owner` field beyond `owner_part`.** There is no per-caller
   identity in this API yet (the bearer password is a placeholder; real
   auth is deferred). Put team / individual ownership info in the
   contract markdown body if it matters to humans, not in a JSON field.

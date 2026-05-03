@@ -1,7 +1,7 @@
 # titan-tyr — Design
 
 **Repository:** titan-tyr
-**Role:** REST API for registering software, registering interface contracts between software, and proposing changes to those contracts.
+**Role:** REST API for registering parts, registering interface contracts between parts, and proposing changes to those contracts.
 **Stack:** FastAPI + PostgreSQL.
 
 ---
@@ -9,13 +9,15 @@
 ## Purpose
 
 titan-tyr is a graph database, exposed as a REST API, that records the
-software running in a system and the interface contracts between those
-pieces of software. Callers register software, register interface
-contracts that describe how one piece of software interfaces with
-another, and propose changes to contracts that already exist.
+parts running in a system and the interface contracts between them.
+Callers register parts (software repos, running containers), register
+interface contracts that describe how one part interfaces with another,
+and propose changes to contracts that already exist.
 
-- **Nodes** — registered software.
-- **Edges** — interface contracts between two software nodes.
+- **Nodes** — registered parts. Each part has a `subtype` discriminator
+  (`software` for a codebase / deployable boundary, `container` for a
+  running instance of an image).
+- **Edges** — interface contracts between two parts.
 
 Both nodes and edges carry a markdown body. All markdown is **versioned
 append-only** in the database. By default, only the latest version is
@@ -34,9 +36,9 @@ model will land in a future capability update.
 
 | Concept       | Stored as                                          | Notes                                               |
 | ------------- | -------------------------------------------------- | --------------------------------------------------- |
-| Software node | row in `software` + N `software_versions`          | Identified by unique name.                          |
-| Contract edge | row in `contracts` + N `contract_versions`         | Directed: `owner_software → counterparty_software`. |
-| Template      | row in `templates` + N `template_versions`         | Two singletons keyed by `kind ∈ {software, contract}`. Served by `GET /templates/{kind}`. |
+| Part          | row in `parts` + N `part_versions`                 | Identified by unique name. Carries a `subtype` discriminator (`software` or `container`). |
+| Contract edge | row in `contracts` + N `contract_versions`         | Directed: `owner_part → counterparty_part`.         |
+| Template      | row in `templates` + N `template_versions`         | Three singletons keyed by `kind ∈ {software, container, contract}`. Served by `GET /templates/{kind}`. |
 | Proposal      | a `contract_versions` or `template_versions` row with `status='proposal'` | Lives on its parent until accepted or superseded.   |
 
 ### Schema
@@ -44,33 +46,34 @@ model will land in a future capability update.
 ```sql
 CREATE EXTENSION IF NOT EXISTS pgcrypto;  -- gen_random_uuid()
 
-CREATE TABLE software (
+CREATE TABLE parts (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name        TEXT NOT NULL UNIQUE,
+  subtype     TEXT NOT NULL CHECK (subtype IN ('software', 'container')),
   repo_uri    TEXT NOT NULL,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE software_versions (
+CREATE TABLE part_versions (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  software_id   UUID NOT NULL REFERENCES software(id) ON DELETE CASCADE,
+  part_id       UUID NOT NULL REFERENCES parts(id) ON DELETE CASCADE,
   version_major INT  NOT NULL CHECK (version_major >= 0),
   version_minor INT  NOT NULL CHECK (version_minor >= 0),
   version_patch INT  NOT NULL CHECK (version_patch >= 0),
   markdown      TEXT NOT NULL,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (software_id, version_major, version_minor, version_patch)
+  UNIQUE (part_id, version_major, version_minor, version_patch)
 );
-CREATE INDEX ON software_versions
-  (software_id, version_major DESC, version_minor DESC, version_patch DESC);
+CREATE INDEX ON part_versions
+  (part_id, version_major DESC, version_minor DESC, version_patch DESC);
 
 CREATE TABLE contracts (
-  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  owner_software_id        UUID NOT NULL REFERENCES software(id),
-  counterparty_software_id UUID NOT NULL REFERENCES software(id),
-  created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (owner_software_id, counterparty_software_id),
-  CHECK  (owner_software_id <> counterparty_software_id)
+  id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_part_id        UUID NOT NULL REFERENCES parts(id),
+  counterparty_part_id UUID NOT NULL REFERENCES parts(id),
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (owner_part_id, counterparty_part_id),
+  CHECK  (owner_part_id <> counterparty_part_id)
 );
 
 CREATE TABLE contract_versions (
@@ -97,7 +100,7 @@ CREATE INDEX ON contract_versions (contract_id, status);
 
 CREATE TABLE templates (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  kind        TEXT NOT NULL UNIQUE CHECK (kind IN ('software', 'contract')),
+  kind        TEXT NOT NULL UNIQUE CHECK (kind IN ('software', 'container', 'contract')),
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -124,11 +127,14 @@ CREATE INDEX ON template_versions
 CREATE INDEX ON template_versions (template_id, status);
 ```
 
-The two `templates` rows (`kind='software'` and `kind='contract'`) are
-seeded by the initial-templates migration. The `template_versions`
-schema is structurally identical to `contract_versions` — same
-proposal/RC machinery, same accept-time invariants — because templates
-are mutated through the same propose-then-accept flow.
+The three `templates` rows (`kind='software'`, `kind='container'`,
+`kind='contract'`) are seeded by the templates migrations
+(`software` + `contract` in `0002_templates`, `container` in
+`0005_software_to_part_subtype` alongside the table rename). The
+`template_versions` schema is structurally identical to
+`contract_versions` — same proposal/RC machinery, same accept-time
+invariants — because templates are mutated through the same
+propose-then-accept flow.
 
 `status` is a `TEXT` column with a `CHECK` constraint, not a Postgres
 `ENUM`. The set of allowed values is small today (`active`, `proposal`)
@@ -145,7 +151,7 @@ Versions are **caller-supplied semver** of the form `MAJOR.MINOR.PATCH`,
 stored as three integer columns. Convention follows
 [semver.org](https://semver.org/):
 
-- **MAJOR** — breaking change to the contract or software interface.
+- **MAJOR** — breaking change to the contract or part interface.
 - **MINOR** — backwards-compatible addition.
 - **PATCH** — backwards-compatible fix or clarification (typos,
   rewording, examples).
@@ -156,14 +162,14 @@ write. The server validates only the mechanics:
 
 1. **Format** — must match `^\d+\.\d+\.\d+(-rc\d+)?$`. The `-rcN`
    suffix is allowed only on contract proposals (see Pre-release
-   versions below); software versions and stable contract versions
+   versions below); part versions and stable contract versions
    must be plain `MAJOR.MINOR.PATCH`.
 2. **Strictly greater than the current latest** — including both
    `active` and `proposal` rows for that parent. Comparison is semver
    tuple ordering: `(major, minor, patch)` first, then a stable
    version is greater than any pre-release at the same triple
    (`1.3.0 > 1.3.0-rc2 > 1.3.0-rc1`).
-3. **Initial version** — if omitted on `POST /software` or
+3. **Initial version** — if omitted on `POST /parts` or
    `POST /contracts`, defaults to `1.0.0`. May be overridden (e.g. to
    `0.1.0` for a pre-stable release).
 
@@ -178,7 +184,7 @@ Contract **proposals** may carry a `-rcN` suffix
 version before promoting it to a stable active release. This is the
 only place the suffix is allowed:
 
-- **Software versions** — never carry a suffix.
+- **Part versions** — never carry a suffix.
 - **Active contract versions** — never carry a suffix
   (enforced by `CHECK (status = 'proposal' OR prerelease IS NULL)`).
 - **Contract proposals** — may carry `-rcN` or be a plain
@@ -193,13 +199,13 @@ history is preserved indefinitely. See the accept endpoint below.
 from proposal-specific endpoints (`POST /contracts/{id}/proposals`,
 `GET /contracts/{id}/proposals`, `POST /contracts/{id}/proposals/{version}/accept`).
 All other endpoints — `GET /contracts/{id}`, `GET /contracts?…`,
-`GET /software/{name}/contracts` — return only stable versions and
+`GET /parts/{name}/contracts` — return only stable versions and
 never expose a `-rcN` suffix in any response field.
 
 ### "Latest" semantics
 
-- **Software** — row with the highest `(version_major, version_minor,
-  version_patch)` per `software_id`.
+- **Part** — row with the highest `(version_major, version_minor,
+  version_patch)` per `part_id`.
 - **Contract (active)** — highest version among `contract_versions`
   rows with `status='active'`. There is always at most one, by
   construction. Active rows never carry a `prerelease`.
@@ -235,9 +241,11 @@ otherwise noted. Every endpoint requires the bearer password above.
 ### Templates
 
 Templates are stored in Postgres as versioned markdown, exactly like
-contracts — same propose/accept/RC machinery. There are exactly two
-templates, identified by `kind ∈ {software, contract}`. The initial
-v1.0.0 of each is seeded by the templates migration.
+contracts — same propose/accept/RC machinery. There are three
+templates, identified by `kind ∈ {software, container, contract}`.
+The initial v1.0.0 of `software` and `contract` is seeded by
+`0002_templates`; `container` is seeded by
+`0005_software_to_part_subtype` alongside the table rename.
 
 #### `GET /templates/{kind}` — latest active template
 
@@ -245,7 +253,7 @@ Returns the latest stable active version as `text/markdown`. RC
 suffixes are never returned here — same visibility rule that contracts
 follow.
 
-`404` if `kind` is not one of `software`, `contract`.
+`404` if `kind` is not one of `software`, `container`, `contract`.
 
 #### `POST /templates/{kind}/proposals` — propose a change
 
@@ -300,41 +308,47 @@ Response `200`:
 }
 ```
 
-### Software
+### Parts
 
-#### `POST /software` — register a new software node
+#### `POST /parts` — register a new part
 
 Request:
 ```json
 {
   "name":     "payments-service",
+  "subtype":  "software",
   "repo_uri": "https://github.com/example/payments-service",
   "markdown": "# payments-service\n...",
   "version":  "1.0.0"
 }
 ```
 
-`version` is optional and defaults to `"1.0.0"`.
+`subtype` is required (`software` or `container`) and is immutable
+after registration. `version` is optional and defaults to `"1.0.0"`.
 
 Response `201`:
 ```json
 {
   "id":      "12c3a4b5-...",
   "name":    "payments-service",
+  "subtype": "software",
   "version": "1.0.0"
 }
 ```
 
-Atomic: inserts `software` and `software_versions` in one transaction.
-`409 Conflict` if `name` is already taken.
+Atomic: inserts `parts` and `part_versions` in one transaction.
+`409 Conflict` if `name` is already taken (across all subtypes — names
+are one namespace).
 
-#### `GET /software/{name}` — latest description
+#### `GET /parts/{name}` — latest description
 
-Returns software metadata + the latest `software_versions` row.
+Returns part metadata + the latest `part_versions` row. `subtype` is
+included so callers know which template the body conforms to.
 ```json
 {
   "id":         "12c3a4b5-...",
   "name":       "payments-service",
+  "subtype":    "software",
   "repo_uri":   "https://github.com/example/payments-service",
   "version":    "2.1.0",
   "markdown":   "# payments-service\n...",
@@ -342,7 +356,7 @@ Returns software metadata + the latest `software_versions` row.
 }
 ```
 
-#### `PUT /software/{name}` — append a new description version
+#### `PUT /parts/{name}` — append a new description version
 
 Request:
 ```json
@@ -353,7 +367,8 @@ Request:
 ```
 
 `version` is required and must be strictly greater than the latest
-existing version for this software (semver tuple comparison).
+existing version for this part (semver tuple comparison). `subtype`
+cannot be changed via PUT.
 
 Errors:
 - `409 Conflict` if `version` is not strictly greater than the latest.
@@ -364,32 +379,33 @@ Response `200`:
 { "name": "payments-service", "version": "2.1.0" }
 ```
 
-#### `GET /software/{name}/contracts` — all contracts touching this software
+#### `GET /parts/{name}/contracts` — all contracts touching this part
 
-Returns every contract where this software is either owner or
-counterparty, each with its latest active version.
+Returns every contract where this part is either owner or
+counterparty, each with its latest active version. Paginated.
+**Markdown is not included** — follow up with `GET /contracts/{id}`
+for the body.
 
 ```json
 {
-  "software": "payments-service",
-  "contracts": [
+  "part": "payments-service",
+  "results": [
     {
-      "id":           "ab12cd34-...",
+      "contract_id":  "ab12cd34-...",
       "owner":        "payments-service",
       "counterparty": "orders-service",
       "version":      "1.2.0",
-      "markdown":     "...",
       "updated_at":   "2026-04-15T09:14:00Z"
     },
     {
-      "id":           "cd34ef56-...",
+      "contract_id":  "cd34ef56-...",
       "owner":        "ledger-service",
       "counterparty": "payments-service",
       "version":      "1.0.0",
-      "markdown":     "...",
       "updated_at":   "2026-04-02T11:00:00Z"
     }
-  ]
+  ],
+  "next": null
 }
 ```
 
@@ -400,10 +416,10 @@ counterparty, each with its latest active version.
 Request:
 ```json
 {
-  "owner_software":        "payments-service",
-  "counterparty_software": "orders-service",
-  "markdown":              "...",
-  "version":               "1.0.0"
+  "owner_part":        "payments-service",
+  "counterparty_part": "orders-service",
+  "markdown":          "...",
+  "version":           "1.0.0"
 }
 ```
 
@@ -423,12 +439,12 @@ Response `201`:
 Errors:
 - `409 Conflict` if a contract already exists for that ordered pair.
   Use proposals to change it.
-- `404 Not Found` if either software is unknown.
+- `404 Not Found` if either part is unknown.
 
-#### `GET /contracts?owner={a}&counterparty={b}` — search contracts between two software
+#### `GET /contracts?owner={a}&counterparty={b}` — search contracts between two parts
 
 Returns the active version of any contract that exists between the two
-named pieces of software, in either direction. Zero, one, or two results.
+named parts, in either direction. Zero, one, or two results.
 
 ```json
 {
@@ -557,19 +573,22 @@ src/
   config.py           Settings via pydantic-settings
   db.py               Async SQLAlchemy engine + session factory + MetaData naming convention
   auth.py             Bearer-password dependency (placeholder)
-  models.py           SQLAlchemy ORM models (software, contracts, templates, *_versions)
+  models.py           SQLAlchemy ORM models (parts, contracts, templates, *_versions)
   schemas.py          Pydantic request/response models
   versioning.py       Semver parse / compare / format
   routers/
-    software.py
+    parts.py
     contracts.py
     proposals.py
     templates.py      Templates + template proposals
 alembic/
   env.py              Wired to src.models.Base.metadata for autogenerate
   versions/
-    0001_initial.py   software + contracts + *_versions
-    0002_templates.py templates + template_versions, seeded with v1.0.0
+    0001_initial.py                       software + contracts + *_versions
+    0002_templates.py                     templates + template_versions, seeded with v1.0.0 of software + contract
+    0003_software_issue_tracker_uri.py    optional issue_tracker_uri on software
+    0004_software_aliases.py              aliases TEXT[] on software
+    0005_software_to_part_subtype.py      rename software→parts, add subtype, seed container template v1.0.0
 alembic.ini
 tests/
 pyproject.toml

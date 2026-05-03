@@ -1,6 +1,6 @@
 ---
 name: propose-contract-change
-description: Propose a change to an existing titan-tyr interface contract. Use when the user wants to amend the agreement between two software nodes — e.g. "propose a change to the X↔Y contract", "draft a contract update", "we need to add a CORS obligation". Helps pick the contract (by id, by software, or from a list), opens the active body for in-place editing, shows a unified diff, picks a version, and POSTs to /contracts/{contract_id}/proposals. Does NOT accept the proposal — acceptance is a deliberate separate step via /accept-contract-proposal.
+description: Propose a change to an existing titan-tyr interface contract. Use when the user wants to amend the agreement between two parts — e.g. "propose a change to the X↔Y contract", "draft a contract update", "we need to add a CORS obligation". Helps pick the contract (by id, by part name, or from a list), opens the active body for in-place editing, shows a unified diff, picks a version, and POSTs to /contracts/{contract_id}/proposals. Does NOT accept the proposal — acceptance is a deliberate separate step via /accept-contract-proposal.
 ---
 
 # propose-contract-change
@@ -57,14 +57,14 @@ gave you:
 
   ```sh
   curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
-    "$TITAN_TYR_URL/software/{name}/contracts?limit=100"
+    "$TITAN_TYR_URL/parts/{name}/contracts?limit=100"
   ```
 
   Each entry has `contract_id`, `owner`, `counterparty`, `version`,
   `updated_at`. Render them as a numbered list (`owner → counterparty
   v<version>`) and ask which one. If there's only one, suggest it as
   the default. `404` → unknown software; stop and offer
-  `/find-software`.
+  `/find-part`.
 
 - **They gave nothing.** List all contracts (paginated):
 
@@ -253,12 +253,12 @@ cross-team proposal with a comment on the counterparty's repo.
 **Skip this step only if** the user is operating both sides of the
 contract solo (one human, one repo for both). Default is to notify.
 
-a. **Identify the counterparty repo.** The counterparty software node's
+a. **Identify the counterparty repo.** The counterparty part's
    `repo_uri` is a GitHub URL — fetch:
 
    ```sh
    curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
-     "$TITAN_TYR_URL/software/<counterparty_name>" \
+     "$TITAN_TYR_URL/parts/<counterparty_name>" \
      | python3 -c "import json,sys; print(json.load(sys.stdin)['repo_uri'])"
    ```
 
