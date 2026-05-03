@@ -5,9 +5,11 @@ description: Look up everything titan-tyr knows about a registered part — its 
 
 # learn-part
 
-You are answering an agent's "tell me about software X" question by
-pulling everything titan-tyr knows about it: description, repo,
-ticket-filing target, version, and the contracts that touch it.
+You are answering an agent's "tell me about part X" question by
+pulling everything titan-tyr knows about it: subtype, description,
+repo, ticket-filing target, version, and the contracts that touch it.
+Works for both `software` and `container` part subtypes — the subtype
+discriminator is preserved in the response so callers can branch on it.
 
 This skill is **read-only and non-mutating**. It composes existing
 titan-tyr GET endpoints into a single structured response so a
@@ -33,8 +35,8 @@ Don't guess. Don't default to localhost silently.
 
 | Input    | Required | Purpose                                                                                  |
 | -------- | -------- | ---------------------------------------------------------------------------------------- |
-| `target` | yes      | Canonical software name (slug) to look up.                                               |
-| `caller` | no       | The software the requesting agent represents. When provided, contracts are filtered to caller↔target. When absent, every contract touching `target` is returned. |
+| `target` | yes      | Canonical part name (slug) to look up. May be a `software` or `container` part.         |
+| `caller` | no       | The part the requesting agent represents. When provided, contracts are filtered to caller↔target. When absent, every contract touching `target` is returned. |
 
 `/learn-part` does **not** do interactive discovery. If the agent
 doesn't know which canonical name to ask for, call `/find-part`
@@ -112,8 +114,9 @@ precedence.
 ```json
 {
   "status": "found",
-  "software": {
+  "part": {
     "name": "<target>",
+    "subtype": "software",
     "repo_uri": "...",
     "issue_tracker_uri": null,
     "aliases": ["payments", "billing"],
@@ -126,6 +129,7 @@ precedence.
       "contract_id": "...",
       "owner": "...",
       "counterparty": "...",
+      "subtype": "interaction",
       "version": "1.0.0",
       "updated_at": "...",
       "markdown": "..."
@@ -141,8 +145,17 @@ precedence.
 
 Field notes:
 
-- `software.markdown` is the full body of the latest version (not the
+- `part.subtype` is the discriminator (`software` | `container`) —
+  branch on it when the calling agent's behavior depends on whether
+  the target is a codebase or a running instance. E.g. binding
+  contracts only make sense as `container → software`; filing a bug
+  against a codebase is appropriate for `software` but for `container`
+  the right action is usually to find the underlying software part
+  via its inbound `binding` contract.
+- `part.markdown` is the full body of the latest version (not the
   listing summary).
+- `contracts[].subtype` is the contract subtype (`interaction` |
+  `binding`).
 - `contracts[].markdown` is the full body of each contract's latest
   active version.
 - `truncated` is `true` when there were more contracts than the v1
@@ -173,7 +186,7 @@ the agent sees what *is* there. Otherwise return an empty list.
     {"name": "admin-ui", "aliases": ["front end"]},
     {"name": "user-ui", "aliases": []}
   ],
-  "hint": "No software named '<target>' is registered. The closest matches by name or alias are listed in `suggestions`. Pick one and call /learn-part again, or call /register-part to add it."
+  "hint": "No part named '<target>' is registered. The closest matches by name or alias are listed in `suggestions`. Pick one and call /learn-part again, or call /register-part to add it."
 }
 ```
 
@@ -190,17 +203,18 @@ A common composition:
 1. Calling agent has a request like "file a bug against payments-service
    about the timeout we observed."
 2. Calls `/learn-part target=payments-service caller=<self>`.
-3. Reads `ticket_filing.resolved_to` to know where to file.
-4. Reads `contracts` to understand the interface that observed the
+3. Reads `part.subtype` to confirm it's the codebase, not a deployment.
+4. Reads `ticket_filing.resolved_to` to know where to file.
+5. Reads `contracts` to understand the interface that observed the
    timeout.
-5. Reads `software.markdown` if it needs the broader context.
+6. Reads `part.markdown` if it needs the broader context.
 
 ## Error handling
 
 | Status | Meaning                                                     | What to do                                                                  |
 | ------ | ----------------------------------------------------------- | --------------------------------------------------------------------------- |
 | `401`  | Bad bearer token                                            | Stop. Tell user `TITAN_TYR_TOKEN` is wrong.                                 |
-| `404`  | Target software not registered                              | Branch to step 6 (substring suggestions).                                   |
+| `404`  | Target part not registered                                  | Branch to step 6 (substring suggestions).                                   |
 | `5xx`  | Server problem on any sub-call                              | Stop. Print response body verbatim.                                         |
 
 ## Notes
