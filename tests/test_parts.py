@@ -650,7 +650,7 @@ class TestSubtype:
             "/parts",
             json={
                 "name": "bad-subtype",
-                "subtype": "image",  # Image is deferred per #23
+                "subtype": "pod",  # Pod is deferred per #36
                 "repo_uri": "u",
                 "markdown": "m",
             },
@@ -682,7 +682,7 @@ class TestSubtype:
         assert "f-soft" not in names
 
     async def test_list_filter_unknown_subtype_rejected(self, client):
-        r = await client.get("/parts?subtype=image")
+        r = await client.get("/parts?subtype=pod")
         assert r.status_code == 422
 
     async def test_subtype_not_mutable_via_put(self, client):
@@ -737,3 +737,81 @@ class TestContainerSubtype:
             },
         )
         assert r.status_code == 201
+
+
+class TestImageSubtype:
+    async def test_register_image(self, client):
+        r = await client.post(
+            "/parts",
+            json={
+                "name": "payments-image",
+                "subtype": "image",
+                "repo_uri": "https://example.com/repo",
+                "markdown": "# payments-image\n\nBuilt artifact.",
+            },
+        )
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert body["subtype"] == "image"
+
+    async def test_list_filter_subtype_image(self, client):
+        await _register(client, name="i-soft", subtype="software")
+        await client.post(
+            "/parts",
+            json={
+                "name": "i-img",
+                "subtype": "image",
+                "repo_uri": "u",
+                "markdown": "m",
+            },
+        )
+        img_only = (await client.get("/parts?subtype=image")).json()
+        names = {e["name"] for e in img_only["results"]}
+        assert "i-img" in names
+        assert "i-soft" not in names
+
+    async def test_image_chain_software_to_image_to_container(self, client):
+        # Full builds-from + instantiates chain: a Software Part builds
+        # into an Image Part which instantiates as a Container Part.
+        # Both connection arms are unblocked by #35.
+        await _register(client, name="payments-service", subtype="software")
+        await client.post(
+            "/parts",
+            json={
+                "name": "payments-image",
+                "subtype": "image",
+                "repo_uri": "u",
+                "markdown": "m",
+            },
+        )
+        await client.post(
+            "/parts",
+            json={
+                "name": "payments-prod",
+                "subtype": "container",
+                "repo_uri": "u",
+                "markdown": "m",
+            },
+        )
+        r1 = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "payments-service",
+                "counterparty_part": "payments-image",
+                "subtype": "connection",
+                "connection_type": "builds-from",
+                "markdown": "m",
+            },
+        )
+        assert r1.status_code == 201, r1.text
+        r2 = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "payments-image",
+                "counterparty_part": "payments-prod",
+                "subtype": "connection",
+                "connection_type": "instantiates",
+                "markdown": "m",
+            },
+        )
+        assert r2.status_code == 201, r2.text

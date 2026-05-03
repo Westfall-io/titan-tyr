@@ -123,15 +123,17 @@ there's an actual orchestrator that benefits from the distinction.
 
 ## Templates
 
-The five templates (`software`, `container`, `interaction`, `binding`,
-`connection`) live in Postgres as versioned markdown. They are mutated
-through the same propose/accept flow as contracts — see Proposals
-below for the full RC behaviour, the shape carries over here unchanged.
+The six templates (`software`, `container`, `image`, `interaction`,
+`binding`, `connection`) live in Postgres as versioned markdown. They
+are mutated through the same propose/accept flow as contracts — see
+Proposals below for the full RC behaviour, the shape carries over
+here unchanged.
 
-Every template kind matches a subtype: `software`/`container` are the
-two part subtypes; `interaction`/`binding`/`connection` are the three
-contract subtypes. The matching template is fetched at registration
-time depending on which subtype the caller is creating.
+Every template kind matches a subtype:
+`software`/`container`/`image` are the three part subtypes;
+`interaction`/`binding`/`connection` are the three contract subtypes.
+The matching template is fetched at registration time depending on
+which subtype the caller is creating.
 
 > **Breaking change in v0.10.0**: template kind `contract` was renamed
 > to `interaction` to match the new contract subtype names. Callers
@@ -143,17 +145,23 @@ time depending on which subtype the caller is creating.
 > body for the new `connection` contract subtype. See the Contracts
 > section for the per-label From/To Part type rules.
 
+> **New in v0.12.0**: template kind `image` added (#35) — the body
+> for the new `image` Part subtype (built artifact between source
+> and container). Unblocks the `builds-from` and `instantiates`
+> (container arm) connection labels end-to-end.
+
 ### `GET /templates/{kind}` — latest active template
 
 ```sh
 curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/software
 curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/container
+curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/image
 curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/interaction
 curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/binding
 curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/connection
 ```
 
-`kind` ∈ `{software, container, interaction, binding, connection}`.
+`kind` ∈ `{software, container, image, interaction, binding, connection}`.
 Response is `text/markdown` of the latest stable active version.
 RC-suffixed versions are never returned here.
 
@@ -226,12 +234,13 @@ its body:
 | Subtype     | What it represents                                                                |
 | ----------- | --------------------------------------------------------------------------------- |
 | `software`  | A codebase / deployable boundary (a repo, a service, a library).                  |
+| `image`     | A built artifact (tagged Docker image, Helm chart version, packaged binary). Sits between source repo and running instance. |
 | `container` | A running instance of an image — typically one row per `(software, environment)`. |
 
 The `subtype` field is required at registration time and is
 **immutable** afterward. Subtype-specific markdown structure lives in
-the matching template (`/templates/software` or `/templates/container`),
-not in the API surface.
+the matching template (`/templates/software`, `/templates/image`, or
+`/templates/container`), not in the API surface.
 
 ### Part name format
 
@@ -255,10 +264,11 @@ The constraint exists because names appear in URL paths
 `owner_part` / `counterparty_part` references — anything that would
 need URL-encoding or be awkward to grep is rejected at the door.
 
-**One namespace across subtypes.** `name` is unique across software
-AND container parts. A common convention is `<service>` for the
-software part and `<service>-<env>` for the container
-(`payments`, `payments-prod`).
+**One namespace across subtypes.** `name` is unique across software,
+image, AND container parts. A common convention is `<service>` for the
+software part, `<service>-image` for the canonical image built from
+it, and `<service>-<env>` for the container
+(`payments`, `payments-image`, `payments-prod`).
 
 ### `GET /parts` — list registered parts (paginated)
 
@@ -298,7 +308,7 @@ curl -H 'Authorization: Bearer sysmlv2' \
 
 To fetch the next page, call again with `?after=<next>`.
 
-#### `?subtype=<software|container>` — filter by subtype
+#### `?subtype=<software|image|container>` — filter by subtype
 
 ```sh
 curl -H 'Authorization: Bearer sysmlv2' \
@@ -307,7 +317,7 @@ curl -H 'Authorization: Bearer sysmlv2' \
 
 Restricts results to parts of the named subtype. Combines with
 `?match=`, `?after=`, and `?limit=`. `422` if the value is anything
-other than `software` or `container`.
+other than `software`, `image`, or `container`.
 
 #### `?match=<query>` — substring lookup over name + aliases
 
@@ -345,8 +355,9 @@ curl -H 'Authorization: Bearer sysmlv2' \
      http://localhost:8000/parts
 ```
 
-`subtype` is **required** and must be one of `software`, `container`.
-It is set at registration time and cannot be changed afterward.
+`subtype` is **required** and must be one of `software`, `image`,
+`container`. It is set at registration time and cannot be changed
+afterward.
 
 `version` is optional and defaults to `"1.0.0"`. It must be plain
 `MAJOR.MINOR.PATCH` — parts do not support `-rcN` suffixes.
@@ -377,7 +388,8 @@ Errors:
 - `409 Conflict` — name already taken (across all subtypes — names are
   one namespace).
 - `422 Unprocessable Entity` — `name` not a valid slug (see above),
-  `subtype` missing or not one of `software` / `container`, malformed
+  `subtype` missing or not one of `software` / `image` / `container`,
+  malformed
   `version` (or `-rcN` suffix), `issue_tracker_uri` not a valid
   `https://` URL, or any `aliases` entry is empty / over 128 chars /
   contains control characters.
@@ -563,12 +575,14 @@ label has its own From/To Part subtype rule:
 | `submodule`       | `software`          | `software`                | One repository includes another via `.gitmodules`   |
 
 Labels referencing Part subtypes that are **not yet implemented**
-(`image`, `pod`, `compose`) reject at registration with a clear "not
-yet implemented" error. Today only `depends-on` and `submodule` work
-end-to-end. Tracking issues:
-- `image` Part subtype → see follow-up issue
+(`pod`, `compose`) reject at registration with a clear "not yet
+implemented" error. Today `depends-on`, `submodule`, `builds-from`,
+and `instantiates` (to a container) work end-to-end; the remaining
+arms (`runs` pod arm, `member-of`, `instantiates` pod arm) are
+blocked. Tracking issues:
 - `pod` Part subtype → deferred per #24, see follow-up issue
 - `compose` Part subtype → see follow-up issue
+- `image` Part subtype → shipped in #35.
 
 The unique constraint is on `(owner_part_id, counterparty_part_id)` —
 subtype is **not** part of the key, so `A → B` can hold one contract
@@ -717,6 +731,11 @@ Only meaningful with `subtype=connection`. Combining
 > `connection_type` is `null`. Listings, search, and detail responses
 > include `connection_type` for every contract; it is `null` for
 > `interaction` and `binding`.
+
+> **New in v0.12.0**: `image` Part subtype (#35). Unblocks
+> `connection_type=builds-from` (software → image) and
+> `connection_type=instantiates` to a container (image → container)
+> end-to-end. The `instantiates` pod arm still blocks on `pod`.
 
 **Half-filter** (`?owner=…` alone or `?counterparty=…` alone) → `422`.
 Search requires both filters; list requires neither.

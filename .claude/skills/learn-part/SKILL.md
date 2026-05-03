@@ -8,8 +8,9 @@ description: Look up everything titan-tyr knows about a registered part — its 
 You are answering an agent's "tell me about part X" question by
 pulling everything titan-tyr knows about it: subtype, description,
 repo, ticket-filing target, version, and the contracts that touch it.
-Works for both `software` and `container` part subtypes — the subtype
-discriminator is preserved in the response so callers can branch on it.
+Works for any registered part subtype (`software`, `image`,
+`container`) — the subtype discriminator is preserved in the response
+so callers can branch on it.
 
 This skill is **read-only and non-mutating**. It composes existing
 titan-tyr GET endpoints into a single structured response so a

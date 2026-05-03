@@ -37,10 +37,10 @@ router = APIRouter(prefix="/contracts", tags=["contracts"], dependencies=[Depend
 # Per-label From/To Part subtype rules for connection contracts (#32).
 # `allowed_owner` / `allowed_counterparty` are sets of allowed subtype
 # strings. Subtype strings referenced here that don't yet exist as Part
-# subtypes (today: 'image', 'pod', 'compose') are detected at registration
-# and rejected with a "not yet implemented" error rather than silently
+# subtypes (today: 'pod', 'compose') are detected at registration and
+# rejected with a "not yet implemented" error rather than silently
 # 404'ing on the part lookup.
-_PART_SUBTYPES_IMPLEMENTED: set[str] = {"software", "container"}
+_PART_SUBTYPES_IMPLEMENTED: set[str] = {"software", "container", "image"}
 
 CONNECTION_RULES: dict[str, dict[str, set[str]]] = {
     "builds-from":  {"owner": {"software"},          "counterparty": {"image"}},

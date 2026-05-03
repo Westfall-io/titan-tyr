@@ -287,11 +287,12 @@ class TestBindingSubtype:
 class TestConnectionSubtype:
     """Connection contracts (#32): structural binding with no data flow.
 
-    Six labels distinguish the kinds of structural binding. Two
-    (`depends-on`, `submodule`) work today; the other four reference
-    Part subtypes (`image`, `pod`, `compose`) that aren't implemented
-    yet — they reject at registration with a 'not yet implemented'
-    error rather than silently 404'ing on the part lookup.
+    Six labels distinguish the kinds of structural binding. Four
+    (`depends-on`, `submodule`, `builds-from`, `instantiates` to a
+    container) work today; the remaining arms reference Part subtypes
+    (`pod`, `compose`) that aren't implemented yet — they reject at
+    registration with a 'not yet implemented' error rather than
+    silently 404'ing on the part lookup.
     """
 
     async def test_register_depends_on_container_to_container(self, client):
@@ -404,9 +405,42 @@ class TestConnectionSubtype:
         assert r.status_code == 422
         assert "software" in r.json()["detail"]
 
-    async def test_builds_from_rejected_image_not_implemented(self, client):
-        # `builds-from` requires an image counterparty; image subtype
-        # isn't implemented yet — clear "not yet implemented" error.
+    async def test_builds_from_software_to_image(self, client):
+        # `builds-from` is software → image. Now implemented (#35).
+        await _register_part(client, "payments-service", subtype="software")
+        await _register_part(client, "payments-image", subtype="image")
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "payments-service",
+                "counterparty_part": "payments-image",
+                "subtype": "connection",
+                "connection_type": "builds-from",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["connection_type"] == "builds-from"
+
+    async def test_builds_from_owner_must_be_software(self, client):
+        # Image → image with builds-from is rejected.
+        await _register_part(client, "img1", subtype="image")
+        await _register_part(client, "img2", subtype="image")
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "img1",
+                "counterparty_part": "img2",
+                "subtype": "connection",
+                "connection_type": "builds-from",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 422
+        assert "software" in r.json()["detail"]
+
+    async def test_builds_from_counterparty_must_be_image(self, client):
+        # Software → software with builds-from is rejected.
         await _register_part(client, "repo", subtype="software")
         await _register_part(client, "other", subtype="software")
         r = await client.post(
@@ -420,9 +454,42 @@ class TestConnectionSubtype:
             },
         )
         assert r.status_code == 422
-        detail = r.json()["detail"]
-        assert "image" in detail
-        assert "not yet implemented" in detail
+        assert "image" in r.json()["detail"]
+
+    async def test_instantiates_image_to_container(self, client):
+        # `instantiates` is image → container (or pod, deferred). The
+        # container arm works today.
+        await _register_part(client, "payments-image", subtype="image")
+        await _register_part(client, "payments-prod", subtype="container")
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "payments-image",
+                "counterparty_part": "payments-prod",
+                "subtype": "connection",
+                "connection_type": "instantiates",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["connection_type"] == "instantiates"
+
+    async def test_instantiates_owner_must_be_image(self, client):
+        # Software → container with instantiates is rejected.
+        await _register_part(client, "svc", subtype="software")
+        await _register_part(client, "ctr", subtype="container")
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "svc",
+                "counterparty_part": "ctr",
+                "subtype": "connection",
+                "connection_type": "instantiates",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 422
+        assert "image" in r.json()["detail"]
 
     async def test_member_of_rejected_compose_not_implemented(self, client):
         # `member-of` requires a compose counterparty; compose subtype

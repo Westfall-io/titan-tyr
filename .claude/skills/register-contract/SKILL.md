@@ -84,11 +84,13 @@ one of six labels:
 | `submodule`       | `software`          | `software`                | One repository includes another via `.gitmodules`   |
 
 Labels referencing Part subtypes that are **not yet implemented**
-(`image`, `pod`, `compose`) reject at registration. Today only
-`depends-on` and `submodule` work end-to-end. If the user picks one
-of the deferred labels, surface that early and ask whether to proceed
-(the API will 422 with a clear "not yet implemented" message) or pick
-a different label.
+(`pod`, `compose`) reject at registration. Today `depends-on`,
+`submodule`, `builds-from`, and `instantiates` (to a container) work
+end-to-end. The remaining arms — `runs` (pod arm), `member-of` (any),
+`instantiates` (pod arm) — block on `pod` / `compose`. If the user
+picks one of those arms, surface that early and ask whether to
+proceed (the API will 422 with a clear "not yet implemented" message)
+or pick a different label.
 
 The subtype determines which template you fetch in step 7 and shapes
 the validation in step 4.
@@ -149,10 +151,10 @@ match the rule's allow-set. Two failure modes worth distinguishing:
    `owner.subtype == "software"`. Tell the user the rule, suggest the
    correct subtype (or a different label that fits what they have).
 2. **Label requires an un-implemented Part subtype.** Labels
-   `builds-from`, `instantiates`, `runs` (pod arm), `member-of`
-   reference `image`, `pod`, or `compose` — none of which exist yet.
-   Surface this as "not yet implemented; tracked in <follow-up
-   issue>" and ask whether to abort or pick a different label.
+   `runs` (pod arm), `member-of`, and `instantiates` (pod arm)
+   reference `pod` or `compose` — neither exists yet. Surface this
+   as "not yet implemented; tracked in <follow-up issue>" and ask
+   whether to abort or pick a different label.
 
 If either check fails, **stop early** — don't POST.
 
@@ -395,11 +397,11 @@ been added yet"), surface them — don't auto-do.
   step 4 to accept `owner.subtype IN ("container", "pod")` for
   `binding`, and also unblock the `pod` arm of `connection_type`
   `instantiates` and `runs`.
-- **`image` and `compose` Part subtypes are deferred too.** They block
-  four of the six `connection_type` labels (`builds-from`,
-  `instantiates`, `runs` image arm, `member-of`). When either lands,
-  the rule table in step 2 doesn't change but the "not yet
-  implemented" branch in step 4 collapses for the affected labels.
+- **`compose` Part subtype is deferred.** It blocks the `member-of`
+  label entirely. When it lands, the rule table in step 2 doesn't
+  change but the "not yet implemented" branch in step 4 collapses
+  for `member-of`. (`image` shipped in #35; the `builds-from` and
+  `instantiates` (container arm) labels work today.)
 - **The contract template's fill rules are identical to the part
   template's.** If those rules grow, update both register skills in
   lockstep — same as the propose/accept pair.

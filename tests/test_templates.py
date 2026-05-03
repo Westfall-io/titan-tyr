@@ -2,6 +2,7 @@ from tests.conftest import (
     SEED_BINDING_TEMPLATE,
     SEED_CONNECTION_TEMPLATE,
     SEED_CONTAINER_TEMPLATE,
+    SEED_IMAGE_TEMPLATE,
     SEED_INTERACTION_TEMPLATE,
     SEED_SOFTWARE_TEMPLATE,
 )
@@ -25,6 +26,12 @@ class TestGetTemplate:
         assert r.status_code == 200
         assert "text/markdown" in r.headers["content-type"]
         assert r.text == SEED_CONTAINER_TEMPLATE
+
+    async def test_image_template(self, client):
+        r = await client.get("/templates/image")
+        assert r.status_code == 200
+        assert "text/markdown" in r.headers["content-type"]
+        assert r.text == SEED_IMAGE_TEMPLATE
 
     async def test_binding_template(self, client):
         r = await client.get("/templates/binding")

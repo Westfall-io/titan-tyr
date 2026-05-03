@@ -21,6 +21,7 @@ SEED_INTERACTION_TEMPLATE = "# interaction template seed\n\n## Provider obligati
 SEED_CONTAINER_TEMPLATE = "# container template seed\n\n## Purpose\nseed body\n"
 SEED_BINDING_TEMPLATE = "# binding template seed\n\n## Provider obligations\nseed body\n"
 SEED_CONNECTION_TEMPLATE = "# connection template seed\n\n## What this connection records\nseed body\n"
+SEED_IMAGE_TEMPLATE = "# image template seed\n\n## Purpose\nseed body\n"
 
 
 def _container_dsn() -> str:
@@ -71,6 +72,7 @@ async def db_session(engine) -> AsyncIterator[AsyncSession]:
         for kind, markdown in (
             ("software", SEED_SOFTWARE_TEMPLATE),
             ("container", SEED_CONTAINER_TEMPLATE),
+            ("image", SEED_IMAGE_TEMPLATE),
             ("interaction", SEED_INTERACTION_TEMPLATE),
             ("binding", SEED_BINDING_TEMPLATE),
             ("connection", SEED_CONNECTION_TEMPLATE),
