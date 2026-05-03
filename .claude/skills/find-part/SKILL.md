@@ -32,9 +32,10 @@ Don't guess. Don't default to localhost silently.
 
 ## Inputs
 
-| Input   | Required | Purpose                                                                                                |
-| ------- | -------- | ------------------------------------------------------------------------------------------------------ |
-| `query` | yes      | The colloquial label or partial name to resolve. 1–128 chars. Case-insensitive substring match.        |
+| Input     | Required | Purpose                                                                                                                                                                                                |
+| --------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `query`   | yes      | The colloquial label or partial name to resolve. 1–128 chars. Case-insensitive substring match.                                                                                                        |
+| `subtype` | no       | Restrict results to a single part subtype: `software` or `container`. Use when the caller already knows which dimension they want — e.g. "the payments software" vs "the payments-prod container". Unknown values → `422`. |
 
 ## Workflow
 
@@ -52,26 +53,31 @@ curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
 ### 2. Run the match
 
 URL-encode the query (it may contain spaces, slashes, Unicode). With
-`curl --data-urlencode` against a `-G` GET, that's free:
+`curl --data-urlencode` against a `-G` GET, that's free. Append
+`--data-urlencode "subtype=$subtype"` only when the caller passed
+`subtype`; otherwise omit the flag entirely (don't send empty string).
 
 ```sh
 curl -fsS -G \
      -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
      --data-urlencode "match=$query" \
      --data-urlencode "limit=100" \
-     "$TITAN_TYR_URL/software"
+     ${subtype:+--data-urlencode "subtype=$subtype"} \
+     "$TITAN_TYR_URL/parts"
 ```
 
 - `200` → continue to step 3.
-- `422` → query out of range (likely >128 chars). Surface verbatim.
+- `422` → query out of range (>128 chars) or unknown `subtype`. Surface verbatim.
 - Anything else → surface the response body verbatim and stop.
 
 ### 3. Shape and return
 
-The response is the standard paginated software listing
+The response is the standard paginated part listing
 (`{"results": [...], "next": ...}`). Trim each entry down to the
 fields a discovery caller actually needs, and surface the result count
-explicitly so the caller can branch:
+explicitly so the caller can branch. Preserve `subtype` on every entry
+— it's the discriminator that tells the calling agent whether they're
+looking at a software part or a container part:
 
 ```json
 {
@@ -81,12 +87,14 @@ explicitly so the caller can branch:
   "results": [
     {
       "name": "admin-ui",
+      "subtype": "software",
       "aliases": ["front end", "operator console"],
       "repo_uri": "https://github.com/example/admin-ui",
       "version": "1.4.0"
     },
     {
       "name": "user-ui",
+      "subtype": "software",
       "aliases": ["customer front end"],
       "repo_uri": "https://github.com/example/user-ui",
       "version": "0.8.2"
@@ -105,7 +113,7 @@ When `match_count == 0`, return:
   "query": "<original-query>",
   "match_count": 0,
   "results": [],
-  "hint": "No software matches '<query>' by name or alias. Try a shorter substring, or call /register-part to add it."
+  "hint": "No part matches '<query>' by name or alias. Try a shorter substring, drop the `subtype` filter if set, or call /register-part to add it."
 }
 ```
 
@@ -129,21 +137,30 @@ The skill itself does not print prose summaries or ask the user to
 disambiguate — that's the calling agent's job. The structured JSON
 return value is the contract.
 
+**Disambiguation via `subtype`.** Colloquial labels often collide
+across the part subtype dimension — e.g. `payments` may match both the
+software part `payments-service` and one or more container parts like
+`payments-prod`, `payments-staging`. If the calling agent already
+knows which dimension it cares about, pass `subtype` to cut the
+ambiguity at the API rather than after the fact. Example: filing a bug
+against the codebase → `subtype=software`; checking which environments
+of a service are deployed → `subtype=container`.
+
 ## Error handling
 
 | Status | Meaning                                  | What to do                                                  |
 | ------ | ---------------------------------------- | ----------------------------------------------------------- |
 | `401`  | Bad bearer token                         | Stop. Tell user `TITAN_TYR_TOKEN` is wrong.                 |
-| `422`  | Query exceeds 128 characters             | Stop. Tell the caller to shorten the query.                 |
+| `422`  | Query exceeds 128 characters, or `subtype` is not `software`/`container` | Stop. Surface `detail` so the caller can fix the offending input. |
 | `5xx`  | Server problem                           | Stop. Print response body verbatim.                         |
 
 ## Notes
 
 - This skill is read-only. It never POSTs / PUTs / DELETEs anything.
 - Substring matching is intentionally fuzzy and *not* deduplicated
-  across software — a query like `service` may legitimately return
-  every software whose name or alias contains "service". The caller
-  is expected to disambiguate.
+  across parts — a query like `service` may legitimately return every
+  part whose name or alias contains "service". The caller is expected
+  to disambiguate (or pass `subtype` if it narrows the question).
 - `?match=` escapes ILIKE wildcards (`%`, `_`) on the server side, so
   user queries containing them are matched literally — no special
   escaping needed here.
