@@ -92,6 +92,26 @@ curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
   "$TITAN_TYR_URL/contracts/<contract_id>"
 ```
 
+### 3b. Fetch open subtype-shift proposals (#40, provider v0.16.0+)
+
+```sh
+curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
+  "$TITAN_TYR_URL/parts/$target/subtype-proposals"
+```
+
+Filter the response client-side to entries with
+`status == "proposal"` — accepted shifts are historical and surface
+on the part's `/history` endpoint instead. Surface every open
+proposal in a top-level `open_subtype_shifts` field of the response
+(see step 5). When there are no open shifts, return
+`open_subtype_shifts: []`.
+
+This call is independent of the contracts fan-out; run it in
+parallel with step 3 if convenient. Pre-v0.16.0 servers return
+`404` on this endpoint — degrade gracefully and emit
+`open_subtype_shifts: []` with a brief note rather than failing the
+whole skill.
+
 ### 4. Resolve the ticket-filing target
 
 Apply this precedence (per #10's design):
@@ -136,6 +156,24 @@ precedence.
       "markdown": "..."
     }
   ],
+  "open_subtype_shifts": [
+    {
+      "proposal_id_short": "9b1f2c3d",
+      "proposal_id": "9b1f2c3d-...",
+      "current_subtype": "software",
+      "new_subtype": "container",
+      "rationale": "...",
+      "proposer_actor": "alice",
+      "proposer_attribution": "alice",
+      "created_at": "2026-05-02T10:30:00Z",
+      "impact": {
+        "body_realign_required": true,
+        "source_target_validation": "n/a",
+        "related_rows_potentially_affected": []
+      },
+      "next_step": "to accept: /accept-part-subtype-shift target=<name>"
+    }
+  ],
   "ticket_filing": {
     "resolved_to": "https://github.com/example/payments-service/issues",
     "source": "repo_uri_inferred"
@@ -171,6 +209,15 @@ Field notes:
   `{builds-from, instantiates, runs, member-of, depends-on, submodule}`.
 - `contracts[].markdown` is the full body of each contract's latest
   active version.
+- `open_subtype_shifts` is the list of pending shift proposals on
+  the part (filtered to `status == "proposal"`). Always present;
+  empty array when none. Calling agents should branch on whether
+  the array is non-empty before acting on `part.subtype` — a
+  pending shift means the discriminator is in flight and the agent
+  may be looking at stale information. `proposer_attribution` is
+  the human-readable label: the `proposer_actor` value when set,
+  else `"anonymous (two-party rule unenforceable)"`. `next_step`
+  gives the canonical skill name to invoke for acceptance.
 - `truncated` is `true` when there were more contracts than the v1
   fetch surfaced (more than 100 touching the target). v2 would page.
 
@@ -243,6 +290,11 @@ A common composition:
   description for each contract) is out of scope for v1. The contract
   entries carry the counterparty's name — call `/learn-part` again
   on that name if the agent needs more.
+- For deep contract detail (open content proposals, open subtype
+  shifts, attribution), call `/learn-contract` with the
+  `contract_id` from this response's `contracts[].contract_id`.
+  This skill surfaces the contract's body and basic discriminators;
+  `/learn-contract` adds the pending-state surfaces.
 - Pagination across contract listings is left to v2. The current cap
   (100 first-page entries) is enough for the registered scale today
   and surfaces a `truncated` flag for callers that need to know.
