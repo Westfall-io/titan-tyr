@@ -1013,10 +1013,15 @@ the proposal's `accepted_at`.
 > `single_operator_override` (consumers should default the actors
 > to `null` and the override to `false`).
 >
-> **Parts caveat**: `GET /parts/{name}/history` always surfaces the
-> three actor fields as `null` / `false`. `PartVersion` does not
-> currently store per-version actor; adding the fields would
-> require a schema migration. Tracked as a follow-up on #54.
+> **Parts caveat**: `body_bump` entries on `GET /parts/{name}/history`
+> always surface the three actor fields as `null` / `false`.
+> `PartVersion` does not currently store per-version actor; adding
+> the fields would require a schema migration (tracked as a
+> follow-up on #54). `subtype_shift` and `name_shift` entries do
+> surface real attribution from `PartSubtypeProposal` /
+> `PartNameProposal` (v0.24.0+, #51) — proposer is the X-Actor at
+> propose-time, acceptor is the X-Actor at accept-time, override
+> reflects whether `?single_operator=true` was used.
 
 Pagination follows the conventions above.
 
