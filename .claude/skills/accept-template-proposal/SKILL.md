@@ -117,23 +117,18 @@ clean confirmation step matters more here than on propose.
 ### 6. Submit
 
 ```sh
-curl -fsS -X POST \
-     -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
-     -H "X-Actor: $TITAN_TYR_ACTOR" \
-     "$TITAN_TYR_URL/templates/{kind}/proposals/{version}/accept"
+scripts/accept.sh templates/{kind}/proposals/{version}
 ```
 
-No request body — the path is the entire input. The `X-Actor`
-header carries the acceptor identity for the proposer-doesn't-accept
-rule (provider v0.16.0+, #38). If `proposer_actor == X-Actor` on
-the proposal row, the call returns `422`; override with
-`?single_operator=true` only in genuine single-operator setups:
+No request body — the path is the entire input. The script sets the
+`X-Actor` header (defaults to `titan-tyr` via `TITAN_TYR_ACTOR`), which
+carries the acceptor identity for the proposer-doesn't-accept rule
+(provider v0.16.0+, #38). If `proposer_actor == X-Actor` on the
+proposal row, the call returns `422`; override with the
+`--single-operator` flag only in genuine single-operator setups:
 
 ```sh
-curl -fsS -X POST \
-     -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
-     -H "X-Actor: $TITAN_TYR_ACTOR" \
-     "$TITAN_TYR_URL/templates/{kind}/proposals/{version}/accept?single_operator=true"
+scripts/accept.sh templates/{kind}/proposals/{version} --single-operator
 ```
 
 If `TITAN_TYR_ACTOR` is unset, the rule cannot be enforced and the

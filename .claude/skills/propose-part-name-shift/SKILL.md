@@ -85,12 +85,7 @@ service retires" — not just "wrong name".
 ### 5. POST the proposal
 
 ```sh
-curl -fsS -X POST \
-  -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
-  -H "Content-Type: application/json" \
-  -H "X-Actor: $TITAN_TYR_ACTOR" \
-  --data @.scratch/part-name-shift.json \
-  "$TITAN_TYR_URL/parts/{name}/name-proposals"
+scripts/propose-shift.sh parts/{name}/name-proposals .scratch/part-name-shift.json
 ```
 
 The response carries the proposal id and the snapshot of current /

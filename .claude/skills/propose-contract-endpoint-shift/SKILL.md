@@ -133,16 +133,12 @@ authoritative source" — not just "wrong endpoint".
 
 ### 7. POST the proposal
 
-Build the JSON body. Either or both of `new_owner` / `new_counterparty`
-may be set; omit the side that's not changing.
+Build the JSON body in `.scratch/contract-endpoint-shift.json`. Either
+or both of `new_owner` / `new_counterparty` may be set; omit the side
+that's not changing.
 
 ```sh
-curl -fsS -X POST \
-  -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
-  -H "Content-Type: application/json" \
-  -H "X-Actor: $TITAN_TYR_ACTOR" \
-  --data @.scratch/contract-endpoint-shift.json \
-  "$TITAN_TYR_URL/contracts/{contract_id}/endpoint-proposals"
+scripts/propose-shift.sh contracts/{contract_id}/endpoint-proposals .scratch/contract-endpoint-shift.json
 ```
 
 Surface the response — it carries `proposal_id`, the snapshot of

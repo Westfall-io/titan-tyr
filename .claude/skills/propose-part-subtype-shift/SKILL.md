@@ -80,12 +80,7 @@ DESIGN.md" — not just "wrong subtype".
 ### 5. POST the proposal — surface the impact preview
 
 ```sh
-curl -fsS -X POST \
-  -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
-  -H "Content-Type: application/json" \
-  -H "X-Actor: $TITAN_TYR_ACTOR" \
-  --data @.scratch/part-shift-proposal.json \
-  "$TITAN_TYR_URL/parts/{name}/subtype-proposals"
+scripts/propose-shift.sh parts/{name}/subtype-proposals .scratch/part-shift-proposal.json
 ```
 
 The response carries an `impact` block:

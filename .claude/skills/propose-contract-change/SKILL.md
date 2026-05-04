@@ -260,36 +260,22 @@ want changes, iterate — re-show the diff after each edit.
 
 ### 8. Submit
 
-Build the JSON via a tool, not shell heredocs or `-d "..."`. Contract
-bodies will contain backticks, pipes, asterisks, double quotes, and
-unicode — `--data @file.json` written by Python sidesteps every
-shell-escaping landmine.
+Use the helper script — it handles JSON encoding (contract bodies
+contain backticks, pipes, asterisks, double quotes, and unicode that
+shell heredocs and `-d "..."` mangle) and sets the `X-Actor` header.
 
-**Scratch files must live inside the project.** Do not write to `/tmp`,
-`$HOME`, or any path outside the working directory. Use `.scratch/` at
-the repo root (gitignored — create it if it doesn't exist) and clean up
-after.
+The script reads the markdown file directly, so the body must already
+live inside the project (the proposal markdown belongs in `.scratch/`
+at the repo root — gitignored, create if missing — never `/tmp` or
+`$HOME`).
 
 ```sh
-mkdir -p .scratch
-python3 -c "
-import json, pathlib
-print(json.dumps({
-    'version': 'X.Y.Z',  # or 'X.Y.Z-rcN'
-    'markdown': pathlib.Path('.scratch/contract-<contract_id>-<version>-rc1.md').read_text(),
-}))
-" > .scratch/contract-<contract_id>-<version>-rc1.json
-
-curl -fsS -X POST \
-     -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
-     -H "Content-Type: application/json" \
-     -H "X-Actor: $TITAN_TYR_ACTOR" \
-     --data @.scratch/contract-<contract_id>-<version>-rc1.json \
-     "$TITAN_TYR_URL/contracts/{contract_id}/proposals"
+scripts/propose-contract.sh <contract_id> .scratch/contract-<contract_id>-<version>-rc1.md X.Y.Z
 ```
 
-The `X-Actor` header records the proposer for the two-party rule
-enforced on accept (provider v0.16.0+, #38). If unset, the proposal
+`X-Actor` defaults to `titan-tyr` (set via `TITAN_TYR_ACTOR`). It
+records the proposer for the two-party rule enforced on accept
+(provider v0.16.0+, #38). If `TITAN_TYR_ACTOR` is unset, the proposal
 records `proposer_actor: null` and any acceptor will be allowed —
 warn the user.
 

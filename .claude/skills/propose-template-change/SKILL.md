@@ -121,39 +121,25 @@ If they want changes, iterate — re-show after each edit.
 
 ### 7. Submit
 
-Build the JSON via a tool, not shell heredocs or `-d "..."`. Template
-bodies will contain backticks, pipes, asterisks, double quotes, and
-unicode — `--data @file.json` written by Python sidesteps every
-shell-escaping landmine.
+Use the helper script — it handles JSON encoding (template bodies
+contain backticks, pipes, asterisks, double quotes, and unicode that
+shell heredocs and `-d "..."` mangle) and sets the `X-Actor` header.
 
-**Scratch files must live inside the project.** Do not write to `/tmp`,
-`$HOME`, or any path outside the working directory. Use `.scratch/` at
-the repo root (gitignored — create it if it doesn't exist) and clean up
-after.
+The script reads the markdown file directly, so the body must already
+live inside the project (the proposal markdown belongs in `.scratch/`
+at the repo root — gitignored, create if missing — never `/tmp` or
+`$HOME`).
 
 ```sh
-mkdir -p .scratch
-python3 -c "
-import json, pathlib
-print(json.dumps({
-    'version': 'X.Y.Z',  # or 'X.Y.Z-rcN'
-    'markdown': pathlib.Path('.scratch/template-proposal.md').read_text(),
-}))
-" > .scratch/template-proposal.json
-
-curl -fsS -X POST \
-     -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
-     -H "Content-Type: application/json" \
-     -H "X-Actor: $TITAN_TYR_ACTOR" \
-     --data @.scratch/template-proposal.json \
-     "$TITAN_TYR_URL/templates/{kind}/proposals"
+scripts/propose-template.sh <kind> .scratch/template-proposal.md X.Y.Z
 ```
 
-The `X-Actor` header records the proposer for the two-party rule
-enforced on accept (provider v0.16.0+, #38). If unset, the
-proposal records `proposer_actor: null` and the rule cannot be
-enforced — warn the user. Templates affect every consumer; the
-two-party gate matters more here than for any single contract.
+`X-Actor` defaults to `titan-tyr` (set via `TITAN_TYR_ACTOR`). It
+records the proposer for the two-party rule enforced on accept
+(provider v0.16.0+, #38). If `TITAN_TYR_ACTOR` is unset, the proposal
+records `proposer_actor: null` and the rule cannot be enforced — warn
+the user. Templates affect every consumer; the two-party gate matters
+more here than for any single contract.
 
 ### 8. Report — and explain accept, but do NOT accept
 
@@ -165,8 +151,7 @@ On `201`, summarise:
 >   `curl -H 'Authorization: Bearer sysmlv2' $TITAN_TYR_URL/templates/<kind>/proposals`
 >
 > Accept (when ready):
->   `curl -X POST -H 'Authorization: Bearer sysmlv2' \`
->     `$TITAN_TYR_URL/templates/<kind>/proposals/<version>/accept`
+>   `scripts/accept.sh templates/<kind>/proposals/<version>`
 
 **Do not auto-accept.** Even if the user appears to want it landed
 immediately, do the propose and the accept as two visible steps so the

@@ -117,12 +117,7 @@ purely a startup-ordering dependency".
 ### 5. POST the proposal
 
 ```sh
-curl -fsS -X POST \
-  -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
-  -H "Content-Type: application/json" \
-  -H "X-Actor: $TITAN_TYR_ACTOR" \
-  --data @.scratch/contract-shift-proposal.json \
-  "$TITAN_TYR_URL/contracts/{contract_id}/subtype-proposals"
+scripts/propose-shift.sh contracts/{contract_id}/subtype-proposals .scratch/contract-shift-proposal.json
 ```
 
 The response carries an `impact` block:

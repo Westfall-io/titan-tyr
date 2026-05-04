@@ -144,14 +144,11 @@ flag it to the user and branch:
 The shift accept goes through a different endpoint:
 
 ```sh
-curl -fsS -X POST \
-  -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
-  -H "X-Actor: $TITAN_TYR_ACTOR" \
-  "$TITAN_TYR_URL/contracts/{contract_id}/subtype-proposals/{proposal_id}/accept"
+scripts/accept.sh contracts/{contract_id}/subtype-proposals/{proposal_id}
 ```
 
-Same proposer-doesn't-accept rule (X-Actor header; pass
-`?single_operator=true` for solo setups). On accept, the contract's
+Same proposer-doesn't-accept rule (X-Actor header set by the script;
+pass `--single-operator` for solo setups). On accept, the contract's
 `subtype` (and `connection_type` if applicable) flips; body and
 version are unchanged. After acceptance, surface the shift's
 `body_realign_required` flag — if true, follow up with
@@ -263,24 +260,19 @@ clean confirmation step matters more here than on propose.
 ### 7. Submit
 
 ```sh
-curl -fsS -X POST \
-     -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
-     -H "X-Actor: $TITAN_TYR_ACTOR" \
-     "$TITAN_TYR_URL/contracts/{contract_id}/proposals/{version}/accept"
+scripts/accept.sh contracts/{contract_id}/proposals/{version}
 ```
 
-No request body — the path is the entire input. The `X-Actor`
-header carries the acceptor identity for the proposer-doesn't-accept
-rule (provider v0.16.0+, #38). If `proposer_actor == X-Actor` on
-the proposal row, the call returns `422` with a clear message;
-override with `?single_operator=true` only in genuine
-single-operator setups:
+No request body — the path is the entire input. The script sets the
+`X-Actor` header (defaults to `titan-tyr` via `TITAN_TYR_ACTOR`), which
+carries the acceptor identity for the proposer-doesn't-accept rule
+(provider v0.16.0+, #38). If `proposer_actor == X-Actor` on the
+proposal row, the call returns `422` with a clear message; override
+with the `--single-operator` flag only in genuine single-operator
+setups:
 
 ```sh
-curl -fsS -X POST \
-     -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
-     -H "X-Actor: $TITAN_TYR_ACTOR" \
-     "$TITAN_TYR_URL/contracts/{contract_id}/proposals/{version}/accept?single_operator=true"
+scripts/accept.sh contracts/{contract_id}/proposals/{version} --single-operator
 ```
 
 If `TITAN_TYR_ACTOR` is unset, the rule cannot be enforced and the

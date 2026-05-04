@@ -102,19 +102,13 @@ Wait for an unambiguous yes.
 ### 5. POST the accept
 
 ```sh
-curl -fsS -X POST \
-  -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
-  -H "X-Actor: $TITAN_TYR_ACTOR" \
-  "$TITAN_TYR_URL/contracts/{contract_id}/endpoint-proposals/{proposal_id}/accept"
+scripts/accept.sh contracts/{contract_id}/endpoint-proposals/{proposal_id}
 ```
 
 If using single-operator override:
 
 ```sh
-curl -fsS -X POST \
-  -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
-  -H "X-Actor: $TITAN_TYR_ACTOR" \
-  "$TITAN_TYR_URL/contracts/{contract_id}/endpoint-proposals/{proposal_id}/accept?single_operator=true"
+scripts/accept.sh contracts/{contract_id}/endpoint-proposals/{proposal_id} --single-operator
 ```
 
 ### 6. Report
