@@ -19,7 +19,7 @@ Read these from the environment:
 | ----------------- | -------- | -------------------------------------------------------------------------------------- |
 | `TITAN_TYR_URL`   | yes      | Base URL of the API, e.g. `http://localhost:8000`. No trailing slash.                  |
 | `TITAN_TYR_TOKEN` | no       | Bearer token. Defaults to `sysmlv2` (the placeholder password — see titan-tyr DESIGN.md). |
-| `TITAN_TYR_ACTOR` | no       | Identity for the X-Actor header (provider v0.16.0+, #39). Stored as `created_by_actor` on the new part row — the only attribution signal until real per-caller auth lands. If unset, the part records `null` for the creator and the paper trail goes blank — warn the user. |
+| `TITAN_TYR_ACTOR` | no       | Identity for the X-Actor header (provider v0.16.0+, #39). Stored as `created_by_actor` on the new part row — the row's *creator* attribution. If unset, the part records `null` for the creator and the paper trail starts blank — warn the user. The original creator may claim a `null`-attributed row later via `/update-part` (first-write-wins backfill, provider v0.21.0+, #54); subsequent edits each carry their own proposer/acceptor attribution. |
 
 If `TITAN_TYR_URL` is unset, **stop and tell the user**:
 
@@ -245,11 +245,14 @@ curl -fsS -X POST \
 ```
 
 The `X-Actor` header is recorded as `created_by_actor` on the new
-part row (provider v0.16.0+, #39). It's the only attribution signal
-this row will ever carry — every subsequent change has its own
-proposer/acceptor attribution, but the initial registration is a
-one-shot create. If `TITAN_TYR_ACTOR` is unset, the paper trail
-goes blank — warn the user.
+part row (provider v0.16.0+, #39). It's the row's *creator*
+attribution — every subsequent edit has its own proposer/acceptor
+attribution; this is the one specifically about the registration.
+If `TITAN_TYR_ACTOR` is unset, the paper trail starts blank — warn
+the user. The original registrant may later claim a `null`-attributed
+row by sending `X-Actor` on `/update-part` (first-write-wins backfill;
+provider v0.21.0+, #54). Once `created_by_actor` is set, it's
+immutable on PUT — no identity-spoofing of attributed rows.
 
 ### 10. Report the result
 

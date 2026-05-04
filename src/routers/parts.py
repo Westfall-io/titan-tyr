@@ -304,6 +304,7 @@ async def update_part(
     name: str,
     payload: PartUpdate,
     session: AsyncSession = Depends(get_session),
+    x_actor: str | None = Header(default=None, alias="X-Actor"),
 ) -> PartUpdateResponse:
     part = (
         await session.execute(
@@ -340,6 +341,14 @@ async def update_part(
     # = unchanged.
     if "project" in payload.model_fields_set:
         part.project_id = await resolve_project_slug(session, payload.project)
+
+    # First-write-wins backfill of created_by_actor (#54). Honor X-Actor
+    # only when the current value is NULL — this lets the original
+    # registrant claim a legacy row (registered before X-Actor existed,
+    # or before they had it set) without permitting subsequent PUTs to
+    # silently overwrite an already-attributed row's identity.
+    if x_actor is not None and part.created_by_actor is None:
+        part.created_by_actor = x_actor
 
     pv = PartVersion(
         part_id=part.id,
