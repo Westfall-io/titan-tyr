@@ -1,6 +1,6 @@
 ---
 name: update-skills
-description: Pull the latest titan-tyr skill catalog from github.com/Westfall-io/titan-tyr@main into the local .claude/skills/ directory. Use when the user wants to refresh, install, or re-sync the titan-tyr skills (e.g. "update my titan-tyr skills", "sync the latest skills", "I'm getting a stale-skill error", "refresh the catalog"). Destructive overwrite — local edits to pulled skill files are lost. titan-tyr@main is the source of truth; file feedback as a titan-tyr issue, not by hand-editing the pulled copy.
+description: Pull or check the titan-tyr skill catalog from github.com/Westfall-io/titan-tyr@main against the local .claude/skills/ directory. Use when the user wants to refresh, install, or re-sync the titan-tyr skills (e.g. "update my titan-tyr skills", "sync the latest skills", "I'm getting a stale-skill error", "refresh the catalog"), or when they want to *check* whether their local copies have drifted from upstream before doing work ("are my skills stale?", "did anything change upstream?"). Sync mode is a destructive overwrite — local edits to pulled skill files are lost. titan-tyr@main is the source of truth; file feedback as a titan-tyr issue, not by hand-editing the pulled copy.
 ---
 
 # update-skills
@@ -20,10 +20,14 @@ The sync script refuses to run if it detects it's executing inside
 ## When to use
 
 - The user asks to update / sync / refresh / install titan-tyr skills.
+- The user wants to *check* whether their local copies have drifted from
+  upstream — use `--check` mode (read-only, no writes; exits 1 on drift).
+  Useful as a pre-flight before running a flow that depends on a specific
+  skill being current, or as a periodic cron / commit-hook check.
 - A different titan-tyr skill failed in a way that suggests a stale local
   copy: missing flag, missing endpoint, signature mismatch, "X-Actor not
-  recognized" when the API documents it. Re-sync, then retry the failing
-  skill.
+  recognized" when the API documents it. Run `--check` to confirm drift,
+  then re-sync without the flag and retry the failing skill.
 
 ## When NOT to use
 
@@ -57,21 +61,43 @@ Detect with:
 git remote get-url origin 2>/dev/null
 ```
 
-### 2. Run the sync script
+### 2. Pick a mode
+
+**Drift check (read-only).** Confirm whether the local catalog matches
+upstream. No writes. Exits 1 if anything would change on a real sync.
+
+```sh
+scripts/sync-titan-tyr-skills.sh --check
+```
+
+Output is one line per file with a status column:
+
+| Status    | Meaning                                                                 |
+| --------- | ----------------------------------------------------------------------- |
+| `OK`      | Local content matches upstream byte-for-byte (after rewrite).            |
+| `DIFF`    | Local exists but differs — would be overwritten on sync.                 |
+| `NEW`     | Upstream has a skill or script not present locally — would be created.   |
+| `RETIRED` | Local skill no longer exists upstream. Informational; sync won't delete. |
+
+Default to `--check` when the user asks "are my skills current?" or
+"what changed?" — it answers the question without touching anything.
+
+**Sync (destructive).** Pull every upstream skill and overwrite the
+local copy. Use when the user explicitly wants to refresh.
 
 ```sh
 scripts/sync-titan-tyr-skills.sh
 ```
 
-The script:
+Either mode:
 - discovers every skill under `.claude/skills/<name>/` on `main` via the
   GitHub trees API;
-- writes each `SKILL.md` to `.claude/skills/<name>/SKILL.md`;
-- captures every `scripts/<x>.sh` referenced by a skill body into
+- (sync) writes each `SKILL.md` to `.claude/skills/<name>/SKILL.md`;
+- (sync) captures every `scripts/<x>.sh` referenced by a skill body into
   `.claude/skills/<name>/scripts/<x>.sh`;
-- rewrites the `scripts/<x>.sh` paths in each `SKILL.md` to the
+- (sync) rewrites the `scripts/<x>.sh` paths in each `SKILL.md` to the
   namespaced location;
-- marks pulled `.sh` files executable.
+- (sync) marks pulled `.sh` files executable.
 
 All fetches go through `gh api` so the consumer's `gh` auth is the only
 credential needed (no token juggling for raw.githubusercontent.com on a
@@ -86,7 +112,13 @@ Override env vars if needed (rare):
 
 ### 3. Report
 
-Tell the user:
+**Check mode.** The script's own output is the report — pass it through.
+If the script exits 0 (`Up to date`), say so. If it exits 1 (`DRIFT
+detected`), summarise the DIFF / NEW / RETIRED counts and recommend a
+sync. RETIRED entries are informational; ask the user whether to remove
+the local-only skill (the sync would not).
+
+**Sync mode.** Tell the user:
 
 - how many skills were synced (the script prints the count);
 - if the consumer commits `.claude/skills/` to git, run `git status` /
