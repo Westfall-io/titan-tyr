@@ -169,4 +169,7 @@ listing services in a stack → `subtype=compose`.
   user queries containing them are matched literally — no special
   escaping needed here.
 - For the inverse direction ("I have the canonical slug, give me
-  everything"), call `/learn-part` instead.
+  everything"), call `/learn-part` instead. For the contract-side
+  equivalent ("I have a contract_id, give me everything about that
+  contract including open shifts and proposals"), call
+  `/learn-contract`.
