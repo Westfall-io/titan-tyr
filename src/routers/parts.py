@@ -13,6 +13,7 @@ from src.models import (
     Contract,
     ContractVersion,
     Part,
+    PartNameProposal,
     PartSubtypeProposal,
     PartVersion,
     Project,
@@ -40,6 +41,11 @@ from src.schemas import (
     PartDetail,
     PartListItem,
     PartListResponse,
+    PartNameShiftAcceptResponse,
+    PartNameShiftCreate,
+    PartNameShiftCreateResponse,
+    PartNameShiftEntry,
+    PartNameShiftListResponse,
     PartSubtypeShiftAcceptResponse,
     PartSubtypeShiftCreate,
     PartSubtypeShiftCreateResponse,
@@ -371,6 +377,15 @@ async def get_part_history(
         )
     ).all()
 
+    name_shift_rows = (
+        await session.execute(
+            select(PartNameProposal.id, PartNameProposal.accepted_at).where(
+                PartNameProposal.part_id == part,
+                PartNameProposal.status == "accepted",
+            )
+        )
+    ).all()
+
     # For each shift, the version emitted is the latest body version
     # whose row was created at or before the shift's accept time —
     # i.e. the version the row was at when the shift happened.
@@ -404,6 +419,12 @@ async def get_part_history(
             continue
         entries.append(
             (r.accepted_at, r.id, "subtype_shift", _version_at(r.accepted_at))
+        )
+    for r in name_shift_rows:
+        if r.accepted_at is None:
+            continue
+        entries.append(
+            (r.accepted_at, r.id, "name_shift", _version_at(r.accepted_at))
         )
 
     entries.sort(key=lambda e: (e[0], e[1]), reverse=True)
@@ -892,5 +913,234 @@ async def accept_part_subtype_shift(
         accepted_at=now,
         accepted_by=x_actor,
         body_realign_required=proposal.body_realign_required,
+        single_operator_override=single_operator,
+    )
+
+
+# ---------- Name-shift proposals (#45) ----------
+#
+# Renaming a part is a single UPDATE on parts.name. Contracts hold
+# owner_part_id / counterparty_part_id by id (not name), so existing
+# contracts surface the new name automatically on the next GET via
+# the join — no contract-side cascade. The legibility risk is
+# entirely consumer-side (a deployed UI build holding the old slug
+# will 404 against /parts/{old}); that's tracked separately as a
+# render-only obligation on the mimiron contract bump.
+
+
+@router.post(
+    "/{name}/name-proposals",
+    response_model=PartNameShiftCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def propose_part_name_shift(
+    name: str,
+    payload: PartNameShiftCreate,
+    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    session: AsyncSession = Depends(get_session),
+) -> PartNameShiftCreateResponse:
+    part = (
+        await session.execute(
+            select(Part).where(Part.name == name).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if part is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Part {name!r} not found"
+        )
+
+    if payload.new_name == part.name:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"no-op shift: part is already named {part.name!r}; "
+                f"pick a different new_name or skip the proposal"
+            ),
+        )
+
+    # Reject early if another part already owns the proposed slug.
+    # Re-checked at accept time (the check is racy — another shift
+    # might land between propose and accept).
+    clash = (
+        await session.execute(
+            select(Part.id).where(Part.name == payload.new_name)
+        )
+    ).scalar_one_or_none()
+    if clash is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Part {payload.new_name!r} already exists",
+        )
+
+    proposal = PartNameProposal(
+        part_id=part.id,
+        current_name_at_propose=part.name,
+        new_name=payload.new_name,
+        rationale=payload.rationale,
+        proposer_actor=x_actor,
+        status="proposal",
+    )
+    session.add(proposal)
+    await session.flush()
+    proposal_id = proposal.id
+    await session.commit()
+
+    return PartNameShiftCreateResponse(
+        proposal_id=proposal_id,
+        part_name=name,
+        current_name=part.name,
+        new_name=payload.new_name,
+        rationale=payload.rationale,
+        proposer_actor=x_actor,
+    )
+
+
+@router.get(
+    "/{name}/name-proposals",
+    response_model=PartNameShiftListResponse,
+)
+async def list_part_name_shifts(
+    name: str,
+    session: AsyncSession = Depends(get_session),
+) -> PartNameShiftListResponse:
+    part = (
+        await session.execute(select(Part).where(Part.name == name))
+    ).scalar_one_or_none()
+    if part is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Part {name!r} not found"
+        )
+
+    rows = (
+        await session.execute(
+            select(PartNameProposal)
+            .where(PartNameProposal.part_id == part.id)
+            .order_by(PartNameProposal.created_at.desc())
+        )
+    ).scalars().all()
+
+    entries = [
+        PartNameShiftEntry(
+            proposal_id=r.id,
+            current_name_at_propose=r.current_name_at_propose,
+            new_name=r.new_name,
+            rationale=r.rationale,
+            proposer_actor=r.proposer_actor,
+            status=r.status,
+            created_at=r.created_at,
+            accepted_at=r.accepted_at,
+            accepted_by=r.accepted_by,
+            single_operator_override=r.single_operator_override,
+        )
+        for r in rows
+    ]
+
+    return PartNameShiftListResponse(
+        part_name=part.name,
+        current_name=part.name,
+        proposals=entries,
+    )
+
+
+@router.post(
+    "/{name}/name-proposals/{proposal_id}/accept",
+    response_model=PartNameShiftAcceptResponse,
+)
+async def accept_part_name_shift(
+    name: str,
+    proposal_id: uuid.UUID,
+    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    single_operator: bool = Query(default=False),
+    session: AsyncSession = Depends(get_session),
+) -> PartNameShiftAcceptResponse:
+    part = (
+        await session.execute(
+            select(Part).where(Part.name == name).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if part is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Part {name!r} not found"
+        )
+
+    proposal = (
+        await session.execute(
+            select(PartNameProposal).where(
+                PartNameProposal.id == proposal_id,
+                PartNameProposal.part_id == part.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if proposal is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Name-shift proposal {proposal_id} not found for part {name!r}",
+        )
+    if proposal.status != "proposal":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"proposal {proposal_id} is in status {proposal.status!r}; "
+                f"only 'proposal' rows can be accepted"
+            ),
+        )
+
+    enforce_two_party(
+        proposer_actor=proposal.proposer_actor,
+        acceptor_actor=x_actor,
+        single_operator=single_operator,
+    )
+
+    # Re-validate at accept time. Two failure modes:
+    # 1. No-op: another name-shift may have already renamed the part
+    #    to the proposed slug.
+    # 2. Slug clash: another part may have taken the proposed slug
+    #    (either via its own registration or its own name-shift)
+    #    since this proposal was filed.
+    if proposal.new_name == part.name:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"no-op accept: part is already named {part.name!r} "
+                f"(a concurrent shift may have landed); this proposal is stale"
+            ),
+        )
+
+    clash = (
+        await session.execute(
+            select(Part.id).where(
+                Part.name == proposal.new_name, Part.id != part.id
+            )
+        )
+    ).scalar_one_or_none()
+    if clash is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"slug {proposal.new_name!r} is now taken by another part; "
+                f"this proposal can no longer apply. File a fresh proposal "
+                f"with a different new_name."
+            ),
+        )
+
+    now = datetime.now(timezone.utc)
+    shifted_from = part.name
+    part.name = proposal.new_name
+    part.name_shifted_from = shifted_from
+    part.name_shifted_at = now
+    proposal.status = "accepted"
+    proposal.accepted_at = now
+    proposal.accepted_by = x_actor
+    proposal.single_operator_override = single_operator
+
+    await session.commit()
+
+    return PartNameShiftAcceptResponse(
+        proposal_id=proposal.id,
+        part_id=part.id,
+        shifted_from_name=shifted_from,
+        shifted_to_name=proposal.new_name,
+        accepted_at=now,
+        accepted_by=x_actor,
         single_operator_override=single_operator,
     )

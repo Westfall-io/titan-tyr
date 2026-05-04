@@ -88,11 +88,21 @@ class Part(Base):
     project_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True, index=True
     )
+    # Name-shift bookkeeping (#45). Populated on the most recent
+    # accepted PartNameProposal; nullable so unshifted parts have no
+    # value. The full timeline lives in part_name_proposals.
+    name_shifted_from: Mapped[str | None] = mapped_column(String, nullable=True)
+    name_shifted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     versions: Mapped[list["PartVersion"]] = relationship(
         back_populates="part", cascade="all, delete-orphan", passive_deletes=True
     )
     subtype_proposals: Mapped[list["PartSubtypeProposal"]] = relationship(
+        back_populates="part", cascade="all, delete-orphan", passive_deletes=True
+    )
+    name_proposals: Mapped[list["PartNameProposal"]] = relationship(
         back_populates="part", cascade="all, delete-orphan", passive_deletes=True
     )
     project: Mapped[Project | None] = relationship(foreign_keys=[project_id])
@@ -218,6 +228,20 @@ class Contract(Base):
     project_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True, index=True
     )
+    # Endpoint-shift bookkeeping (#45). Populated on the most recent
+    # accepted ContractEndpointProposal. Either name may be NULL on a
+    # one-sided shift (only owner changed, or only counterparty changed).
+    # Stored as names rather than ids because the audit trail is human-
+    # facing and ids are opaque.
+    endpoint_shifted_from_owner: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )
+    endpoint_shifted_from_counterparty: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )
+    endpoint_shifted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     owner: Mapped[Part] = relationship(foreign_keys=[owner_part_id])
     counterparty: Mapped[Part] = relationship(foreign_keys=[counterparty_part_id])
@@ -226,6 +250,9 @@ class Contract(Base):
         back_populates="contract", cascade="all, delete-orphan", passive_deletes=True
     )
     subtype_proposals: Mapped[list["ContractSubtypeProposal"]] = relationship(
+        back_populates="contract", cascade="all, delete-orphan", passive_deletes=True
+    )
+    endpoint_proposals: Mapped[list["ContractEndpointProposal"]] = relationship(
         back_populates="contract", cascade="all, delete-orphan", passive_deletes=True
     )
 
@@ -514,3 +541,124 @@ class ContractSubtypeProposal(Base):
     )
 
     contract: Mapped[Contract] = relationship(back_populates="subtype_proposals")
+
+
+# ---------- Endpoint / name-shift proposals (#45) ----------
+#
+# Two more shift families mirroring the subtype-shift pattern from
+# #33: a contract's `(owner, counterparty)` pair (endpoint-shift) and
+# a part's `name` slug (name-shift). Same propose / accept / X-Actor
+# handshake; same single-operator override surface; same `kind`-
+# discriminated history entry shape (`endpoint_shift`, `name_shift`).
+
+
+class PartNameProposal(Base):
+    __tablename__ = "part_name_proposals"
+    __table_args__ = (
+        Index(
+            "ix_part_name_proposals_part_id_status",
+            "part_id",
+            "status",
+        ),
+        CheckConstraint(
+            "status IN ('proposal', 'accepted')",
+            name="ck_part_name_proposals_status_allowed",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    part_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("parts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # Snapshot of `parts.name` at propose time. Captures the previous
+    # name even if subsequent shifts rename it again.
+    current_name_at_propose: Mapped[str] = mapped_column(String, nullable=False)
+    new_name: Mapped[str] = mapped_column(String, nullable=False)
+    rationale: Mapped[str] = mapped_column(String, nullable=False)
+    proposer_actor: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    accepted_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    single_operator_override: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+
+    part: Mapped[Part] = relationship(back_populates="name_proposals")
+
+
+class ContractEndpointProposal(Base):
+    __tablename__ = "contract_endpoint_proposals"
+    __table_args__ = (
+        Index(
+            "ix_contract_endpoint_proposals_contract_id_status",
+            "contract_id",
+            "status",
+        ),
+        CheckConstraint(
+            "status IN ('proposal', 'accepted')",
+            name="ck_contract_endpoint_proposals_status_allowed",
+        ),
+        CheckConstraint(
+            "new_owner_part_id IS NOT NULL OR new_counterparty_part_id IS NOT NULL",
+            name="ck_contract_endpoint_proposals_at_least_one",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    contract_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("contracts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # Snapshot of the contract's endpoints (by name) at propose time.
+    # Names are recorded rather than ids so the audit trail remains
+    # legible if either part is later renamed.
+    current_owner_at_propose: Mapped[str] = mapped_column(String, nullable=False)
+    current_counterparty_at_propose: Mapped[str] = mapped_column(
+        String, nullable=False
+    )
+    # The new endpoints. Either may be NULL — a one-sided shift only
+    # changes the side that's set. The CHECK above enforces "at least
+    # one is non-NULL"; the propose-time validator additionally
+    # enforces "at least one is *changing* from current" so a no-op
+    # propose returns 422 with a friendlier message.
+    new_owner_part_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("parts.id"), nullable=True
+    )
+    new_counterparty_part_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("parts.id"), nullable=True
+    )
+    rationale: Mapped[str] = mapped_column(String, nullable=False)
+    proposer_actor: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    accepted_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    single_operator_override: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+
+    contract: Mapped[Contract] = relationship(back_populates="endpoint_proposals")
+    new_owner: Mapped[Part | None] = relationship(foreign_keys=[new_owner_part_id])
+    new_counterparty: Mapped[Part | None] = relationship(
+        foreign_keys=[new_counterparty_part_id]
+    )

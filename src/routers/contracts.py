@@ -10,7 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth import require_password
 from src.db import get_session
-from src.models import Contract, ContractSubtypeProposal, ContractVersion, Part, Project
+from src.models import (
+    Contract,
+    ContractEndpointProposal,
+    ContractSubtypeProposal,
+    ContractVersion,
+    Part,
+    Project,
+)
 from src.pagination import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
@@ -33,6 +40,11 @@ from src.schemas import (
     ContractCreateResponse,
     ContractDetail,
     ContractListResponse,
+    ContractEndpointShiftAcceptResponse,
+    ContractEndpointShiftCreate,
+    ContractEndpointShiftCreateResponse,
+    ContractEndpointShiftEntry,
+    ContractEndpointShiftListResponse,
     ContractSearchResponse,
     ContractSearchResult,
     ContractSubtypeShiftAcceptResponse,
@@ -441,6 +453,18 @@ async def get_contract_history(
         )
     ).all()
 
+    endpoint_shift_rows = (
+        await session.execute(
+            select(
+                ContractEndpointProposal.id,
+                ContractEndpointProposal.accepted_at,
+            ).where(
+                ContractEndpointProposal.contract_id == contract_id,
+                ContractEndpointProposal.status == "accepted",
+            )
+        )
+    ).all()
+
     body_sorted = sorted(body_rows, key=lambda r: r.accepted_at or r.created_at)
 
     def _version_at(t: datetime) -> str:
@@ -473,6 +497,12 @@ async def get_contract_history(
             continue
         entries.append(
             (r.accepted_at, r.id, "subtype_shift", _version_at(r.accepted_at))
+        )
+    for r in endpoint_shift_rows:
+        if r.accepted_at is None:
+            continue
+        entries.append(
+            (r.accepted_at, r.id, "endpoint_shift", _version_at(r.accepted_at))
         )
 
     entries.sort(key=lambda e: (e[0], e[1]), reverse=True)
@@ -828,5 +858,449 @@ async def accept_contract_subtype_shift(
         accepted_at=now,
         accepted_by=x_actor,
         body_realign_required=proposal.body_realign_required,
+        single_operator_override=single_operator,
+    )
+
+
+# ---------- Endpoint-shift proposals (#45) ----------
+#
+# Endpoint-shift changes one or both of (owner_part_id,
+# counterparty_part_id) on an existing contract while preserving
+# contract id, version history, and body content. Two failure
+# classes are checked at both propose and accept time:
+#
+#   1. Source/target rule: the new endpoints' subtypes must satisfy
+#      the contract's binding/connection rule (mirrors the
+#      contract-subtype-shift hard-block, since endpoint-shift is
+#      structurally the symmetric move — same rule, different lever).
+#   2. Uniqueness: the resulting (owner_part_id, counterparty_part_id,
+#      subtype, connection_type) tuple must not collide with another
+#      contract — same key as #42's widened uniqueness index.
+
+
+def _resolve_endpoint_shift_targets(
+    *,
+    current: Contract,
+    new_owner_part: Part | None,
+    new_counterparty_part: Part | None,
+) -> tuple[uuid.UUID, uuid.UUID]:
+    """Resolve a (potentially one-sided) shift to a final (owner, cp) pair.
+
+    Either side may be None if not changing. Returns the final
+    (owner_id, counterparty_id) the contract would land on. Raises
+    422 if the result equals the current pair (no-op shift) or if
+    the resulting endpoints would be the same part (self-loop).
+    """
+    new_owner_id = (
+        new_owner_part.id if new_owner_part is not None else current.owner_part_id
+    )
+    new_cp_id = (
+        new_counterparty_part.id
+        if new_counterparty_part is not None
+        else current.counterparty_part_id
+    )
+    if (
+        new_owner_id == current.owner_part_id
+        and new_cp_id == current.counterparty_part_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "no-op shift: at least one endpoint must change. Pass "
+                "new_owner and/or new_counterparty differing from current."
+            ),
+        )
+    if new_owner_id == new_cp_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="owner and counterparty must differ after the shift",
+        )
+    return new_owner_id, new_cp_id
+
+
+def _check_endpoint_shift_source_target(
+    *,
+    contract: Contract,
+    new_owner_subtype: str,
+    new_cp_subtype: str,
+) -> tuple[str, str | None]:
+    """Validate the new endpoints against the contract's existing rule."""
+    if contract.subtype == "interaction":
+        return "pass", None
+    if contract.subtype == "binding":
+        if new_owner_subtype not in BINDING_OWNER_SUBTYPES:
+            return "fail", (
+                f"binding requires owner subtype in {list(BINDING_OWNER_SUBTYPES)}; "
+                f"new owner is {new_owner_subtype!r}"
+            )
+        if new_cp_subtype != "software":
+            return "fail", (
+                f"binding requires counterparty subtype 'software'; "
+                f"new counterparty is {new_cp_subtype!r}"
+            )
+        return "pass", None
+    # connection
+    rule = CONNECTION_RULES[contract.connection_type]
+    if new_owner_subtype not in rule["owner"]:
+        return "fail", (
+            f"connection_type {contract.connection_type!r} requires owner "
+            f"subtype in {sorted(rule['owner'])}; new owner is "
+            f"{new_owner_subtype!r}"
+        )
+    if new_cp_subtype not in rule["counterparty"]:
+        return "fail", (
+            f"connection_type {contract.connection_type!r} requires "
+            f"counterparty subtype in {sorted(rule['counterparty'])}; "
+            f"new counterparty is {new_cp_subtype!r}"
+        )
+    return "pass", None
+
+
+async def _check_endpoint_uniqueness(
+    session: AsyncSession,
+    *,
+    contract: Contract,
+    new_owner_id: uuid.UUID,
+    new_cp_id: uuid.UUID,
+) -> None:
+    """422 if (new_owner, new_cp, subtype, connection_type) collides.
+
+    Mirrors the propose-time uniqueness check in register_contract,
+    but excludes the current contract itself (the row whose endpoints
+    are being shifted).
+    """
+    stmt = select(Contract.id).where(
+        Contract.id != contract.id,
+        Contract.owner_part_id == new_owner_id,
+        Contract.counterparty_part_id == new_cp_id,
+        Contract.subtype == contract.subtype,
+        Contract.connection_type.is_(contract.connection_type)
+        if contract.connection_type is None
+        else Contract.connection_type == contract.connection_type,
+    )
+    clash = (await session.execute(stmt)).scalar_one_or_none()
+    if clash is not None:
+        ct_suffix = (
+            f"/{contract.connection_type}" if contract.connection_type else ""
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"shift would collide with existing contract: another "
+                f"{contract.subtype!r}{ct_suffix} contract already exists "
+                f"between these endpoints"
+            ),
+        )
+
+
+@router.post(
+    "/{contract_id}/endpoint-proposals",
+    response_model=ContractEndpointShiftCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def propose_contract_endpoint_shift(
+    contract_id: uuid.UUID,
+    payload: ContractEndpointShiftCreate,
+    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    session: AsyncSession = Depends(get_session),
+) -> ContractEndpointShiftCreateResponse:
+    contract = (
+        await session.execute(
+            select(Contract).where(Contract.id == contract_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if contract is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found"
+        )
+
+    if payload.new_owner is None and payload.new_counterparty is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "at least one of new_owner / new_counterparty must be set"
+            ),
+        )
+
+    new_owner_part: Part | None = None
+    new_cp_part: Part | None = None
+    if payload.new_owner is not None:
+        new_owner_part = await _resolve_part(session, payload.new_owner)
+    if payload.new_counterparty is not None:
+        new_cp_part = await _resolve_part(session, payload.new_counterparty)
+
+    new_owner_id, new_cp_id = _resolve_endpoint_shift_targets(
+        current=contract,
+        new_owner_part=new_owner_part,
+        new_counterparty_part=new_cp_part,
+    )
+
+    # Resolve the final subtypes (whichever side is shifting uses the
+    # new part; the other side reads the current row).
+    final_owner = new_owner_part or await session.get(Part, contract.owner_part_id)
+    final_cp = new_cp_part or await session.get(
+        Part, contract.counterparty_part_id
+    )
+    validation, fail_reason = _check_endpoint_shift_source_target(
+        contract=contract,
+        new_owner_subtype=final_owner.subtype,
+        new_cp_subtype=final_cp.subtype,
+    )
+    if validation == "fail":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"endpoint shift would violate the contract's source/target "
+                f"rule: {fail_reason}. Either pick endpoints that satisfy "
+                f"the rule, or shift the contract's subtype/connection_type "
+                f"first."
+            ),
+        )
+
+    await _check_endpoint_uniqueness(
+        session,
+        contract=contract,
+        new_owner_id=new_owner_id,
+        new_cp_id=new_cp_id,
+    )
+
+    current_owner_part = await session.get(Part, contract.owner_part_id)
+    current_cp_part = await session.get(Part, contract.counterparty_part_id)
+
+    proposal = ContractEndpointProposal(
+        contract_id=contract.id,
+        current_owner_at_propose=current_owner_part.name,
+        current_counterparty_at_propose=current_cp_part.name,
+        new_owner_part_id=new_owner_part.id if new_owner_part else None,
+        new_counterparty_part_id=new_cp_part.id if new_cp_part else None,
+        rationale=payload.rationale,
+        proposer_actor=x_actor,
+        status="proposal",
+    )
+    session.add(proposal)
+    await session.flush()
+    proposal_id = proposal.id
+    await session.commit()
+
+    return ContractEndpointShiftCreateResponse(
+        proposal_id=proposal_id,
+        contract_id=contract.id,
+        current_owner=current_owner_part.name,
+        current_counterparty=current_cp_part.name,
+        new_owner=new_owner_part.name if new_owner_part else None,
+        new_counterparty=new_cp_part.name if new_cp_part else None,
+        rationale=payload.rationale,
+        proposer_actor=x_actor,
+    )
+
+
+@router.get(
+    "/{contract_id}/endpoint-proposals",
+    response_model=ContractEndpointShiftListResponse,
+)
+async def list_contract_endpoint_shifts(
+    contract_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+) -> ContractEndpointShiftListResponse:
+    contract = await session.get(Contract, contract_id)
+    if contract is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found"
+        )
+
+    rows = (
+        await session.execute(
+            select(ContractEndpointProposal)
+            .where(ContractEndpointProposal.contract_id == contract_id)
+            .order_by(ContractEndpointProposal.created_at.desc())
+        )
+    ).scalars().all()
+
+    # Resolve new_*_part_id → name for each row. Done individually
+    # because the proposal list is small and the join logic across
+    # nullable FKs to the same table is awkward in a single query.
+    entries: list[ContractEndpointShiftEntry] = []
+    for r in rows:
+        new_owner_name = None
+        new_cp_name = None
+        if r.new_owner_part_id is not None:
+            p = await session.get(Part, r.new_owner_part_id)
+            new_owner_name = p.name if p else None
+        if r.new_counterparty_part_id is not None:
+            p = await session.get(Part, r.new_counterparty_part_id)
+            new_cp_name = p.name if p else None
+        entries.append(
+            ContractEndpointShiftEntry(
+                proposal_id=r.id,
+                current_owner_at_propose=r.current_owner_at_propose,
+                current_counterparty_at_propose=r.current_counterparty_at_propose,
+                new_owner=new_owner_name,
+                new_counterparty=new_cp_name,
+                rationale=r.rationale,
+                proposer_actor=r.proposer_actor,
+                status=r.status,
+                created_at=r.created_at,
+                accepted_at=r.accepted_at,
+                accepted_by=r.accepted_by,
+                single_operator_override=r.single_operator_override,
+            )
+        )
+
+    current_owner_part = await session.get(Part, contract.owner_part_id)
+    current_cp_part = await session.get(Part, contract.counterparty_part_id)
+    return ContractEndpointShiftListResponse(
+        contract_id=contract.id,
+        current_owner=current_owner_part.name,
+        current_counterparty=current_cp_part.name,
+        proposals=entries,
+    )
+
+
+@router.post(
+    "/{contract_id}/endpoint-proposals/{proposal_id}/accept",
+    response_model=ContractEndpointShiftAcceptResponse,
+)
+async def accept_contract_endpoint_shift(
+    contract_id: uuid.UUID,
+    proposal_id: uuid.UUID,
+    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    single_operator: bool = Query(default=False),
+    session: AsyncSession = Depends(get_session),
+) -> ContractEndpointShiftAcceptResponse:
+    contract = (
+        await session.execute(
+            select(Contract).where(Contract.id == contract_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if contract is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found"
+        )
+
+    proposal = (
+        await session.execute(
+            select(ContractEndpointProposal).where(
+                ContractEndpointProposal.id == proposal_id,
+                ContractEndpointProposal.contract_id == contract.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if proposal is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"Endpoint-shift proposal {proposal_id} not found for "
+                f"contract {contract.id}"
+            ),
+        )
+    if proposal.status != "proposal":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"proposal {proposal_id} is in status {proposal.status!r}; "
+                f"only 'proposal' rows can be accepted"
+            ),
+        )
+
+    enforce_two_party(
+        proposer_actor=proposal.proposer_actor,
+        acceptor_actor=x_actor,
+        single_operator=single_operator,
+    )
+
+    # Re-resolve at accept time. The proposal stores ids, so renames
+    # of either side don't invalidate the proposal — but the same
+    # endpoints' subtypes may have shifted, the contract's own
+    # subtype/connection_type may have shifted, or a colliding
+    # contract may have been created.
+    new_owner_part: Part | None = None
+    new_cp_part: Part | None = None
+    if proposal.new_owner_part_id is not None:
+        new_owner_part = await session.get(Part, proposal.new_owner_part_id)
+        if new_owner_part is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "shift can no longer apply: new owner part has been "
+                    "deleted since this proposal was filed"
+                ),
+            )
+    if proposal.new_counterparty_part_id is not None:
+        new_cp_part = await session.get(Part, proposal.new_counterparty_part_id)
+        if new_cp_part is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "shift can no longer apply: new counterparty part has "
+                    "been deleted since this proposal was filed"
+                ),
+            )
+
+    new_owner_id, new_cp_id = _resolve_endpoint_shift_targets(
+        current=contract,
+        new_owner_part=new_owner_part,
+        new_counterparty_part=new_cp_part,
+    )
+
+    final_owner = new_owner_part or await session.get(Part, contract.owner_part_id)
+    final_cp = new_cp_part or await session.get(
+        Part, contract.counterparty_part_id
+    )
+    validation, fail_reason = _check_endpoint_shift_source_target(
+        contract=contract,
+        new_owner_subtype=final_owner.subtype,
+        new_cp_subtype=final_cp.subtype,
+    )
+    if validation == "fail":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"shift can no longer apply: {fail_reason}. The endpoint or "
+                f"contract subtype may have shifted since this proposal was "
+                f"filed; file a fresh proposal once the surrounding state is "
+                f"stable."
+            ),
+        )
+
+    await _check_endpoint_uniqueness(
+        session,
+        contract=contract,
+        new_owner_id=new_owner_id,
+        new_cp_id=new_cp_id,
+    )
+
+    now = datetime.now(timezone.utc)
+    current_owner_part = await session.get(Part, contract.owner_part_id)
+    current_cp_part = await session.get(Part, contract.counterparty_part_id)
+    shifted_from_owner = current_owner_part.name
+    shifted_from_cp = current_cp_part.name
+
+    # Bookkeeping cols only record the side(s) that actually changed —
+    # one-sided shifts leave the other column NULL.
+    contract.owner_part_id = new_owner_id
+    contract.counterparty_part_id = new_cp_id
+    contract.endpoint_shifted_from_owner = (
+        shifted_from_owner if new_owner_part is not None else None
+    )
+    contract.endpoint_shifted_from_counterparty = (
+        shifted_from_cp if new_cp_part is not None else None
+    )
+    contract.endpoint_shifted_at = now
+    proposal.status = "accepted"
+    proposal.accepted_at = now
+    proposal.accepted_by = x_actor
+    proposal.single_operator_override = single_operator
+
+    await session.commit()
+
+    return ContractEndpointShiftAcceptResponse(
+        proposal_id=proposal.id,
+        contract_id=contract.id,
+        shifted_from_owner=shifted_from_owner,
+        shifted_to_owner=final_owner.name,
+        shifted_from_counterparty=shifted_from_cp,
+        shifted_to_counterparty=final_cp.name,
+        accepted_at=now,
+        accepted_by=x_actor,
         single_operator_override=single_operator,
     )

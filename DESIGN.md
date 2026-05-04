@@ -617,6 +617,70 @@ the proposal-specific endpoints that may legitimately echo back an
 RC string — and it appears here only because this endpoint *is* a
 proposal endpoint.
 
+### Shifts
+
+A *shift* is a structural change to a row that does **not** mutate
+the body or bump the version. Shifts go through their own
+propose/accept handshake — same X-Actor / single_operator override
+mechanics as content proposals — and land as discriminator changes
+on the row plus an entry in the row's history endpoint
+(`kind: subtype_shift | endpoint_shift | name_shift`). Three shift
+families ship today:
+
+| Shift family       | Row affected | Column(s) changed                                              | Issue |
+| ------------------ | ------------ | -------------------------------------------------------------- | ----- |
+| `subtype_shift`    | parts        | `parts.subtype` (+ `subtype_shifted_from`, `subtype_shifted_at`) | #33   |
+| `subtype_shift`    | contracts    | `contracts.subtype` / `connection_type` (+ bookkeeping)        | #33   |
+| `name_shift`       | parts        | `parts.name` (+ `name_shifted_from`, `name_shifted_at`)        | #45   |
+| `endpoint_shift`   | contracts    | `contracts.owner_part_id` / `counterparty_part_id` (+ bookkeeping) | #45   |
+
+Common rules across shift families:
+
+- **Body and version are untouched.** A shift never bumps a part's
+  or contract's version. Body content drift after a subtype shift
+  is flagged via `body_realign_required` on the propose-time impact
+  preview; remediation is a follow-up content proposal.
+- **Two-party rule.** The proposer-doesn't-accept rule from #38/#39
+  applies; `?single_operator=true` overrides for solo setups. The
+  override is recorded on the proposal row (`single_operator_override`).
+- **Acceptance re-validates.** Surrounding state may have shifted
+  between propose and accept (another shift landed, an endpoint
+  was deleted, a colliding contract was created); accept replays
+  the propose-time validation and 4xxs if the shift can no longer
+  apply.
+- **Endpoint shift is FK-by-id.** Renaming a part does *not*
+  cascade to contracts: contracts hold endpoints by id, and
+  contract responses surface the new name automatically on the next
+  GET via the join. Endpoint shift is the symmetric move — it
+  re-points the FK while preserving everything else (id, version,
+  body, proposal trail).
+- **Endpoint shift uniqueness.** The widened uniqueness key from
+  #42 — `(owner_part_id, counterparty_part_id, subtype,
+  connection_type) NULLS NOT DISTINCT` — is enforced on accept;
+  endpoint shifts that would collide with an existing contract 409.
+
+The endpoints follow a mirrored shape across families:
+
+```
+POST   /parts/{name}/subtype-proposals
+GET    /parts/{name}/subtype-proposals
+POST   /parts/{name}/subtype-proposals/{proposal_id}/accept
+
+POST   /parts/{name}/name-proposals
+GET    /parts/{name}/name-proposals
+POST   /parts/{name}/name-proposals/{proposal_id}/accept
+
+POST   /contracts/{contract_id}/subtype-proposals
+GET    /contracts/{contract_id}/subtype-proposals
+POST   /contracts/{contract_id}/subtype-proposals/{proposal_id}/accept
+
+POST   /contracts/{contract_id}/endpoint-proposals
+GET    /contracts/{contract_id}/endpoint-proposals
+POST   /contracts/{contract_id}/endpoint-proposals/{proposal_id}/accept
+```
+
+See `docs/api.md` for the per-endpoint request / response shapes.
+
 ---
 
 ## Project layout
