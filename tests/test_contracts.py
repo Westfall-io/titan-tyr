@@ -722,3 +722,191 @@ async def _register_connection_depends_on(client, owner, counterparty):
     )
     assert r.status_code == 201, r.text
     return r.json()
+
+
+class TestSubtypeAwareUniqueness:
+    """Subtype-aware uniqueness key (#42).
+
+    The directed pair `<owner> -> <counterparty>` can hold one
+    contract per `(subtype, connection_type)` tuple. A second row
+    with the same triple is the only collision.
+    """
+
+    async def test_connection_runs_then_binding_coexists(self, client):
+        # Container -> software is a valid pair for both `runs`
+        # (connection) and `binding`. Both should land 201.
+        await _register_part(client, "svc", subtype="software")
+        await _register_part(client, "ctr", subtype="container")
+
+        r1 = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "ctr",
+                "counterparty_part": "svc",
+                "subtype": "connection",
+                "connection_type": "runs",
+                "markdown": "m",
+            },
+        )
+        assert r1.status_code == 201, r1.text
+
+        r2 = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "ctr",
+                "counterparty_part": "svc",
+                "subtype": "binding",
+                "markdown": "m",
+            },
+        )
+        assert r2.status_code == 201, r2.text
+        assert r2.json()["subtype"] == "binding"
+
+    async def test_connection_runs_then_interaction_coexists(self, client):
+        # Different subtype with NULL connection_type (interaction)
+        # should also coexist with a connection on the same pair.
+        await _register_part(client, "svc", subtype="software")
+        await _register_part(client, "ctr", subtype="container")
+
+        r1 = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "ctr",
+                "counterparty_part": "svc",
+                "subtype": "connection",
+                "connection_type": "runs",
+                "markdown": "m",
+            },
+        )
+        assert r1.status_code == 201, r1.text
+
+        r2 = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "ctr",
+                "counterparty_part": "svc",
+                "subtype": "interaction",
+                "markdown": "m",
+            },
+        )
+        assert r2.status_code == 201, r2.text
+
+    async def test_interaction_then_binding_coexists(self, client):
+        # Two NULL-connection_type subtypes on the same pair. NULLS NOT
+        # DISTINCT means the (subtype) discriminator alone keeps them
+        # apart in the unique key.
+        await _register_part(client, "svc", subtype="software")
+        await _register_part(client, "ctr", subtype="container")
+
+        r1 = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "ctr",
+                "counterparty_part": "svc",
+                "subtype": "interaction",
+                "markdown": "m",
+            },
+        )
+        assert r1.status_code == 201, r1.text
+
+        r2 = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "ctr",
+                "counterparty_part": "svc",
+                "subtype": "binding",
+                "markdown": "m",
+            },
+        )
+        assert r2.status_code == 201, r2.text
+
+    async def test_two_connection_types_coexist_on_same_pair(self, client):
+        # Two `connection` rows on the same pair, distinguished only by
+        # connection_type. Both should land. (Container -> container
+        # accepts `depends-on`; the second is artificial but the rules
+        # don't prevent it from being attempted.)
+        await _register_part(client, "c1", subtype="container")
+        await _register_part(client, "c2", subtype="container")
+
+        r1 = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "c1",
+                "counterparty_part": "c2",
+                "subtype": "connection",
+                "connection_type": "depends-on",
+                "markdown": "m",
+            },
+        )
+        assert r1.status_code == 201, r1.text
+
+        # `runs` requires counterparty subtype `software`, so use a
+        # second valid combo: a separate pair where two connection_types
+        # both apply. `depends-on` and `member-of` both have container
+        # owners; member-of needs a compose counterparty.
+        await _register_part(client, "stack", subtype="compose")
+        r2 = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "c1",
+                "counterparty_part": "stack",
+                "subtype": "connection",
+                "connection_type": "member-of",
+                "markdown": "m",
+            },
+        )
+        assert r2.status_code == 201, r2.text
+
+    async def test_duplicate_triple_still_conflicts(self, client):
+        # Same (pair, subtype, connection_type) triple → 409. The
+        # widened key is a *widening*, not a relaxation.
+        await _register_part(client, "svc", subtype="software")
+        await _register_part(client, "ctr", subtype="container")
+
+        r1 = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "ctr",
+                "counterparty_part": "svc",
+                "subtype": "connection",
+                "connection_type": "runs",
+                "markdown": "m",
+            },
+        )
+        assert r1.status_code == 201, r1.text
+
+        r2 = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "ctr",
+                "counterparty_part": "svc",
+                "subtype": "connection",
+                "connection_type": "runs",
+                "markdown": "m",
+            },
+        )
+        assert r2.status_code == 409
+        detail = r2.json()["detail"]
+        assert "subtype" in detail
+        assert "'connection'" in detail
+        assert "/runs" in detail
+
+    async def test_duplicate_interaction_still_conflicts(self, client):
+        # Same pair + same (interaction, NULL) → 409. Confirms the NULL
+        # arm of NULLS NOT DISTINCT is enforced.
+        await _register_pair(client)
+        await _new_contract(client, subtype="interaction")
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "a",
+                "counterparty_part": "b",
+                "subtype": "interaction",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 409
+        detail = r.json()["detail"]
+        assert "subtype" in detail
+        assert "'interaction'" in detail
+

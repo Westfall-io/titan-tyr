@@ -71,9 +71,10 @@ CREATE TABLE contracts (
   id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   owner_part_id        UUID NOT NULL REFERENCES parts(id),
   counterparty_part_id UUID NOT NULL REFERENCES parts(id),
-  subtype              TEXT NOT NULL CHECK (subtype IN ('interaction', 'binding')),
+  subtype              TEXT NOT NULL CHECK (subtype IN ('interaction', 'binding', 'connection')),
+  connection_type      TEXT NULL,  -- non-NULL iff subtype = 'connection'; one of six labels
   created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (owner_part_id, counterparty_part_id),
+  UNIQUE NULLS NOT DISTINCT (owner_part_id, counterparty_part_id, subtype, connection_type),
   CHECK  (owner_part_id <> counterparty_part_id)
 );
 
@@ -423,11 +424,16 @@ for the body.
 
 ### Contracts
 
-Every contract carries a `subtype` discriminator (`interaction` or
-`binding`). It is required at registration and immutable afterward.
-The unique constraint is on `(owner_part_id, counterparty_part_id)` —
-subtype is **not** part of the key, so `A → B` holds at most one
-contract total, not one per subtype.
+Every contract carries a `subtype` discriminator (`interaction`,
+`binding`, or `connection`; `connection` rows additionally carry a
+`connection_type` from the six labels). It is required at registration
+and immutable afterward (a *content* update goes through propose/accept;
+a *subtype shift* goes through the separate shift proposal flow). As
+of #42 the unique constraint is on `(owner_part_id,
+counterparty_part_id, subtype, connection_type) NULLS NOT DISTINCT`,
+so `A → B` can hold one `interaction` + one `binding` + one
+`connection` *per* `connection_type` simultaneously — the multi-row
+shape that `container@3.0.0` and the post-#34 templates depend on.
 
 | Subtype       | What it represents                                                            | Source (owner_part) | Target (counterparty_part) |
 | ------------- | ----------------------------------------------------------------------------- | ------------------- | -------------------------- |
