@@ -64,8 +64,13 @@ curl -fsS -X POST \
 - Tell the user the project is ready and that they can now register parts
   and contracts tagged with the slug via `/register-part` or
   `/register-contract` (both accept an optional `project` field).
-- Existing un-tagged parts and contracts can be moved into the project
-  by re-running `/update-part` with `project: "<slug>"` in the payload.
+- To **backfill** existing rows into the project, point the user at
+  `/bulk-claim-rows`. The typical backfill is
+  `--project <slug> --current-project __none__` — tag every untagged
+  row in one pass with a dry-run table and confirmation gate. Per-row
+  `/update-part` / `/update-contract` is the right tool for one-off
+  edits, not for sweeping a freshly-registered project across the
+  catalog.
 - Run `/list-projects` to see counts.
 
 ## Notes
