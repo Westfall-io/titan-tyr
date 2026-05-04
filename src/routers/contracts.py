@@ -377,7 +377,7 @@ async def list_or_search_contracts(
                 project=project_name,
             )
         )
-    return ContractSearchResponse(results=results)
+    return ContractSearchResponse(results=results, next=None)
 
 
 @router.get("/{contract_id}", response_model=ContractDetail)

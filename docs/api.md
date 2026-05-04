@@ -793,9 +793,15 @@ curl -H 'Authorization: Bearer sysmlv2' \
       "markdown": "...",
       "updated_at": "2026-04-15T09:14:00Z"
     }
-  ]
+  ],
+  "next": null
 }
 ```
+
+The search response always carries `next: null` — search is bounded ≤2
+and never paginates. The field is present so consumers can use a single
+parser shape across `/contracts` (search), `/contracts` (list), and
+`/parts/{name}/contracts` (#48, v0.23.0+).
 
 `404` if either part does not exist.
 
