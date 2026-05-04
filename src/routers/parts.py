@@ -408,7 +408,13 @@ async def get_part_history(
 
     shift_rows = (
         await session.execute(
-            select(PartSubtypeProposal.id, PartSubtypeProposal.accepted_at).where(
+            select(
+                PartSubtypeProposal.id,
+                PartSubtypeProposal.accepted_at,
+                PartSubtypeProposal.proposer_actor,
+                PartSubtypeProposal.accepted_by,
+                PartSubtypeProposal.single_operator_override,
+            ).where(
                 PartSubtypeProposal.part_id == part,
                 PartSubtypeProposal.status == "accepted",
             )
@@ -417,7 +423,13 @@ async def get_part_history(
 
     name_shift_rows = (
         await session.execute(
-            select(PartNameProposal.id, PartNameProposal.accepted_at).where(
+            select(
+                PartNameProposal.id,
+                PartNameProposal.accepted_at,
+                PartNameProposal.proposer_actor,
+                PartNameProposal.accepted_by,
+                PartNameProposal.single_operator_override,
+            ).where(
                 PartNameProposal.part_id == part,
                 PartNameProposal.status == "accepted",
             )
@@ -442,7 +454,16 @@ async def get_part_history(
             Version(latest.version_major, latest.version_minor, latest.version_patch)
         )
 
-    entries: list[tuple[datetime, uuid.UUID, str, str]] = []
+    # Tuple shape: (timestamp, row_id, kind, version_str, proposer,
+    # acceptor, single_operator_override). The latter three surface
+    # per-version actor on history (#51). For body_bump entries the
+    # actor fields are always None — PartVersion does not yet carry
+    # propose-accept attribution (parts have direct-write versioning;
+    # the issue defers populating these as forward-applies once parts
+    # gain a content-proposal lifecycle).
+    entries: list[
+        tuple[datetime, uuid.UUID, str, str, str | None, str | None, bool]
+    ] = []
     for r in body_rows:
         entries.append(
             (
@@ -450,19 +471,38 @@ async def get_part_history(
                 r.id,
                 "body_bump",
                 str(Version(r.version_major, r.version_minor, r.version_patch)),
+                None,
+                None,
+                False,
             )
         )
     for r in shift_rows:
         if r.accepted_at is None:
             continue
         entries.append(
-            (r.accepted_at, r.id, "subtype_shift", _version_at(r.accepted_at))
+            (
+                r.accepted_at,
+                r.id,
+                "subtype_shift",
+                _version_at(r.accepted_at),
+                r.proposer_actor,
+                r.accepted_by,
+                bool(r.single_operator_override),
+            )
         )
     for r in name_shift_rows:
         if r.accepted_at is None:
             continue
         entries.append(
-            (r.accepted_at, r.id, "name_shift", _version_at(r.accepted_at))
+            (
+                r.accepted_at,
+                r.id,
+                "name_shift",
+                _version_at(r.accepted_at),
+                r.proposer_actor,
+                r.accepted_by,
+                bool(r.single_operator_override),
+            )
         )
 
     entries.sort(key=lambda e: (e[0], e[1]), reverse=True)
@@ -475,8 +515,15 @@ async def get_part_history(
     entries = entries[:limit]
 
     items = [
-        VersionHistoryItem(version=v, updated_at=ts, kind=k)
-        for ts, _, k, v in entries
+        VersionHistoryItem(
+            version=v,
+            updated_at=ts,
+            kind=k,
+            proposer_actor=proposer,
+            acceptor_actor=acceptor,
+            single_operator_override=override,
+        )
+        for ts, _, k, v, proposer, acceptor, override in entries
     ]
     last_t, last_id = (entries[-1][0], entries[-1][1]) if entries else (None, None)
     next_cursor = encode_cursor(last_t, last_id) if has_more and last_t else None
