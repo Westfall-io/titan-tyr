@@ -1,6 +1,6 @@
 [project]
 name = "titan-tyr"
-version = "0.18.0"
+version = "0.19.0"
 description = "WatcherVault REST API — typed parts (software, image, container, pod, compose) + typed contracts (interaction, binding, connection) as a versioned graph."
 requires-python = ">=3.11"
 dependencies = [

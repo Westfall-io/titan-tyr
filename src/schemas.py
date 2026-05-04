@@ -377,7 +377,15 @@ class VersionHistoryItem(BaseModel):
     # — they record a structural transition under the same version
     # number — so the history endpoint emits both kinds in chronological
     # order with this discriminator.
-    kind: Literal["body_bump", "subtype_shift"] = "body_bump"
+    # `kind` discriminator extended in #45 to cover endpoint shifts
+    # (contracts) and name shifts (parts). The new entries are emitted
+    # by the same history endpoint, ordered chronologically with the
+    # other kinds. Consumer rule (per the contract): default missing
+    # `kind` to `"body_bump"` so a brief window of provider-old /
+    # consumer-new round-trips renders correctly.
+    kind: Literal[
+        "body_bump", "subtype_shift", "endpoint_shift", "name_shift"
+    ] = "body_bump"
 
 
 class VersionHistoryResponse(BaseModel):
@@ -597,4 +605,131 @@ class ContractSubtypeShiftAcceptResponse(BaseModel):
     accepted_at: datetime
     accepted_by: str | None
     body_realign_required: bool
+    single_operator_override: bool = False
+
+
+# ---------- Name-shift proposals (parts) (#45) ----------
+#
+# Part `name` is a slug-shaped primary handle. The name-shift flow
+# changes it in place — preserving id, version, body, and any
+# subtype-shift / proposal history. Contracts hold owner_part_id /
+# counterparty_part_id by id (not name), so renaming a part is a
+# single UPDATE — no contract-side cascade.
+
+
+class PartNameShiftCreate(BaseModel):
+    new_name: str = Field(min_length=1)
+    rationale: str = Field(min_length=1, max_length=2000)
+
+    _n = field_validator("new_name")(_validate_part_name)
+
+
+class PartNameShiftEntry(BaseModel):
+    proposal_id: uuid.UUID
+    current_name_at_propose: str
+    new_name: str
+    rationale: str
+    proposer_actor: str | None
+    status: str
+    created_at: datetime
+    accepted_at: datetime | None
+    accepted_by: str | None
+    single_operator_override: bool = False
+
+
+class PartNameShiftCreateResponse(BaseModel):
+    proposal_id: uuid.UUID
+    part_name: str
+    current_name: str
+    new_name: str
+    rationale: str
+    proposer_actor: str | None
+
+
+class PartNameShiftListResponse(BaseModel):
+    part_name: str
+    current_name: str
+    proposals: list[PartNameShiftEntry]
+
+
+class PartNameShiftAcceptResponse(BaseModel):
+    proposal_id: uuid.UUID
+    part_id: uuid.UUID
+    shifted_from_name: str
+    shifted_to_name: str
+    accepted_at: datetime
+    accepted_by: str | None
+    single_operator_override: bool = False
+
+
+# ---------- Endpoint-shift proposals (contracts) (#45) ----------
+#
+# Contract `(owner_part, counterparty_part)` is set at registration
+# and immutable thereafter. The endpoint-shift flow changes either or
+# both endpoints in place, preserving contract_id, version, body, and
+# proposal history. Validation: the resulting (owner, counterparty,
+# subtype, connection_type) tuple must not collide with another
+# contract (per #42's widened uniqueness key); the new endpoints'
+# subtypes must satisfy the contract's binding/connection rule
+# (hard-block on rule violation, mirroring contract subtype shifts).
+
+
+class ContractEndpointShiftCreate(BaseModel):
+    new_owner: str | None = None
+    new_counterparty: str | None = None
+    rationale: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("new_owner")
+    @classmethod
+    def _vo(cls, v: str | None) -> str | None:
+        return _validate_part_name(v) if v is not None else v
+
+    @field_validator("new_counterparty")
+    @classmethod
+    def _vc(cls, v: str | None) -> str | None:
+        return _validate_part_name(v) if v is not None else v
+
+
+class ContractEndpointShiftEntry(BaseModel):
+    proposal_id: uuid.UUID
+    current_owner_at_propose: str
+    current_counterparty_at_propose: str
+    new_owner: str | None
+    new_counterparty: str | None
+    rationale: str
+    proposer_actor: str | None
+    status: str
+    created_at: datetime
+    accepted_at: datetime | None
+    accepted_by: str | None
+    single_operator_override: bool = False
+
+
+class ContractEndpointShiftCreateResponse(BaseModel):
+    proposal_id: uuid.UUID
+    contract_id: uuid.UUID
+    current_owner: str
+    current_counterparty: str
+    new_owner: str | None
+    new_counterparty: str | None
+    rationale: str
+    proposer_actor: str | None
+
+
+class ContractEndpointShiftListResponse(BaseModel):
+    contract_id: uuid.UUID
+    current_owner: str
+    current_counterparty: str
+    proposals: list[ContractEndpointShiftEntry]
+
+
+class ContractEndpointShiftAcceptResponse(BaseModel):
+    proposal_id: uuid.UUID
+    contract_id: uuid.UUID
+    shifted_from_owner: str
+    shifted_to_owner: str
+    shifted_from_counterparty: str
+    shifted_to_counterparty: str
+    accepted_at: datetime
+    accepted_by: str | None
     single_operator_override: bool = False

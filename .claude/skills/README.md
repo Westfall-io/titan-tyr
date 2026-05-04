@@ -16,6 +16,15 @@ when you run it from the titan-tyr repo root. Type `/<skill-name>` to invoke.
 | [`propose-contract-change`](./propose-contract-change/SKILL.md)   | Draft and POST a proposal to amend an existing interface contract. Helps pick the contract, opens the active body for in-place editing, shows a unified diff. Does not auto-accept. |
 | [`accept-template-proposal`](./accept-template-proposal/SKILL.md) | Promote an open template proposal to the new active version. Mutates what every caller sees on the next `GET /templates/{kind}`. |
 | [`accept-contract-proposal`](./accept-contract-proposal/SKILL.md) | Promote an open contract proposal to the new active version. Helps pick the contract (by id, by part name, or from a list), shows a unified diff vs the active body, then POSTs accept. |
+| [`learn-contract`](./learn-contract/SKILL.md)                     | Read-only narrator for a registered contract by id — surfaces endpoints, subtype, body, version, and any open proposal trails. |
+| [`propose-part-subtype-shift`](./propose-part-subtype-shift/SKILL.md)             | Propose a structural subtype change for a registered part (#33). Pre-validates contract impact; does not auto-accept. |
+| [`accept-part-subtype-shift`](./accept-part-subtype-shift/SKILL.md)               | Promote an open part subtype-shift proposal — only `parts.subtype` changes; body and version are untouched. Two-party rule enforced via X-Actor. |
+| [`propose-contract-subtype-shift`](./propose-contract-subtype-shift/SKILL.md)     | Propose a structural subtype (or connection_type) change for an existing contract (#33). |
+| [`propose-part-name-shift`](./propose-part-name-shift/SKILL.md)                   | Propose a rename of a registered part (#45). Body, version, and contracts are untouched on accept; the rename surfaces in contract responses via the FK join. |
+| [`accept-part-name-shift`](./accept-part-name-shift/SKILL.md)                     | Promote an open part name-shift proposal — only `parts.name` changes. The old slug 404s after acceptance; coordinate consumer cutover before landing. |
+| [`propose-contract-endpoint-shift`](./propose-contract-endpoint-shift/SKILL.md)   | Propose a structural endpoint change for an existing contract (#45) — re-points one or both of `(owner_part_id, counterparty_part_id)` while preserving the contract id, version, and body. |
+| [`accept-contract-endpoint-shift`](./accept-contract-endpoint-shift/SKILL.md)     | Promote an open contract endpoint-shift proposal — only the endpoint FKs change; body, version, subtype, and connection_type are untouched. |
+| [`check-titan-tyr-env`](./check-titan-tyr-env/SKILL.md)                           | Verify the `TITAN_TYR_URL` / `TITAN_TYR_TOKEN` environment is set and the server is reachable before running other skills. |
 | [`audit-skill`](./audit-skill/SKILL.md)                           | Review how a recently-invoked skill actually performed in this session. Reads the skill body, reconstructs the run from conversation context, classifies bugs/friction/stale/missing-guidance gaps, and drafts fixes. Read-only — no auto-apply, no auto-file. |
 
 ## Configuration

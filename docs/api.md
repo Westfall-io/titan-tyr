@@ -1308,6 +1308,259 @@ Errors:
 
 ---
 
+## Name shifts (parts)
+
+> Renames a registered part in place. Same propose/accept handshake
+> as subtype shifts; the body, version, contract endpoints, and
+> proposal trail are all preserved. Contracts hold endpoints by id
+> (not name), so the rename surfaces in contract responses
+> automatically on the next GET via the join — there is no
+> server-side cascade. Old slug 404s after acceptance; consumer
+> cutover is the caller's concern.
+
+### `POST /parts/{name}/name-proposals` — propose a part rename
+
+```sh
+curl -X POST -H 'Authorization: Bearer sysmlv2' \
+     -H 'X-Actor: alice' \
+     -H 'Content-Type: application/json' \
+     -d '{"new_name": "payments-service", "rationale": "drop legacy suffix"}' \
+     http://localhost:8000/parts/payments-svc/name-proposals
+```
+
+Request body:
+```json
+{
+  "new_name":  "payments-service",
+  "rationale": "drop legacy svc suffix; team naming standard"
+}
+```
+
+`new_name` follows the part-slug rules (lowercase, digits, hyphens;
+1-64 chars; no leading/trailing hyphen; same regex as
+`POST /parts`). `rationale` is required, 1-2000 chars.
+
+`201` response:
+```json
+{
+  "proposal_id":   "9b1f...",
+  "part_name":     "payments-svc",
+  "current_name":  "payments-svc",
+  "new_name":      "payments-service",
+  "rationale":     "drop legacy svc suffix; team naming standard",
+  "proposer_actor":"alice"
+}
+```
+
+Errors:
+- `404 Not Found` — part does not exist.
+- `409 Conflict` — `new_name == current_name` (no-op), or another
+  part already owns the proposed slug.
+- `422 Unprocessable Entity` — `new_name` slug invalid, missing
+  `rationale`, or `rationale` length out of bounds.
+
+### `GET /parts/{name}/name-proposals` — list rename proposals
+
+Returns every proposal (open and historical) for the named part.
+Filter by `status == "proposal"` for acceptable rows; accepted rows
+are read-only history.
+
+```json
+{
+  "part_name":    "payments-service",
+  "current_name": "payments-service",
+  "proposals": [
+    {
+      "proposal_id":             "9b1f...",
+      "current_name_at_propose": "payments-svc",
+      "new_name":                "payments-service",
+      "rationale":               "drop legacy svc suffix",
+      "proposer_actor":          "alice",
+      "status":                  "accepted",
+      "created_at":              "2026-05-04T10:00:00Z",
+      "accepted_at":             "2026-05-04T10:30:00Z",
+      "accepted_by":             "bob",
+      "single_operator_override": false
+    }
+  ]
+}
+```
+
+### `POST /parts/{name}/name-proposals/{proposal_id}/accept` — promote a rename
+
+```sh
+curl -X POST -H 'Authorization: Bearer sysmlv2' \
+     -H 'X-Actor: bob' \
+     'http://localhost:8000/parts/payments-svc/name-proposals/9b1f.../accept'
+```
+
+`?single_operator=true` overrides the proposer-doesn't-accept rule
+for solo setups. The override is recorded on the proposal row.
+
+`200` response:
+```json
+{
+  "proposal_id":           "9b1f...",
+  "part_id":               "ab12...",
+  "shifted_from_name":     "payments-svc",
+  "shifted_to_name":       "payments-service",
+  "accepted_at":           "2026-05-04T10:30:00Z",
+  "accepted_by":           "bob",
+  "single_operator_override": false
+}
+```
+
+After acceptance, `GET /parts/payments-svc` returns `404` and
+`GET /parts/payments-service` serves the (otherwise unchanged)
+part. Existing contracts touching the part surface the new name
+on their next GET.
+
+Errors:
+- `404 Not Found` — part or `proposal_id` does not exist (the part
+  may have already shifted to a different slug).
+- `409 Conflict` — proposal already accepted, no-op (concurrent
+  shift landed first), or the proposed slug is now taken by another
+  part (re-propose with a different `new_name`).
+- `422 Unprocessable Entity` — `proposer_actor == acceptor_actor`
+  without `?single_operator=true`.
+
+---
+
+## Endpoint shifts (contracts)
+
+> Re-points one or both of a contract's `(owner_part_id,
+> counterparty_part_id)` while preserving the contract id, version,
+> body, subtype/connection_type, and proposal trail. Same
+> propose/accept handshake as subtype shifts. Hard-blocks on
+> source/target rule violation and on uniqueness collision (per
+> #42's widened uniqueness key).
+
+### `POST /contracts/{contract_id}/endpoint-proposals` — propose an endpoint shift
+
+```sh
+curl -X POST -H 'Authorization: Bearer sysmlv2' \
+     -H 'X-Actor: alice' \
+     -H 'Content-Type: application/json' \
+     -d '{"new_owner": "payments-service-v2", "rationale": "cutover to v2 prod"}' \
+     http://localhost:8000/contracts/ab12.../endpoint-proposals
+```
+
+Request body — at least one of `new_owner` / `new_counterparty`
+must be set, and the resulting `(owner, counterparty)` pair must
+differ from the current pair:
+
+```json
+{
+  "new_owner":        "payments-service-v2",
+  "new_counterparty": null,
+  "rationale":        "cutover the binding owner to the v2 deployment"
+}
+```
+
+`201` response:
+```json
+{
+  "proposal_id":         "7d3e...",
+  "contract_id":         "ab12...",
+  "current_owner":       "payments-service",
+  "current_counterparty":"orders-service",
+  "new_owner":           "payments-service-v2",
+  "new_counterparty":    null,
+  "rationale":           "cutover the binding owner to the v2 deployment",
+  "proposer_actor":      "alice"
+}
+```
+
+Errors:
+- `404 Not Found` — contract or one of the named endpoint parts
+  does not exist.
+- `409 Conflict` — resulting `(owner, counterparty, subtype,
+  connection_type)` tuple would collide with an existing contract
+  (the widened uniqueness key from #42).
+- `422 Unprocessable Entity` — neither side set, no-op (resolves
+  to current pair), self-loop (owner == counterparty after shift),
+  source/target rule violation, or invalid slug.
+
+### `GET /contracts/{contract_id}/endpoint-proposals` — list endpoint shifts
+
+Same shape as the subtype-proposals listing. `current_owner` /
+`current_counterparty` reflect the contract's *current* endpoints
+at read time (post any accepted shifts).
+
+```json
+{
+  "contract_id":         "ab12...",
+  "current_owner":       "payments-service-v2",
+  "current_counterparty":"orders-service",
+  "proposals": [
+    {
+      "proposal_id":                    "7d3e...",
+      "current_owner_at_propose":       "payments-service",
+      "current_counterparty_at_propose":"orders-service",
+      "new_owner":                      "payments-service-v2",
+      "new_counterparty":               null,
+      "rationale":                      "cutover the binding owner to v2",
+      "proposer_actor":                 "alice",
+      "status":                         "accepted",
+      "created_at":                     "2026-05-04T10:00:00Z",
+      "accepted_at":                    "2026-05-04T10:30:00Z",
+      "accepted_by":                    "bob",
+      "single_operator_override":       false
+    }
+  ]
+}
+```
+
+### `POST /contracts/{contract_id}/endpoint-proposals/{proposal_id}/accept` — promote an endpoint shift
+
+```sh
+curl -X POST -H 'Authorization: Bearer sysmlv2' \
+     -H 'X-Actor: bob' \
+     'http://localhost:8000/contracts/ab12.../endpoint-proposals/7d3e.../accept'
+```
+
+`?single_operator=true` overrides the proposer-doesn't-accept rule.
+
+`200` response:
+```json
+{
+  "proposal_id":              "7d3e...",
+  "contract_id":              "ab12...",
+  "shifted_from_owner":       "payments-service",
+  "shifted_to_owner":         "payments-service-v2",
+  "shifted_from_counterparty":"orders-service",
+  "shifted_to_counterparty":  "orders-service",
+  "accepted_at":              "2026-05-04T10:30:00Z",
+  "accepted_by":              "bob",
+  "single_operator_override": false
+}
+```
+
+`shifted_from_*` / `shifted_to_*` are reported for both sides even
+on a one-sided shift; the unchanged side reports the same value on
+both. The on-row bookkeeping cols
+(`endpoint_shifted_from_owner` / `endpoint_shifted_from_counterparty`)
+record `NULL` for the unchanged side, to mark the audit trail
+precisely.
+
+The accept endpoint **re-validates** source/target and uniqueness
+against the current state (endpoint subtypes may have shifted, the
+contract subtype/connection_type may have shifted, or another
+contract at the proposed shape may have been created since
+propose time). A proposal that was valid at propose time and no
+longer is fails here with `422` or `409`.
+
+Errors:
+- `404 Not Found` — contract or `proposal_id` does not exist.
+- `409 Conflict` — proposal already accepted, no-op (concurrent
+  shift landed first), endpoint part deleted since propose, or a
+  colliding contract now exists at the proposed endpoint pair.
+- `422 Unprocessable Entity` — `proposer_actor == acceptor_actor`
+  without `?single_operator=true`, source/target rule no longer
+  satisfied, or self-loop after shift.
+
+---
+
 ## Status codes used
 
 | Code | When                                                   |
