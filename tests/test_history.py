@@ -229,3 +229,92 @@ class TestContractHistory:
         assert r.status_code == 422
         r = await client.get(f"/contracts/{cid}/history", params={"limit": 101})
         assert r.status_code == 422
+
+
+class TestPartHistoryActor:
+    """#51 — /parts/{name}/history surfaces actor fields on shift entries.
+
+    body_bump entries on parts surface as null/false because PartVersion
+    does not yet carry propose-accept attribution (parts use direct-write
+    versioning; the issue defers populating these as forward-applies once
+    parts gain a content-proposal lifecycle).
+    """
+
+    async def test_body_bump_actors_null_per_forward_apply(self, client):
+        await _register_part(client, "svc")
+        r = await client.get("/parts/svc/history")
+        assert r.status_code == 200
+        rows = r.json()["results"]
+        v100 = next(r for r in rows if r["version"] == "1.0.0")
+        assert v100["kind"] == "body_bump"
+        assert v100["proposer_actor"] is None
+        assert v100["acceptor_actor"] is None
+        assert v100["single_operator_override"] is False
+
+    async def test_subtype_shift_carries_actors(self, client):
+        await _register_part(client, "svc")
+        prop = await client.post(
+            "/parts/svc/subtype-proposals",
+            json={"new_subtype": "container", "rationale": "actually a container"},
+            headers={"X-Actor": "alice"},
+        )
+        assert prop.status_code == 201, prop.text
+        proposal_id = prop.json()["proposal_id"]
+        accept = await client.post(
+            f"/parts/svc/subtype-proposals/{proposal_id}/accept",
+            headers={"X-Actor": "bob"},
+        )
+        assert accept.status_code == 200, accept.text
+
+        r = await client.get("/parts/svc/history")
+        rows = r.json()["results"]
+        shift = next(r for r in rows if r["kind"] == "subtype_shift")
+        assert shift["proposer_actor"] == "alice"
+        assert shift["acceptor_actor"] == "bob"
+        assert shift["single_operator_override"] is False
+
+    async def test_name_shift_carries_actors(self, client):
+        await _register_part(client, "svc")
+        prop = await client.post(
+            "/parts/svc/name-proposals",
+            json={"new_name": "service", "rationale": "clearer"},
+            headers={"X-Actor": "alice"},
+        )
+        assert prop.status_code == 201, prop.text
+        proposal_id = prop.json()["proposal_id"]
+        accept = await client.post(
+            f"/parts/svc/name-proposals/{proposal_id}/accept",
+            headers={"X-Actor": "bob"},
+        )
+        assert accept.status_code == 200, accept.text
+
+        # History surfaces under the renamed slug.
+        r = await client.get("/parts/service/history")
+        rows = r.json()["results"]
+        shift = next(r for r in rows if r["kind"] == "name_shift")
+        assert shift["proposer_actor"] == "alice"
+        assert shift["acceptor_actor"] == "bob"
+        assert shift["single_operator_override"] is False
+
+    async def test_single_operator_override_surfaces(self, client):
+        await _register_part(client, "svc")
+        prop = await client.post(
+            "/parts/svc/subtype-proposals",
+            json={"new_subtype": "container", "rationale": "solo setup"},
+            headers={"X-Actor": "solo"},
+        )
+        proposal_id = prop.json()["proposal_id"]
+        # Same X-Actor accepts under single_operator override.
+        accept = await client.post(
+            f"/parts/svc/subtype-proposals/{proposal_id}/accept",
+            params={"single_operator": "true"},
+            headers={"X-Actor": "solo"},
+        )
+        assert accept.status_code == 200, accept.text
+
+        r = await client.get("/parts/svc/history")
+        rows = r.json()["results"]
+        shift = next(r for r in rows if r["kind"] == "subtype_shift")
+        assert shift["proposer_actor"] == "solo"
+        assert shift["acceptor_actor"] == "solo"
+        assert shift["single_operator_override"] is True
