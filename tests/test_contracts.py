@@ -148,6 +148,19 @@ class TestSearch:
         r = await client.get("/contracts", params={"owner": "a", "counterparty": "ghost"})
         assert r.status_code == 404
 
+    async def test_response_shape_parity_with_list_endpoints(self, client):
+        # #48: search response carries `next: None` so consumers can use one
+        # parser shape across /contracts (list), /contracts?owner&counterparty
+        # (search), and /parts/{name}/contracts.
+        await _register_pair(client)
+        await _new_contract(client)
+        r = await client.get("/contracts", params={"owner": "a", "counterparty": "b"})
+        assert r.status_code == 200
+        body = r.json()
+        assert "results" in body
+        assert "next" in body
+        assert body["next"] is None
+
 
 async def _register_part(client, name, subtype="software"):
     r = await client.post(

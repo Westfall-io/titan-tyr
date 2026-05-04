@@ -414,6 +414,11 @@ class ContractSearchResult(BaseModel):
 
 class ContractSearchResponse(BaseModel):
     results: list[ContractSearchResult]
+    # Always None — search is bounded ≤2 and never paginates. Field exists
+    # for shape parity with ContractListResponse / PartContractsListResponse
+    # so consumers can use a single parser pattern across all contract-list
+    # responses (#48).
+    next: str | None = None
 
 
 class ContractDetail(BaseModel):
