@@ -1,0 +1,42 @@
+name: Release
+
+# Bumps the version in pyproject.toml, tags, and creates a GitHub Release
+# based on commits landed on main since the last tag. Triggered by every
+# push to main (typically a PR merge).
+#
+# Commit parser is gitmoji (configured in pyproject.toml's
+# [tool.semantic_release] block). PR squash-merges turn into a single
+# commit whose message is the PR title — make sure PR titles carry the
+# right prefix (✨ minor, 🐛/🔧/📝 patch, 💥 major).
+#
+# The action commits the version bump back to main using GITHUB_TOKEN.
+# That commit's message is "<emoji-less prefix> X.Y.Z" — semantic-release
+# is configured (default) to ignore its own commits, so the workflow
+# re-firing on the bump commit is a no-op.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Python Semantic Release
+        uses: python-semantic-release/python-semantic-release@v9
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
