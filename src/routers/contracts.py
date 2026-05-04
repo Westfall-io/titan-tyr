@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth import require_password
 from src.db import get_session
-from src.models import Contract, ContractSubtypeProposal, ContractVersion, Part
+from src.models import Contract, ContractSubtypeProposal, ContractVersion, Part, Project
 from src.pagination import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
@@ -18,6 +18,7 @@ from src.pagination import (
     encode_cursor,
     validate_limit,
 )
+from src.routers._projects import resolve_project_slug
 from src.routers._rules import BINDING_OWNER_SUBTYPES, CONNECTION_RULES
 from src.routers._subtype_helpers import (
     body_realign_required,
@@ -27,6 +28,7 @@ from src.routers.parts import _latest_active_contract_version, _list_active_cont
 from src.schemas import (
     CONNECTION_TYPES,
     CONTRACT_SUBTYPES,
+    PROJECT_NONE_SENTINEL,
     ContractCreate,
     ContractCreateResponse,
     ContractDetail,
@@ -203,12 +205,15 @@ async def register_contract(
             ),
         )
 
+    project_id = await resolve_project_slug(session, payload.project)
+
     contract = Contract(
         owner_part_id=owner.id,
         counterparty_part_id=counterparty.id,
         subtype=payload.subtype,
         connection_type=payload.connection_type,
         created_by_actor=x_actor,
+        project_id=project_id,
     )
     session.add(contract)
     await session.flush()
@@ -233,6 +238,7 @@ async def register_contract(
         connection_type=payload.connection_type,
         version=str(version),
         status="active",
+        project=payload.project,
     )
 
 
@@ -242,6 +248,7 @@ async def list_or_search_contracts(
     counterparty: str | None = Query(default=None),
     subtype: str | None = Query(default=None),
     connection_type: str | None = Query(default=None),
+    project: str | None = Query(default=None, max_length=64),
     after: str | None = Query(default=None),
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     session: AsyncSession = Depends(get_session),
@@ -279,6 +286,17 @@ async def list_or_search_contracts(
                 ),
             )
 
+    # Project filter (#44). Same three-mode shape as the parts list: omitted/empty
+    # = no filter, `__none__` sentinel = unprojected only, any other slug =
+    # filter to that project (422 if unknown).
+    project_filter_id = None
+    project_filter_unprojected = False
+    if project is not None and project != "":
+        if project == PROJECT_NONE_SENTINEL:
+            project_filter_unprojected = True
+        else:
+            project_filter_id = await resolve_project_slug(session, project)
+
     if owner is None:
         # List mode: paginated summary of every contract with an active version.
         limit = validate_limit(limit)
@@ -289,6 +307,8 @@ async def list_or_search_contracts(
             touching_part_id=None,
             subtype=subtype,
             connection_type=connection_type,
+            project_filter_id=project_filter_id,
+            project_filter_unprojected=project_filter_unprojected,
         )
         return ContractListResponse(results=items, next=next_cursor)
 
@@ -312,6 +332,10 @@ async def list_or_search_contracts(
         stmt = stmt.where(Contract.subtype == subtype)
     if connection_type is not None:
         stmt = stmt.where(Contract.connection_type == connection_type)
+    if project_filter_unprojected:
+        stmt = stmt.where(Contract.project_id.is_(None))
+    elif project_filter_id is not None:
+        stmt = stmt.where(Contract.project_id == project_filter_id)
     contracts = (await session.execute(stmt)).scalars().all()
 
     results: list[ContractSearchResult] = []
@@ -321,6 +345,10 @@ async def list_or_search_contracts(
             continue
         owner_name = (await session.get(Part, c.owner_part_id)).name
         cp_name = (await session.get(Part, c.counterparty_part_id)).name
+        project_name = None
+        if c.project_id is not None:
+            proj = await session.get(Project, c.project_id)
+            project_name = proj.name if proj is not None else None
         results.append(
             ContractSearchResult(
                 contract_id=c.id,
@@ -332,6 +360,7 @@ async def list_or_search_contracts(
                 markdown=latest.markdown,
                 updated_at=latest.accepted_at or latest.created_at,
                 created_by_actor=c.created_by_actor,
+                project=project_name,
             )
         )
     return ContractSearchResponse(results=results)
@@ -350,6 +379,10 @@ async def get_contract(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contract has no active version")
     owner = (await session.get(Part, contract.owner_part_id)).name
     counterparty = (await session.get(Part, contract.counterparty_part_id)).name
+    project_name = None
+    if contract.project_id is not None:
+        proj = await session.get(Project, contract.project_id)
+        project_name = proj.name if proj is not None else None
     return ContractDetail(
         contract_id=contract.id,
         owner=owner,
@@ -360,6 +393,7 @@ async def get_contract(
         markdown=latest.markdown,
         updated_at=latest.accepted_at or latest.created_at,
         created_by_actor=contract.created_by_actor,
+        project=project_name,
     )
 
 

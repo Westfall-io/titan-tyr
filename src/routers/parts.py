@@ -15,6 +15,7 @@ from src.models import (
     Part,
     PartSubtypeProposal,
     PartVersion,
+    Project,
 )
 from src.pagination import (
     DEFAULT_LIMIT,
@@ -23,6 +24,7 @@ from src.pagination import (
     encode_cursor,
     validate_limit,
 )
+from src.routers._projects import resolve_project_slug
 from src.routers._rules import BINDING_OWNER_SUBTYPES, CONNECTION_RULES
 from src.routers._subtype_helpers import (
     body_realign_required,
@@ -30,6 +32,7 @@ from src.routers._subtype_helpers import (
 )
 from src.schemas import (
     PART_SUBTYPES,
+    PROJECT_NONE_SENTINEL,
     ContractListItem,
     PartContractsListResponse,
     PartCreate,
@@ -74,6 +77,7 @@ async def list_parts(
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     match: str | None = Query(default=None, max_length=128),
     subtype: str | None = Query(default=None),
+    project: str | None = Query(default=None, max_length=64),
     session: AsyncSession = Depends(get_session),
 ) -> PartListResponse:
     limit = validate_limit(limit)
@@ -83,6 +87,18 @@ async def list_parts(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"subtype must be one of {sorted(PART_SUBTYPES)}",
         )
+
+    # Project filter (#44). Three modes:
+    #   - omitted / empty           → no filter, default behaviour
+    #   - PROJECT_NONE_SENTINEL     → only unprojected rows (project_id IS NULL)
+    #   - any other slug            → resolve to project_id, filter; 422 if unknown
+    project_filter_id = None
+    project_filter_unprojected = False
+    if project is not None and project != "":
+        if project == PROJECT_NONE_SENTINEL:
+            project_filter_unprojected = True
+        else:
+            project_filter_id = await resolve_project_slug(session, project)
 
     latest_versions = (
         select(
@@ -102,22 +118,32 @@ async def list_parts(
         .subquery()
     )
 
-    stmt = select(
-        Part.id,
-        Part.name,
-        Part.subtype,
-        Part.repo_uri,
-        Part.issue_tracker_uri,
-        Part.aliases,
-        Part.created_by_actor,
-        latest_versions.c.pv_major,
-        latest_versions.c.pv_minor,
-        latest_versions.c.pv_patch,
-        latest_versions.c.pv_created_at,
-    ).join(latest_versions, Part.id == latest_versions.c.pv_part_id)
+    stmt = (
+        select(
+            Part.id,
+            Part.name,
+            Part.subtype,
+            Part.repo_uri,
+            Part.issue_tracker_uri,
+            Part.aliases,
+            Part.created_by_actor,
+            Project.name.label("project_name"),
+            latest_versions.c.pv_major,
+            latest_versions.c.pv_minor,
+            latest_versions.c.pv_patch,
+            latest_versions.c.pv_created_at,
+        )
+        .join(latest_versions, Part.id == latest_versions.c.pv_part_id)
+        .outerjoin(Project, Part.project_id == Project.id)
+    )
 
     if subtype is not None:
         stmt = stmt.where(Part.subtype == subtype)
+
+    if project_filter_unprojected:
+        stmt = stmt.where(Part.project_id.is_(None))
+    elif project_filter_id is not None:
+        stmt = stmt.where(Part.project_id == project_filter_id)
 
     if match is not None:
         # Case-insensitive substring match against name OR any alias. The U+001F
@@ -155,7 +181,7 @@ async def list_parts(
     last_id = None
     for (
         p_id, p_name, p_subtype, p_repo, p_tracker, p_aliases, p_creator,
-        vmaj, vmin, vpat, vts,
+        p_project, vmaj, vmin, vpat, vts,
     ) in rows:
         items.append(
             PartListItem(
@@ -168,6 +194,7 @@ async def list_parts(
                 version=str(Version(vmaj, vmin, vpat)),
                 updated_at=vts,
                 created_by_actor=p_creator,
+                project=p_project,
             )
         )
         last_t, last_id = vts, p_id
@@ -191,6 +218,7 @@ async def register_part(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Part {payload.name!r} already exists",
         )
+    project_id = await resolve_project_slug(session, payload.project)
     part = Part(
         name=payload.name,
         subtype=payload.subtype,
@@ -198,6 +226,7 @@ async def register_part(
         issue_tracker_uri=payload.issue_tracker_uri,
         aliases=payload.aliases,
         created_by_actor=x_actor,
+        project_id=project_id,
     )
     session.add(part)
     await session.flush()
@@ -223,11 +252,16 @@ async def get_part(
     name: str,
     session: AsyncSession = Depends(get_session),
 ) -> PartDetail:
-    part = (
-        await session.execute(select(Part).where(Part.name == name))
-    ).scalar_one_or_none()
-    if part is None:
+    row = (
+        await session.execute(
+            select(Part, Project.name.label("project_name"))
+            .outerjoin(Project, Part.project_id == Project.id)
+            .where(Part.name == name)
+        )
+    ).first()
+    if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Part {name!r} not found")
+    part, project_name = row
     latest = await _latest_part_version(session, part.id)
     if latest is None:  # invariant: every part row has at least one version
         raise HTTPException(status_code=500, detail="Part has no versions")
@@ -243,6 +277,7 @@ async def get_part(
         markdown=latest.markdown,
         updated_at=latest.created_at,
         created_by_actor=part.created_by_actor,
+        project=project_name,
     )
 
 
@@ -282,6 +317,11 @@ async def update_part(
         part.issue_tracker_uri = payload.issue_tracker_uri
     if "aliases" in payload.model_fields_set:
         part.aliases = payload.aliases or []
+    # Project tag (#44). Explicit null clears (move to unprojected); a
+    # slug resolves to the project's id (422 if unknown). Field absent
+    # = unchanged.
+    if "project" in payload.model_fields_set:
+        part.project_id = await resolve_project_slug(session, payload.project)
 
     pv = PartVersion(
         part_id=part.id,
@@ -416,6 +456,8 @@ async def _list_active_contracts(
     touching_part_id=None,
     subtype: str | None = None,
     connection_type: str | None = None,
+    project_filter_id=None,
+    project_filter_unprojected: bool = False,
 ) -> tuple[list[ContractListItem], str | None]:
     """Paginated listing of contracts with their latest active version.
 
@@ -429,6 +471,11 @@ async def _list_active_contracts(
     label (only meaningful when subtype='connection'; the caller validates
     against CONNECTION_TYPES and rejects mismatched subtype/connection_type
     combos).
+
+    `project_filter_id` / `project_filter_unprojected` (#44) restrict to
+    contracts in a specific project or to unprojected contracts. The
+    caller resolves the project slug to an id (or sets the unprojected
+    flag) before calling.
     """
     latest_active = (
         select(
@@ -461,6 +508,7 @@ async def _list_active_contracts(
             Contract.created_by_actor,
             owner_alias.c.name.label("owner_name"),
             cp_alias.c.name.label("cp_name"),
+            Project.name.label("project_name"),
             latest_active.c.cv_major,
             latest_active.c.cv_minor,
             latest_active.c.cv_patch,
@@ -470,6 +518,7 @@ async def _list_active_contracts(
         .join(latest_active, Contract.id == latest_active.c.cv_contract_id)
         .join(owner_alias, owner_alias.c.id == Contract.owner_part_id)
         .join(cp_alias, cp_alias.c.id == Contract.counterparty_part_id)
+        .outerjoin(Project, Contract.project_id == Project.id)
     )
 
     if touching_part_id is not None:
@@ -485,6 +534,11 @@ async def _list_active_contracts(
 
     if connection_type is not None:
         stmt = stmt.where(Contract.connection_type == connection_type)
+
+    if project_filter_unprojected:
+        stmt = stmt.where(Contract.project_id.is_(None))
+    elif project_filter_id is not None:
+        stmt = stmt.where(Contract.project_id == project_filter_id)
 
     # Pagination order key: COALESCE(accepted_at, created_at) per row, plus id.
     # Use accepted_at if present; otherwise created_at. We compute the value in
@@ -512,7 +566,8 @@ async def _list_active_contracts(
     last_id = None
     for (
         c_id, c_subtype, c_conn_type, c_creator,
-        owner_name, cp_name, vmaj, vmin, vpat, vts, accepted_at,
+        owner_name, cp_name, project_name,
+        vmaj, vmin, vpat, vts, accepted_at,
     ) in rows:
         items.append(
             ContractListItem(
@@ -524,6 +579,7 @@ async def _list_active_contracts(
                 version=str(Version(vmaj, vmin, vpat)),
                 updated_at=accepted_at or vts,
                 created_by_actor=c_creator,
+                project=project_name,
             )
         )
         last_t, last_id = vts, c_id
