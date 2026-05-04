@@ -47,6 +47,8 @@ from src.schemas import (
     ContractEndpointShiftListResponse,
     ContractSearchResponse,
     ContractSearchResult,
+    ContractUpdate,
+    ContractUpdateResponse,
     ContractSubtypeShiftAcceptResponse,
     ContractSubtypeShiftCreate,
     ContractSubtypeShiftCreateResponse,
@@ -409,6 +411,79 @@ async def get_contract(
     )
 
 
+@router.put("/{contract_id}", response_model=ContractUpdateResponse)
+async def update_contract(
+    contract_id: uuid.UUID,
+    payload: ContractUpdate,
+    session: AsyncSession = Depends(get_session),
+    x_actor: str | None = Header(default=None, alias="X-Actor"),
+) -> ContractUpdateResponse:
+    """Soft-metadata PATCH on contracts (#52, #53).
+
+    Today this is `project` (omit / value / null) plus the
+    `created_by_actor` first-write-wins backfill from `X-Actor` (#54):
+    when the row's current `created_by_actor` is `NULL`, an `X-Actor`
+    on PUT claims the row; once set, the field is immutable on PUT
+    (subsequent X-Actor values are silently ignored on this field —
+    the proposer / acceptor of a content change is the place to
+    record per-write attribution).
+
+    Body / version / subtype / connection_type / endpoints all flow
+    through their dedicated propose-accept endpoints; this PUT does
+    not touch any of them.
+    """
+    contract = (
+        await session.execute(
+            select(Contract).where(Contract.id == contract_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if contract is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found"
+        )
+
+    if "project" in payload.model_fields_set:
+        contract.project_id = await resolve_project_slug(session, payload.project)
+
+    # First-write-wins backfill (#54). Honor X-Actor only when the
+    # current value is NULL, so legacy rows can be claimed by their
+    # original creator without permitting identity-spoofing of rows
+    # that already carry attribution.
+    if x_actor is not None and contract.created_by_actor is None:
+        contract.created_by_actor = x_actor
+
+    await session.commit()
+    await session.refresh(contract)
+
+    latest = await _latest_active_contract_version(session, contract.id)
+    if latest is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Contract has no active version",
+        )
+    owner = (await session.get(Part, contract.owner_part_id)).name
+    counterparty = (await session.get(Part, contract.counterparty_part_id)).name
+    project_name = None
+    if contract.project_id is not None:
+        proj = await session.get(Project, contract.project_id)
+        project_name = proj.name if proj is not None else None
+
+    return ContractUpdateResponse(
+        contract_id=contract.id,
+        owner=owner,
+        counterparty=counterparty,
+        subtype=contract.subtype,
+        connection_type=contract.connection_type,
+        version=str(
+            Version(latest.version_major, latest.version_minor, latest.version_patch)
+        ),
+        markdown=latest.markdown,
+        updated_at=latest.accepted_at or latest.created_at,
+        created_by_actor=contract.created_by_actor,
+        project=project_name,
+    )
+
+
 @router.get("/{contract_id}/history", response_model=VersionHistoryResponse)
 async def get_contract_history(
     contract_id: uuid.UUID,
@@ -434,6 +509,9 @@ async def get_contract_history(
                 ContractVersion.version_patch,
                 ContractVersion.created_at,
                 ContractVersion.accepted_at,
+                ContractVersion.proposer_actor,
+                ContractVersion.acceptor_actor,
+                ContractVersion.single_operator_override,
             ).where(
                 ContractVersion.contract_id == contract_id,
                 ContractVersion.status == "active",
@@ -446,6 +524,9 @@ async def get_contract_history(
             select(
                 ContractSubtypeProposal.id,
                 ContractSubtypeProposal.accepted_at,
+                ContractSubtypeProposal.proposer_actor,
+                ContractSubtypeProposal.accepted_by,
+                ContractSubtypeProposal.single_operator_override,
             ).where(
                 ContractSubtypeProposal.contract_id == contract_id,
                 ContractSubtypeProposal.status == "accepted",
@@ -458,6 +539,9 @@ async def get_contract_history(
             select(
                 ContractEndpointProposal.id,
                 ContractEndpointProposal.accepted_at,
+                ContractEndpointProposal.proposer_actor,
+                ContractEndpointProposal.accepted_by,
+                ContractEndpointProposal.single_operator_override,
             ).where(
                 ContractEndpointProposal.contract_id == contract_id,
                 ContractEndpointProposal.status == "accepted",
@@ -481,7 +565,12 @@ async def get_contract_history(
             Version(latest.version_major, latest.version_minor, latest.version_patch)
         )
 
-    entries: list[tuple[datetime, uuid.UUID, str, str]] = []
+    # Tuple shape: (timestamp, row_id, kind, version_str, proposer,
+    # acceptor, single_operator_override). The latter three surface
+    # per-version actor on history (#54).
+    entries: list[
+        tuple[datetime, uuid.UUID, str, str, str | None, str | None, bool]
+    ] = []
     for r in body_rows:
         ts = r.accepted_at or r.created_at
         entries.append(
@@ -490,19 +579,38 @@ async def get_contract_history(
                 r.id,
                 "body_bump",
                 str(Version(r.version_major, r.version_minor, r.version_patch)),
+                r.proposer_actor,
+                r.acceptor_actor,
+                bool(r.single_operator_override),
             )
         )
     for r in shift_rows:
         if r.accepted_at is None:
             continue
         entries.append(
-            (r.accepted_at, r.id, "subtype_shift", _version_at(r.accepted_at))
+            (
+                r.accepted_at,
+                r.id,
+                "subtype_shift",
+                _version_at(r.accepted_at),
+                r.proposer_actor,
+                r.accepted_by,
+                bool(r.single_operator_override),
+            )
         )
     for r in endpoint_shift_rows:
         if r.accepted_at is None:
             continue
         entries.append(
-            (r.accepted_at, r.id, "endpoint_shift", _version_at(r.accepted_at))
+            (
+                r.accepted_at,
+                r.id,
+                "endpoint_shift",
+                _version_at(r.accepted_at),
+                r.proposer_actor,
+                r.accepted_by,
+                bool(r.single_operator_override),
+            )
         )
 
     entries.sort(key=lambda e: (e[0], e[1]), reverse=True)
@@ -515,8 +623,15 @@ async def get_contract_history(
     entries = entries[:limit]
 
     items = [
-        VersionHistoryItem(version=v, updated_at=ts, kind=k)
-        for ts, _, k, v in entries
+        VersionHistoryItem(
+            version=v,
+            updated_at=ts,
+            kind=k,
+            proposer_actor=proposer,
+            acceptor_actor=acceptor,
+            single_operator_override=override,
+        )
+        for ts, _, k, v, proposer, acceptor, override in entries
     ]
     last_t, last_id = (entries[-1][0], entries[-1][1]) if entries else (None, None)
     next_cursor = encode_cursor(last_t, last_id) if has_more and last_t else None

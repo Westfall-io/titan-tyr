@@ -430,10 +430,28 @@ Within a single payload, entries are deduplicated case-insensitively
 design** — `?match=` surfaces all candidates and the caller
 disambiguates.
 
-`201` response:
+`201` response (provider v0.20.0+, #47): the full persisted row,
+same shape as `GET /parts/{name}`:
 ```json
-{ "id": "12c3a4b5-...", "name": "payments-service", "subtype": "software", "version": "1.0.0" }
+{
+  "id": "12c3a4b5-...",
+  "name": "payments-service",
+  "subtype": "software",
+  "repo_uri": "https://github.com/example/payments-service",
+  "issue_tracker_uri": null,
+  "aliases": [],
+  "version": "1.0.0",
+  "markdown": "# payments-service\n...",
+  "updated_at": "2026-04-29T14:30:00Z",
+  "created_by_actor": "alice@example.com",
+  "project": null
+}
 ```
+
+> **Pre-v0.20.0** the response was the bare
+> `{ "id", "name", "subtype", "version" }`. The widening is purely
+> additive (existing fields preserved); consumers reading only `name`
+> or `version` continue to work without change.
 
 Errors:
 - `409 Conflict` — name already taken (across all subtypes — names are
@@ -513,10 +531,38 @@ as on register (1–128 chars, no control characters, case-preserved,
 case-insensitive per-payload dedupe). Setting an empty list (`[]`) is
 equivalent to setting `null` — both clear.
 
-`200` response:
+> **`X-Actor` and `created_by_actor`** (provider v0.21.0+, #54).
+> If the part's `created_by_actor` is currently `null`, an
+> `X-Actor: <identity>` header on this PUT will **claim** the row —
+> first-write-wins. Once `created_by_actor` is set, subsequent PUTs
+> ignore X-Actor on this field (no identity-spoofing of attributed
+> rows).
+
+`200` response (provider v0.20.0+, #47): the full persisted row,
+same shape as `GET /parts/{name}` and `POST /parts`. Eliminates the
+verify-with-GET round-trip — `update-part` callers can render the
+echoed `markdown`, `updated_at`, and project / metadata fields
+straight from the PUT response.
+
 ```json
-{ "name": "payments-service", "version": "2.1.0" }
+{
+  "id": "12c3a4b5-...",
+  "name": "payments-service",
+  "subtype": "software",
+  "repo_uri": "https://github.com/example/payments-service-renamed",
+  "issue_tracker_uri": "https://linear.app/example/team/PAY",
+  "aliases": ["payments", "billing"],
+  "version": "2.1.0",
+  "markdown": "...",
+  "updated_at": "2026-04-29T14:30:00Z",
+  "created_by_actor": "alice@example.com",
+  "project": null
+}
 ```
+
+> **Pre-v0.20.0** the response was the bare
+> `{ "name", "version" }`. The widening is purely additive; consumers
+> reading only those two fields continue to work without change.
 
 Errors:
 - `404 Not Found` — part not registered.
@@ -848,6 +894,48 @@ contract's immutable `subtype`:
 
 `404` if the contract does not exist or has no active version yet.
 
+### `PUT /contracts/{contract_id}` — soft metadata PATCH (provider v0.21.0+, #52, #53)
+
+Updates **only soft metadata** on an existing contract — today, the
+optional `project` tag. Body / version / subtype / connection_type /
+endpoints all flow through their dedicated propose-accept endpoints
+(`/proposals`, `/subtype-proposals`, `/endpoint-proposals`); this
+PUT does not touch any of them. No version bump.
+
+```sh
+curl -H 'Authorization: Bearer sysmlv2' \
+     -H 'Content-Type: application/json' \
+     -X PUT \
+     -d '{"project": "watchervault"}' \
+     http://localhost:8000/contracts/ab12cd34-1234-1234-1234-1234567890ab
+```
+
+PATCH semantics on `project` (mirrors `PUT /parts/{name}`):
+
+| Field     | Omitted from body         | `"project": "<slug>"`                         | `"project": null`                |
+| --------- | ------------------------- | --------------------------------------------- | -------------------------------- |
+| `project` | Existing tag unchanged.   | Reassigns to that project (422 if unknown).   | Clears tag (move to unprojected). |
+
+An empty body (`{}`) is valid — it makes no field change but still
+runs the `created_by_actor` backfill below if `X-Actor` is sent.
+
+> **`X-Actor` and `created_by_actor`** (provider v0.21.0+, #54).
+> If the contract's `created_by_actor` is currently `null`, an
+> `X-Actor: <identity>` header on this PUT will **claim** the row —
+> first-write-wins. Once `created_by_actor` is set, subsequent PUTs
+> ignore X-Actor on this field (no identity-spoofing of attributed
+> rows). Per-version actor (proposer / acceptor of body changes,
+> shift acceptances) lives on the proposal/accept rows and now
+> surfaces on `GET /contracts/{contract_id}/history` (see below).
+
+`200` response: the full persisted row, same shape as
+`GET /contracts/{contract_id}`.
+
+Errors:
+- `404 Not Found` — contract id does not exist.
+- `422 Unprocessable Entity` — `project` slug malformed or
+  references an unknown project.
+
 ### `GET /contracts/{contract_id}/history` — accepted timeline (paginated)
 
 Lists every accepted change to this contract, most-recent first. Two
@@ -867,14 +955,40 @@ curl -H 'Authorization: Bearer sysmlv2' \
      'http://localhost:8000/contracts/ab12cd34-1234-1234-1234-1234567890ab/history?limit=10'
 ```
 
-`200` response:
+`200` response (provider v0.21.0+, #54): each entry now carries
+optional per-version actor fields. `proposer_actor` and
+`acceptor_actor` come from the underlying row's recorded X-Actor at
+propose / accept time; `single_operator_override` is `true` when
+the accept was made under `?single_operator=true`. All three are
+optional — pre-#38 rows surface them as `null` / `false`.
+
 ```json
 {
   "results": [
-    { "kind": "subtype_shift", "version": "1.2.0", "updated_at": "2026-05-02T11:00:00Z" },
-    { "kind": "body_bump",     "version": "1.2.0", "updated_at": "2026-04-15T09:14:00Z" },
-    { "kind": "body_bump",     "version": "1.1.1", "updated_at": "2026-03-22T17:02:11Z" },
-    { "kind": "body_bump",     "version": "1.0.0", "updated_at": "2026-02-01T08:30:00Z" }
+    {
+      "kind": "endpoint_shift",
+      "version": "1.2.0",
+      "updated_at": "2026-05-04T10:00:00Z",
+      "proposer_actor": "alice",
+      "acceptor_actor": "bob",
+      "single_operator_override": false
+    },
+    {
+      "kind": "body_bump",
+      "version": "1.2.0",
+      "updated_at": "2026-04-15T09:14:00Z",
+      "proposer_actor": "alice",
+      "acceptor_actor": "bob",
+      "single_operator_override": false
+    },
+    {
+      "kind": "body_bump",
+      "version": "1.0.0",
+      "updated_at": "2026-02-01T08:30:00Z",
+      "proposer_actor": null,
+      "acceptor_actor": null,
+      "single_operator_override": false
+    }
   ],
   "next": null
 }
@@ -882,13 +996,21 @@ curl -H 'Authorization: Bearer sysmlv2' \
 
 For `body_bump` entries, `updated_at` is the row's `accepted_at` when
 it was promoted from a proposal, otherwise its `created_at` (e.g. the
-initial `1.0.0` written by `POST /contracts`). For `subtype_shift`
-entries, `version` is the latest body version at shift time (the
-shift does not bump the version) and `updated_at` is the proposal's
-`accepted_at`.
+initial `1.0.0` written by `POST /contracts`). For `subtype_shift` /
+`endpoint_shift` entries, `version` is the latest body version at
+shift time (the shift does not bump the version) and `updated_at` is
+the proposal's `accepted_at`.
 
 > **Backwards compat**: pre-v0.15.0 history responses lacked the
-> `kind` field; all entries are `body_bump` for those.
+> `kind` field (default to `body_bump`). Pre-v0.21.0 responses
+> lacked `proposer_actor` / `acceptor_actor` /
+> `single_operator_override` (consumers should default the actors
+> to `null` and the override to `false`).
+>
+> **Parts caveat**: `GET /parts/{name}/history` always surfaces the
+> three actor fields as `null` / `false`. `PartVersion` does not
+> currently store per-version actor; adding the fields would
+> require a schema migration. Tracked as a follow-up on #54.
 
 Pagination follows the conventions above.
 

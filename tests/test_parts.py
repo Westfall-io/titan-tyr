@@ -60,6 +60,112 @@ class TestRegister:
         assert r.status_code == 422
 
 
+class TestResponseShape:
+    """POST and PUT both echo the full persisted row (#47)."""
+
+    EXPECTED_FIELDS = {
+        "id",
+        "name",
+        "subtype",
+        "repo_uri",
+        "issue_tracker_uri",
+        "aliases",
+        "version",
+        "markdown",
+        "updated_at",
+        "created_by_actor",
+        "project",
+    }
+
+    async def test_post_echoes_full_row(self, client):
+        r = await client.post(
+            "/parts",
+            json={
+                "name": "echo-post",
+                "subtype": "software",
+                "repo_uri": "https://example.com/repo",
+                "markdown": "# echo-post\n\nbody",
+                "version": "1.2.3",
+            },
+            headers={"X-Actor": "alice"},
+        )
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert set(body.keys()) >= self.EXPECTED_FIELDS
+        assert body["name"] == "echo-post"
+        assert body["subtype"] == "software"
+        assert body["version"] == "1.2.3"
+        assert body["repo_uri"] == "https://example.com/repo"
+        assert body["markdown"] == "# echo-post\n\nbody"
+        assert body["created_by_actor"] == "alice"
+        assert body["project"] is None
+        assert body["aliases"] == []
+        assert body["issue_tracker_uri"] is None
+        assert body["updated_at"]
+
+    async def test_put_echoes_full_row(self, client):
+        await _register(client, name="echo-put", version="1.0.0")
+        r = await client.put(
+            "/parts/echo-put",
+            json={
+                "version": "1.1.0",
+                "markdown": "# echo-put v2\n\nrev",
+                "issue_tracker_uri": "https://example.com/issues",
+                "aliases": ["alt"],
+            },
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert set(body.keys()) >= self.EXPECTED_FIELDS
+        assert body["name"] == "echo-put"
+        assert body["version"] == "1.1.0"
+        assert body["markdown"] == "# echo-put v2\n\nrev"
+        assert body["issue_tracker_uri"] == "https://example.com/issues"
+        assert body["aliases"] == ["alt"]
+        # subtype is immutable on PUT — echo what was on the row.
+        assert body["subtype"] == "software"
+        assert body["updated_at"]
+
+    async def test_put_response_matches_followup_get(self, client):
+        # The whole point: PUT response should equal what the next
+        # GET would return, eliminating the verify round-trip.
+        await _register(client, name="match", version="1.0.0")
+        put = await client.put(
+            "/parts/match",
+            json={"version": "1.1.0", "markdown": "newer"},
+        )
+        get = await client.get("/parts/match")
+        assert put.status_code == 200
+        assert get.status_code == 200
+        assert put.json() == get.json()
+
+    async def test_post_response_matches_followup_get(self, client):
+        post = await client.post(
+            "/parts",
+            json={
+                "name": "match-post",
+                "subtype": "container",
+                "repo_uri": "u",
+                "markdown": "m",
+            },
+        )
+        get = await client.get("/parts/match-post")
+        assert post.status_code == 201
+        assert get.status_code == 200
+        assert post.json() == get.json()
+
+    async def test_put_echoes_project_assignment(self, client):
+        # Project (re)assignment via PUT should surface in the response.
+        await client.post("/projects", json={"name": "alpha"})
+        await _register(client, name="proj-put", version="1.0.0")
+        r = await client.put(
+            "/parts/proj-put",
+            json={"version": "1.1.0", "markdown": "m2", "project": "alpha"},
+        )
+        assert r.status_code == 200
+        assert r.json()["project"] == "alpha"
+
+
 class TestNameValidation:
     @pytest.mark.parametrize("name", [
         "x",

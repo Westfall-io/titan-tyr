@@ -245,11 +245,23 @@ async def register_part(
     )
     session.add(pv)
     await session.commit()
+    await session.refresh(pv)
+    project_name = None
+    if part.project_id is not None:
+        proj = await session.get(Project, part.project_id)
+        project_name = proj.name if proj is not None else None
     return PartCreateResponse(
         id=part.id,
         name=part.name,
         subtype=part.subtype,
+        repo_uri=part.repo_uri,
+        issue_tracker_uri=part.issue_tracker_uri,
+        aliases=list(part.aliases or []),
         version=str(version),
+        markdown=pv.markdown,
+        updated_at=pv.created_at,
+        created_by_actor=part.created_by_actor,
+        project=project_name,
     )
 
 
@@ -292,6 +304,7 @@ async def update_part(
     name: str,
     payload: PartUpdate,
     session: AsyncSession = Depends(get_session),
+    x_actor: str | None = Header(default=None, alias="X-Actor"),
 ) -> PartUpdateResponse:
     part = (
         await session.execute(
@@ -329,6 +342,14 @@ async def update_part(
     if "project" in payload.model_fields_set:
         part.project_id = await resolve_project_slug(session, payload.project)
 
+    # First-write-wins backfill of created_by_actor (#54). Honor X-Actor
+    # only when the current value is NULL — this lets the original
+    # registrant claim a legacy row (registered before X-Actor existed,
+    # or before they had it set) without permitting subsequent PUTs to
+    # silently overwrite an already-attributed row's identity.
+    if x_actor is not None and part.created_by_actor is None:
+        part.created_by_actor = x_actor
+
     pv = PartVersion(
         part_id=part.id,
         version_major=new_version.major,
@@ -338,7 +359,24 @@ async def update_part(
     )
     session.add(pv)
     await session.commit()
-    return PartUpdateResponse(name=part.name, version=str(new_version))
+    await session.refresh(pv)
+    project_name = None
+    if part.project_id is not None:
+        proj = await session.get(Project, part.project_id)
+        project_name = proj.name if proj is not None else None
+    return PartUpdateResponse(
+        id=part.id,
+        name=part.name,
+        subtype=part.subtype,
+        repo_uri=part.repo_uri,
+        issue_tracker_uri=part.issue_tracker_uri,
+        aliases=list(part.aliases or []),
+        version=str(new_version),
+        markdown=pv.markdown,
+        updated_at=pv.created_at,
+        created_by_actor=part.created_by_actor,
+        project=project_name,
+    )
 
 
 @router.get("/{name}/history", response_model=VersionHistoryResponse)

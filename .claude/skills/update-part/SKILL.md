@@ -147,28 +147,41 @@ the user needs guidance on what a section *means*, that guidance lives
 in the template body's instructional blockquotes — read them, follow
 them, strip them on POST.
 
-### 5. Optional: update row-level metadata (repo_uri, issue_tracker_uri, aliases)
+### 5. Optional: update row-level metadata (repo_uri, issue_tracker_uri, aliases, project)
 
-`PUT /parts/{name}` accepts three optional row-level metadata fields
+`PUT /parts/{name}` accepts four optional row-level metadata fields
 with **PATCH semantics**. They share the same omit/value/null shape;
 the only differences are around what null means per field.
 
-| Field               | Omitted                   | `"...": "value"`                | `"...": null`               |
-| ------------------- | ------------------------- | ------------------------------- | --------------------------- |
-| `repo_uri`          | Existing value unchanged. | Replaces stored value.          | **422** — cannot clear.     |
-| `issue_tracker_uri` | Existing value unchanged. | Replaces stored value (https-only). | Clears stored value.    |
-| `aliases`           | Existing list unchanged.  | Replaces stored list (full set).| Clears list to `[]`.        |
+| Field               | Omitted                   | `"...": "value"`                    | `"...": null`               |
+| ------------------- | ------------------------- | ----------------------------------- | --------------------------- |
+| `repo_uri`          | Existing value unchanged. | Replaces stored value.              | **422** — cannot clear.     |
+| `issue_tracker_uri` | Existing value unchanged. | Replaces stored value (https-only). | Clears stored value.        |
+| `aliases`           | Existing list unchanged.  | Replaces stored list (full set).    | Clears list to `[]`.        |
+| `project`           | Existing tag unchanged.   | Reassigns to that project (slug; 422 if unknown). | Clears tag (move to unprojected). |
 
 Ask the user only if they have a reason to change any of these (repo
-renamed/moved, adopted Jira/Linear, new colloquial nickname, etc.).
-Otherwise omit. Validation:
+renamed/moved, adopted Jira/Linear, new colloquial nickname, project
+re-org, etc.). Otherwise omit. Validation:
 `repo_uri` accepts any non-empty string (HTTPS, SSH form, etc.);
 `issue_tracker_uri` is strictly `https://` with a host;
 `aliases` entries must be 1–128 chars after trim, no control chars or
 newlines, Unicode allowed, case preserved. Setting an empty list
 (`[]`) is equivalent to `null` — both clear. Aliases are a full
 replacement, not a merge — to *add* one, fetch the existing list
-first and resubmit with the addition appended.
+first and resubmit with the addition appended. `project` must
+reference an existing project from `GET /projects` (use
+`/list-projects` to discover slugs); the API 422s on unknown slugs.
+
+> **`X-Actor` and `created_by_actor`** (provider v0.21.0+, #54).
+> If the part's `created_by_actor` is currently `null` (the row was
+> registered before X-Actor existed, or the registrant didn't set
+> it), an `X-Actor: <identity>` on this PUT will **claim** the row —
+> first-write-wins. Once `created_by_actor` is set, subsequent PUTs
+> ignore X-Actor on this field (no identity-spoofing of attributed
+> rows). Per-version actor lives on the proposal/accept rows of
+> `/parts/{name}/proposals` (none for parts today — parts have no
+> content-proposal flow), not on the version row.
 
 ### 6. Choose a new software version
 
@@ -237,10 +250,13 @@ curl -fsS -X PUT \
 
 ### 9. Report
 
-On `200`, summarise:
+On `200`, summarise. The PUT response carries the full persisted row
+(provider v0.20.0+, #47) — same shape as `GET /parts/{name}` —
+so quote the echoed `version`, `updated_at`, and any project /
+metadata fields directly from the response without a follow-up
+GET.
 
-> Updated `<name>` to version `<new-version>`.
-> Read it back: `curl -H 'Authorization: Bearer sysmlv2' $TITAN_TYR_URL/parts/<name>`
+> Updated `<name>` to version `<new-version>` (updated_at: `<echoed timestamp>`).
 
 Note whether the update closed any template drift (stamp now matches
 active template), or whether it only addressed content.

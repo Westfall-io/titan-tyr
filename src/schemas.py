@@ -206,10 +206,20 @@ class PartCreate(BaseModel):
 
 
 class PartCreateResponse(BaseModel):
+    # Same shape as `PartDetail` (#47): both POST /parts and
+    # PUT /parts/{name} echo the full persisted row so callers don't
+    # need a follow-up GET to verify what landed.
     id: uuid.UUID
     name: str
     subtype: str
+    repo_uri: str
+    issue_tracker_uri: str | None = None
+    aliases: list[str] = []
     version: str
+    markdown: str
+    updated_at: datetime
+    created_by_actor: str | None = None
+    project: str | None = None
 
 
 class PartUpdate(BaseModel):
@@ -237,8 +247,21 @@ class PartUpdate(BaseModel):
 
 
 class PartUpdateResponse(BaseModel):
+    # Same shape as `PartDetail` (#47): the PUT echoes the full
+    # persisted row so callers don't need a follow-up GET to verify
+    # the new template stamp landed, the updated_at is fresh, and
+    # the metadata patch took effect.
+    id: uuid.UUID
     name: str
+    subtype: str
+    repo_uri: str
+    issue_tracker_uri: str | None = None
+    aliases: list[str] = []
     version: str
+    markdown: str
+    updated_at: datetime
+    created_by_actor: str | None = None
+    project: str | None = None
 
 
 class PartDetail(BaseModel):
@@ -336,6 +359,46 @@ class ContractCreateResponse(BaseModel):
     project: str | None = None
 
 
+class ContractUpdate(BaseModel):
+    """PATCH-shaped update for soft contract metadata (#52, #53).
+
+    Body / version / subtype / connection_type / endpoints all flow
+    through their dedicated propose/accept endpoints; this PUT covers
+    only metadata that has no semantic effect on the agreement.
+
+    Today: `project` only. Future fields can land here under the same
+    PATCH shape (omit/value/null) without a route change.
+
+    `created_by_actor` is intentionally NOT a payload field — the
+    backfill semantics for it (first-write-wins from X-Actor on PUT
+    when the row's current value is NULL) live in the route, not the
+    schema, so callers can't pass an arbitrary actor string.
+    """
+
+    project: str | None = None
+
+    @field_validator("project")
+    @classmethod
+    def _project_slug(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return _validate_part_name(v)
+
+
+class ContractUpdateResponse(BaseModel):
+    """Same shape as ContractDetail (#47 echo-the-row pattern)."""
+    contract_id: uuid.UUID
+    owner: str
+    counterparty: str
+    subtype: ContractSubtype
+    connection_type: ConnectionType | None = None
+    version: str
+    markdown: str
+    updated_at: datetime
+    created_by_actor: str | None = None
+    project: str | None = None
+
+
 class ContractSearchResult(BaseModel):
     contract_id: uuid.UUID
     owner: str
@@ -386,6 +449,23 @@ class VersionHistoryItem(BaseModel):
     kind: Literal[
         "body_bump", "subtype_shift", "endpoint_shift", "name_shift"
     ] = "body_bump"
+    # Per-version actor surfacing on `/contracts/{id}/history` (#54).
+    # `proposer_actor` is the X-Actor recorded on the `contract_versions`
+    # row at propose-time (#38). `acceptor_actor` is the X-Actor on
+    # accept (RC promotion or stable accept). For shift entries
+    # (`subtype_shift` / `endpoint_shift`) the same fields surface the
+    # proposer / acceptor on the corresponding shift proposal row.
+    # `single_operator_override` is `true` if the row was accepted with
+    # `?single_operator=true`; the audit trail fact that the two-party
+    # rule was bypassed.
+    #
+    # All three are optional (None) — pre-#38 rows surface as
+    # anonymous, and `/parts/{name}/history` always surfaces them as
+    # `None` today (PartVersion does not carry actor fields; see #54
+    # follow-up note for the migration to add them).
+    proposer_actor: str | None = None
+    acceptor_actor: str | None = None
+    single_operator_override: bool = False
 
 
 class VersionHistoryResponse(BaseModel):
