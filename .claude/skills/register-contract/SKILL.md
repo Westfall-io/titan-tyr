@@ -336,17 +336,20 @@ the paper trail goes blank — warn the user.
 
 ### 11. Report the result
 
-On `201`, summarise:
+On `201`, summarise. The POST response carries the contract id,
+endpoint names, subtype/connection_type, version, status, and
+echoed project / `created_by_actor` (provider v0.16.0+ for actor;
+v0.18.0+ for project) — quote them directly from the response.
 
 > Registered `<subtype>` contract `<owner> → <counterparty>` at version
-> `<version>`. Contract ID: `<contract_id>`. Status: `active`.
->
-> Read it back:
->   `curl -H 'Authorization: Bearer sysmlv2' $TITAN_TYR_URL/contracts/<contract_id>`
+> `<echoed version>`. Contract ID: `<contract_id>`. Status: `active`.
+> Created by actor: `<echoed created_by_actor or "anonymous">`.
 >
 > Subsequent changes:
->   - Propose: `/propose-contract-change` (or raw POST /contracts/<contract_id>/proposals)
->   - Accept: `/accept-contract-proposal`
+>   - Propose body change: `/propose-contract-change`
+>   - Accept body change: `/accept-contract-proposal`
+>   - Soft metadata (project tag, claim attribution): `/update-contract`
+>     (provider v0.21.0+, #53)
 
 Initial creation is **`active` immediately** — there is no
 propose/accept dance for v1.0.0. That's by design (the API has no

@@ -256,11 +256,14 @@ immutable on PUT — no identity-spoofing of attributed rows.
 
 ### 10. Report the result
 
-On `201`, summarise:
+On `201`, summarise. The POST response carries the full persisted
+row (provider v0.20.0+, #47) — same shape as `GET /parts/{name}` —
+so quote the echoed `version`, `subtype`, `created_by_actor`, and
+project / metadata fields directly from the response without a
+follow-up GET.
 
-> Registered `<name>` (subtype: `<subtype>`) at version `1.0.0`.
-> Part ID: `<uuid>`.
-> Read it back: `curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' $TITAN_TYR_URL/parts/<name>`
+> Registered `<name>` (subtype: `<subtype>`) at version `<echoed version>`.
+> Part ID: `<uuid>`. Created by actor: `<echoed created_by_actor or "anonymous">`.
 
 For containers: ask if the user wants to register the `runs` contract
 linking this container to the software part it hosts (one
