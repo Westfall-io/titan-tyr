@@ -27,6 +27,7 @@ when you run it from the titan-tyr repo root. Type `/<skill-name>` to invoke.
 | [`accept-contract-endpoint-shift`](./accept-contract-endpoint-shift/SKILL.md)     | Promote an open contract endpoint-shift proposal — only the endpoint FKs change; body, version, subtype, and connection_type are untouched. |
 | [`check-titan-tyr-env`](./check-titan-tyr-env/SKILL.md)                           | Verify the `TITAN_TYR_URL` / `TITAN_TYR_TOKEN` environment is set and the server is reachable before running other skills. |
 | [`audit-skill`](./audit-skill/SKILL.md)                           | Review how a recently-invoked skill actually performed in this session. Reads the skill body, reconstructs the run from conversation context, classifies bugs/friction/stale/missing-guidance gaps, and drafts fixes. Read-only — no auto-apply, no auto-file. |
+| [`update-skills`](./update-skills/SKILL.md)                       | **Downstream-consumer skill.** Pulls (or `--check`s for drift on) the titan-tyr skill catalog into a non-titan-tyr repo via `gh api`, namespacing each skill's helper scripts under `.claude/skills/<name>/scripts/`. Refuses to run inside titan-tyr itself. Closes #58 part A. |
 
 ## Configuration
 

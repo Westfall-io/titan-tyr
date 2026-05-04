@@ -45,3 +45,19 @@ concurrency = ["thread", "greenlet"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
+
+[tool.semantic_release]
+version_toml = ["pyproject.toml:project.version"]
+branch = "main"
+commit_parser = "emoji"
+build_command = ""
+upload_to_pypi = false
+upload_to_release = true
+tag_format = "v{version}"
+
+# Maps the repo's gitmoji-style commit prefixes to semver bumps.
+# Anything not listed here is treated as no bump.
+[tool.semantic_release.commit_parser_options]
+major_tags = ["💥"]
+minor_tags = ["✨", "🎉"]
+patch_tags = ["🐛", "🚑", "⚡", "🔧", "📝", "♻️", "🔒", "⬆️", "🩹"]
