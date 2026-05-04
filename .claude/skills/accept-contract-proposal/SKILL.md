@@ -294,9 +294,22 @@ On `200`, summarise the response:
 > Accepted. `<subtype>` contract `<owner> → <counterparty>` is now at
 > `<active_version>` (promoted from `<promoted_from_version>` at
 > `<accepted_at>`).
+> Proposer: `<proposer_actor or "anonymous">`. Acceptor: `<acceptor_actor or "anonymous">`.
 >
 > Verify:
 >   `curl -H 'Authorization: Bearer sysmlv2' $TITAN_TYR_URL/contracts/<contract_id>`
+
+If the response carries `single_operator_override: true`, surface it
+loudly in the summary:
+
+> ⚠ Accepted under single-operator override (`?single_operator=true`).
+> The two-party rule was bypassed for this accept. The flag is recorded
+> on the active version row so the bypass is visible in the audit
+> trail; mention it explicitly so operators reviewing later see it.
+
+If the response carries `proposer_actor: null` or
+`acceptor_actor: null`, surface that too — the rule was unenforceable
+and that fact should be visible.
 
 Then flag any companion follow-ups the proposal body called out (e.g.
 "once accepted, mimiron should drop its CORS proxy" or similar).

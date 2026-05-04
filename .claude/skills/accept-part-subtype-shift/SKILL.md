@@ -122,6 +122,7 @@ On `200`:
 ```
 Accepted. Part `<name>` is now subtype=<new> (was <old>).
 Body and version are unchanged.
+Proposer: <proposer_actor or "anonymous">. Acceptor: <accepted_by or "anonymous">.
 
 Verify:
   curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' $TITAN_TYR_URL/parts/<name>
@@ -132,6 +133,18 @@ Follow-ups (if any):
   - related rows now invalid: each one needs its own shift via
     /propose-contract-subtype-shift
 ```
+
+If the response carries `single_operator_override: true` (provider
+v0.16.0+, #38), surface it loudly in the summary:
+
+> ⚠ Accepted under single-operator override (`?single_operator=true`).
+> The two-party rule was bypassed for this shift. The flag is
+> recorded on the proposal row so the bypass is visible in the
+> audit trail; mention it explicitly so operators reviewing later
+> see it.
+
+If `proposer_actor` or `accepted_by` is null, surface that — the
+rule was unenforceable and that fact should be visible.
 
 Then surface any related rows that the propose-time impact preview
 flagged. They were informational at propose time and still are now —

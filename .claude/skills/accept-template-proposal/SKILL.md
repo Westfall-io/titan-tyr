@@ -147,9 +147,22 @@ On `200`, summarise the response:
 
 > Accepted. `<kind>` template active version is now `<active_version>`
 > (promoted from `<promoted_from_version>` at `<accepted_at>`).
+> Proposer: `<proposer_actor or "anonymous">`. Acceptor: `<acceptor_actor or "anonymous">`.
 >
 > Verify:
 >   `curl -H 'Authorization: Bearer sysmlv2' $TITAN_TYR_URL/templates/<kind>`
+
+If the response carries `single_operator_override: true`, surface
+it loudly:
+
+> ⚠ Accepted under single-operator override (`?single_operator=true`).
+> The two-party rule was bypassed. Templates affect every consumer
+> that fetches them, so an override here is unusually consequential —
+> mention it prominently so operators reviewing later see the bypass.
+
+If the response carries `proposer_actor: null` or
+`acceptor_actor: null`, surface that — the rule was unenforceable
+and that fact should be visible.
 
 Then flag any companion follow-ups the proposal body called out (it's
 a common pattern for the proposal markdown to note "update skill X" or
