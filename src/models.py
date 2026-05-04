@@ -21,6 +21,31 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.db import Base
 
 
+class Project(Base):
+    """A project tag (#44).
+
+    Lets one titan-tyr database hold multiple projects' worth of parts
+    and contracts. A part or contract carries at most one `project_id`;
+    NULL means "unprojected" and is the legacy default. Project
+    membership filters list endpoints (`?project=<slug>`) so the UI can
+    scope to one project at a time.
+    """
+
+    __tablename__ = "projects"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    created_by_actor: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
 class Part(Base):
     __tablename__ = "parts"
     __table_args__ = (
@@ -59,6 +84,10 @@ class Part(Base):
     # value, and because callers can register without setting the
     # header (rule unenforceable, paper trail just goes blank).
     created_by_actor: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Project tag (#44). NULL = unprojected (the legacy default).
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True, index=True
+    )
 
     versions: Mapped[list["PartVersion"]] = relationship(
         back_populates="part", cascade="all, delete-orphan", passive_deletes=True
@@ -66,6 +95,7 @@ class Part(Base):
     subtype_proposals: Mapped[list["PartSubtypeProposal"]] = relationship(
         back_populates="part", cascade="all, delete-orphan", passive_deletes=True
     )
+    project: Mapped[Project | None] = relationship(foreign_keys=[project_id])
 
 
 class PartVersion(Base):
@@ -181,9 +211,17 @@ class Contract(Base):
     # Initial-creation attribution (#39). The X-Actor recorded at
     # POST /contracts time. Nullable for the same reasons as on parts.
     created_by_actor: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Project tag (#44). Independent of the endpoints' projects: a
+    # contract can cross-cut projects, in which case it's tagged with
+    # whichever project owns the relationship rather than auto-inheriting
+    # from owner_part. NULL = unprojected.
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True, index=True
+    )
 
     owner: Mapped[Part] = relationship(foreign_keys=[owner_part_id])
     counterparty: Mapped[Part] = relationship(foreign_keys=[counterparty_part_id])
+    project: Mapped[Project | None] = relationship(foreign_keys=[project_id])
     versions: Mapped[list["ContractVersion"]] = relationship(
         back_populates="contract", cascade="all, delete-orphan", passive_deletes=True
     )

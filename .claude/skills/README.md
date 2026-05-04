@@ -5,9 +5,11 @@ when you run it from the titan-tyr repo root. Type `/<skill-name>` to invoke.
 
 | Skill                                                            | What it does                                                          |
 | ---------------------------------------------------------------- | --------------------------------------------------------------------- |
-| [`register-part`](./register-part/SKILL.md)               | Register a part with a running titan-tyr instance.           |
-| [`register-contract`](./register-contract/SKILL.md)               | Register a new interface contract between two parts already in titan-tyr. Picks owner+counterparty via `?match=`, fills the contract template, POSTs to `/contracts`. |
-| [`update-part`](./update-part/SKILL.md)                   | Append a new version to an already-registered part. Detects template-version drift and helps migrate. |
+| [`register-part`](./register-part/SKILL.md)               | Register a part with a running titan-tyr instance. Optional `project` tag (#44). |
+| [`register-contract`](./register-contract/SKILL.md)               | Register a new interface contract between two parts already in titan-tyr. Picks owner+counterparty via `?match=`, fills the contract template, POSTs to `/contracts`. Optional `project` tag (#44). |
+| [`register-project`](./register-project/SKILL.md)                 | Register a new project tag (#44). Projects group parts and contracts so the UI can filter to one project at a time. |
+| [`list-projects`](./list-projects/SKILL.md)                       | Read-only list of registered projects with part / contract counts. Use to discover valid project slugs before tagging. |
+| [`update-part`](./update-part/SKILL.md)                   | Append a new version to an already-registered part. Detects template-version drift and helps migrate. Supports project (re)assignment via the optional `project` field. |
 | [`learn-part`](./learn-part/SKILL.md)                     | Look up everything titan-tyr knows about a registered part — description, ticket-filing target, contracts. Read-only; returns structured JSON. |
 | [`find-part`](./find-part/SKILL.md)                       | Resolve a colloquial label or partial name (e.g. "front end") to a canonical part slug via `?match=`. Read-only; returns structured JSON. |
 | [`propose-template-change`](./propose-template-change/SKILL.md)   | Draft and POST a proposal to update one of titan-tyr's templates (`software`, `container`, `interaction`, `binding`). Does not auto-accept. |

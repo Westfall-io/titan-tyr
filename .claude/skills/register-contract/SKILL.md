@@ -368,8 +368,33 @@ been added yet"), surface them — don't auto-do.
 | `401`  | Bad bearer token                                                       | Stop. Tell user `TITAN_TYR_TOKEN` is wrong.                                 |
 | `404`  | Either `owner_part` or `counterparty_part` is unknown                  | Re-resolve in step 3; route to `/register-part` if truly missing.       |
 | `409`  | A contract with the same `(owner, counterparty, subtype, connection_type)` triple already exists | Stop. Show the existing `contract_id` (re-run the search from step 6) and route to `/propose-contract-change`. The widened key (per #42) only conflicts on the full triple — different subtypes (or different `connection_type` values) on the same pair are allowed. |
-| `422`  | `owner_part == counterparty_part`, missing/unknown `subtype`, missing or wrong `connection_type` (required iff `subtype=connection`), malformed `version`, slug pattern fail, `binding` source/target subtype mismatch, `connection` source/target subtype mismatch per the per-label rule, or `connection_type` whose required Part subtype isn't yet implemented | Fix and retry. `version` is plain `MAJOR.MINOR.PATCH`. Re-check the rule table in step 2/4. |
+| `422`  | `owner_part == counterparty_part`, missing/unknown `subtype`, missing or wrong `connection_type` (required iff `subtype=connection`), malformed `version`, slug pattern fail, `binding` source/target subtype mismatch, `connection` source/target subtype mismatch per the per-label rule, `connection_type` whose required Part subtype isn't yet implemented, or unknown `project` slug | Fix and retry. `version` is plain `MAJOR.MINOR.PATCH`. For an unknown `project`, run `/list-projects` or `/register-project`. Re-check the rule table in step 2/4. |
 | `500+` | Server problem                                                         | Print response body verbatim. Do not retry.                                 |
+
+## Project tagging (#44)
+
+Contracts can be tagged with an optional `project` slug at registration:
+
+```json
+{
+  "owner_part": "payments-service",
+  "counterparty_part": "orders-service",
+  "subtype": "interaction",
+  "markdown": "...",
+  "project": "watchervault"
+}
+```
+
+The slug must reference an existing project (422 if not). Importantly,
+the contract's `project` is **independent of its endpoints' projects**
+— a cross-project contract is allowed and tagged with whichever project
+owns the *relationship*, not auto-inherited from the owner. The UI will
+show the contract under whichever project it's tagged with.
+
+If the surrounding context makes the project obvious (e.g. both
+endpoints are in the same project, or the user just said "we're working
+on the watchervault project"), tag the contract proactively. Otherwise
+ask, or default to unprojected.
 
 ## Notes
 

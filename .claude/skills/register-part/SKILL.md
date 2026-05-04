@@ -291,8 +291,36 @@ do this automatically.
 | ------ | -------------------------------------------------- | --------------------------------------------------------------------------- |
 | `401`  | Bad bearer token                                   | Stop. Tell user `TITAN_TYR_TOKEN` is wrong.                                 |
 | `409`  | A part with that `name` already exists (any subtype) | Show what's there (`GET /parts/{name}`); ask whether to update via `/update-part`. |
-| `422`  | Malformed `version`, missing `subtype`, unknown subtype, or invalid `repo_uri` / `issue_tracker_uri` / alias | Read the `detail` field; fix the input and retry. |
+| `422`  | Malformed `version`, missing `subtype`, unknown subtype, invalid `repo_uri` / `issue_tracker_uri` / alias, or unknown `project` slug | Read the `detail` field; fix the input and retry. For an unknown project, run `/list-projects` to see what exists or `/register-project` to create the slug first. |
 | `500+` | Server problem                                     | Print the response body verbatim. Do not retry.                             |
+
+## Project tagging (#44)
+
+Parts can be tagged with an optional `project` slug at registration so
+the UI and agents can filter the graph to one project at a time. Pass
+the slug as a top-level field in the POST body:
+
+```json
+{
+  "name": "payments-service",
+  "subtype": "software",
+  "repo_uri": "...",
+  "markdown": "...",
+  "project": "watchervault"
+}
+```
+
+The slug must reference an existing project — 422 if it doesn't
+exist. Run `/list-projects` first if the user isn't sure which slug
+to use, or `/register-project` if the project hasn't been created
+yet. **Omitting `project` or passing `null` leaves the part
+unprojected** (the legacy default; works as before). The project
+field can be (re)assigned later via `/update-part`.
+
+If the user is registering a part and a project context is
+available (e.g. they already mentioned which project they're
+working in, or the surrounding conversation makes it obvious), tag
+the new part proactively. Otherwise ask, or default to unprojected.
 
 ## Notes
 

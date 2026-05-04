@@ -36,9 +36,10 @@ model will land in a future capability update.
 
 | Concept       | Stored as                                          | Notes                                               |
 | ------------- | -------------------------------------------------- | --------------------------------------------------- |
-| Part          | row in `parts` + N `part_versions`                 | Identified by unique name. Carries a `subtype` discriminator (`software` or `container`). |
-| Contract edge | row in `contracts` + N `contract_versions`         | Directed: `owner_part → counterparty_part`. Carries a `subtype` discriminator (`interaction` or `binding`). |
-| Template      | row in `templates` + N `template_versions`         | Four singletons keyed by `kind ∈ {software, container, interaction, binding}` — one per part subtype, one per contract subtype. Served by `GET /templates/{kind}`. |
+| Part          | row in `parts` + N `part_versions`                 | Identified by unique name. Carries a `subtype` discriminator (`software`, `container`, `image`, `pod`, `compose`) and an optional `project_id`. |
+| Contract edge | row in `contracts` + N `contract_versions`         | Directed: `owner_part → counterparty_part`. Carries a `subtype` discriminator (`interaction`, `binding`, `connection`), an optional `connection_type` (six labels for the `connection` subtype), and an optional `project_id`. |
+| Project       | row in `projects`                                  | A tag attached to parts and contracts so the UI and agents can filter the graph to one project at a time. Optional — NULL on a row means "unprojected." Project membership is metadata; nothing in the structural graph depends on it. |
+| Template      | row in `templates` + N `template_versions`         | Eight singletons keyed by `kind ∈ {software, container, image, pod, compose, interaction, binding, connection}`. Templates are global — not project-scoped. Served by `GET /templates/{kind}`. |
 | Proposal      | a `contract_versions` or `template_versions` row with `status='proposal'` | Lives on its parent until accepted or superseded.   |
 
 ### Schema
@@ -46,13 +47,22 @@ model will land in a future capability update.
 ```sql
 CREATE EXTENSION IF NOT EXISTS pgcrypto;  -- gen_random_uuid()
 
+CREATE TABLE projects (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        TEXT NOT NULL UNIQUE,
+  description TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE parts (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name        TEXT NOT NULL UNIQUE,
-  subtype     TEXT NOT NULL CHECK (subtype IN ('software', 'container')),
+  subtype     TEXT NOT NULL CHECK (subtype IN ('software', 'container', 'image', 'pod', 'compose')),
   repo_uri    TEXT NOT NULL,
+  project_id  UUID NULL REFERENCES projects(id),  -- optional project tag (#44)
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX ON parts (project_id);
 
 CREATE TABLE part_versions (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -73,10 +83,12 @@ CREATE TABLE contracts (
   counterparty_part_id UUID NOT NULL REFERENCES parts(id),
   subtype              TEXT NOT NULL CHECK (subtype IN ('interaction', 'binding', 'connection')),
   connection_type      TEXT NULL,  -- non-NULL iff subtype = 'connection'; one of six labels
+  project_id           UUID NULL REFERENCES projects(id),  -- optional project tag (#44); independent of endpoints' projects
   created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE NULLS NOT DISTINCT (owner_part_id, counterparty_part_id, subtype, connection_type),
   CHECK  (owner_part_id <> counterparty_part_id)
 );
+CREATE INDEX ON contracts (project_id);
 
 CREATE TABLE contract_versions (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
