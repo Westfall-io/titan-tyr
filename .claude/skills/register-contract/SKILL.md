@@ -367,24 +367,28 @@ been added yet"), surface them — don't auto-do.
 | ------ | ---------------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | `401`  | Bad bearer token                                                       | Stop. Tell user `TITAN_TYR_TOKEN` is wrong.                                 |
 | `404`  | Either `owner_part` or `counterparty_part` is unknown                  | Re-resolve in step 3; route to `/register-part` if truly missing.       |
-| `409`  | A contract already exists in this direction                            | Stop. Show the existing `contract_id` + `subtype` (re-run the search from step 6) and route to `/propose-contract-change`. |
+| `409`  | A contract with the same `(owner, counterparty, subtype, connection_type)` triple already exists | Stop. Show the existing `contract_id` (re-run the search from step 6) and route to `/propose-contract-change`. The widened key (per #42) only conflicts on the full triple — different subtypes (or different `connection_type` values) on the same pair are allowed. |
 | `422`  | `owner_part == counterparty_part`, missing/unknown `subtype`, missing or wrong `connection_type` (required iff `subtype=connection`), malformed `version`, slug pattern fail, `binding` source/target subtype mismatch, `connection` source/target subtype mismatch per the per-label rule, or `connection_type` whose required Part subtype isn't yet implemented | Fix and retry. `version` is plain `MAJOR.MINOR.PATCH`. Re-check the rule table in step 2/4. |
 | `500+` | Server problem                                                         | Print response body verbatim. Do not retry.                                 |
 
 ## Notes
 
-- **One direction, one contract — across all subtypes.** The schema
-  permits both `A → B` and `B → A` (they're separate rows), but they
-  are often not both meaningful. Most interfaces are described from one
-  side; only register the reverse direction if there's a genuinely
-  separate agreement going the other way. The unique constraint is on
-  `(owner_part_id, counterparty_part_id)` only — subtype is not part of
-  the key, so you can't have both an `interaction` and a `binding`
-  contract from `A → B` simultaneously. (If both kinds of agreement
-  apply between two parts, that almost always means the parts are
-  related at *different* points: e.g. container `payments-prod` ↔
-  software `payments-service` is a *binding*, while software
-  `payments-service` ↔ software `orders-service` is an *interaction*.)
+- **One row per `(direction, subtype, connection_type)` triple.** The
+  schema permits both `A → B` and `B → A` as separate rows. As of #42
+  the unique constraint is `(owner_part_id, counterparty_part_id, subtype,
+  connection_type) NULLS NOT DISTINCT` — so a single directed pair can
+  hold one `interaction`, one `binding`, and one `connection` per
+  `connection_type` (six labels, so up to six connection rows + one
+  interaction + one binding = eight rows max in one direction). This is
+  what enables the multi-row Connections tables in `container@3.0.0`
+  and the templates that depend on it. Just because you *can* register
+  multiple subtypes on the same pair doesn't mean you *should* — most
+  interfaces still need exactly one row in one direction. Pick the
+  shape that matches what's actually true: e.g. container `payments-prod`
+  → software `payments-service` typically holds both a `connection`/`runs`
+  row and a `binding` row (the runs is the structural fact, the binding
+  is the address); software `payments-service` → software `orders-service`
+  is a single `interaction`.
 - **Subtype is structural.** It can't be changed after registration
   (no PUT path mutates it). If you really need a different subtype,
   the contract has to be re-created — out-of-band today.

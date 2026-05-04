@@ -114,7 +114,21 @@ class PartVersion(Base):
 class Contract(Base):
     __tablename__ = "contracts"
     __table_args__ = (
-        UniqueConstraint("owner_part_id", "counterparty_part_id"),
+        # Subtype-aware uniqueness (#42). `connection_type` is NULL for
+        # `interaction` and `binding` rows; with NULLS NOT DISTINCT this
+        # key enforces one interaction + one binding + one connection
+        # *per* connection_type per directed pair. Explicit short index
+        # name avoids the 63-char Postgres identifier limit the
+        # auto-generated `uq_contracts_<all-four-cols>` would exceed.
+        Index(
+            "uq_contracts_subtype_pair",
+            "owner_part_id",
+            "counterparty_part_id",
+            "subtype",
+            "connection_type",
+            unique=True,
+            postgresql_nulls_not_distinct=True,
+        ),
         CheckConstraint(
             "owner_part_id <> counterparty_part_id",
             name="owner_ne_counterparty",

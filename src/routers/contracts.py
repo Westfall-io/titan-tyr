@@ -174,18 +174,33 @@ async def register_contract(
 
     version = Version.parse(payload.version, allow_prerelease=False)
 
+    # Subtype-aware existence check matching the DB key from #42. The
+    # connection_type comparison uses `is_(...)` so it translates to
+    # `IS NULL` when payload.connection_type is None (interaction +
+    # binding subtypes), which lines up with NULLS NOT DISTINCT on the
+    # underlying unique index.
     existing = (
         await session.execute(
             select(Contract.id).where(
                 Contract.owner_part_id == owner.id,
                 Contract.counterparty_part_id == counterparty.id,
+                Contract.subtype == payload.subtype,
+                Contract.connection_type.is_(payload.connection_type)
+                if payload.connection_type is None
+                else Contract.connection_type == payload.connection_type,
             )
         )
     ).scalar_one_or_none()
     if existing is not None:
+        ct_suffix = (
+            f"/{payload.connection_type}" if payload.connection_type else ""
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Contract from {owner.name!r} to {counterparty.name!r} already exists",
+            detail=(
+                f"Contract from {owner.name!r} to {counterparty.name!r} "
+                f"with subtype {payload.subtype!r}{ct_suffix} already exists"
+            ),
         )
 
     contract = Contract(
