@@ -93,6 +93,7 @@ async def _resolve_part(session: AsyncSession, name: str) -> Part:
 async def register_contract(
     payload: ContractCreate,
     session: AsyncSession = Depends(get_session),
+    x_actor: str | None = Header(default=None, alias="X-Actor"),
 ) -> ContractCreateResponse:
     if payload.owner_part == payload.counterparty_part:
         raise HTTPException(
@@ -192,6 +193,7 @@ async def register_contract(
         counterparty_part_id=counterparty.id,
         subtype=payload.subtype,
         connection_type=payload.connection_type,
+        created_by_actor=x_actor,
     )
     session.add(contract)
     await session.flush()
@@ -314,6 +316,7 @@ async def list_or_search_contracts(
                 version=str(Version(latest.version_major, latest.version_minor, latest.version_patch)),
                 markdown=latest.markdown,
                 updated_at=latest.accepted_at or latest.created_at,
+                created_by_actor=c.created_by_actor,
             )
         )
     return ContractSearchResponse(results=results)
@@ -341,6 +344,7 @@ async def get_contract(
         version=str(Version(latest.version_major, latest.version_minor, latest.version_patch)),
         markdown=latest.markdown,
         updated_at=latest.accepted_at or latest.created_at,
+        created_by_actor=contract.created_by_actor,
     )
 
 
@@ -655,6 +659,7 @@ async def list_contract_subtype_shifts(
                 created_at=r.created_at,
                 accepted_at=r.accepted_at,
                 accepted_by=r.accepted_by,
+                single_operator_override=r.single_operator_override,
             )
         )
 
@@ -760,6 +765,7 @@ async def accept_contract_subtype_shift(
     proposal.status = "accepted"
     proposal.accepted_at = now
     proposal.accepted_by = x_actor
+    proposal.single_operator_override = single_operator
 
     await session.commit()
 
@@ -773,4 +779,5 @@ async def accept_contract_subtype_shift(
         accepted_at=now,
         accepted_by=x_actor,
         body_realign_required=proposal.body_realign_required,
+        single_operator_override=single_operator,
     )

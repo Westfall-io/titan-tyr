@@ -182,6 +182,7 @@ class PartDetail(BaseModel):
     version: str
     markdown: str
     updated_at: datetime
+    created_by_actor: str | None = None
 
 
 class PartListItem(BaseModel):
@@ -193,6 +194,7 @@ class PartListItem(BaseModel):
     aliases: list[str]
     version: str
     updated_at: datetime
+    created_by_actor: str | None = None
 
 
 class PartListResponse(BaseModel):
@@ -208,6 +210,7 @@ class ContractListItem(BaseModel):
     connection_type: ConnectionType | None = None
     version: str
     updated_at: datetime
+    created_by_actor: str | None = None
 
 
 class ContractListResponse(BaseModel):
@@ -256,6 +259,7 @@ class ContractSearchResult(BaseModel):
     version: str
     markdown: str
     updated_at: datetime
+    created_by_actor: str | None = None
 
 
 class ContractSearchResponse(BaseModel):
@@ -271,6 +275,7 @@ class ContractDetail(BaseModel):
     version: str
     markdown: str
     updated_at: datetime
+    created_by_actor: str | None = None
 
 
 # ---------- Version history ----------
@@ -312,6 +317,9 @@ class ProposalEntry(BaseModel):
     version: str
     markdown: str
     created_at: datetime
+    proposer_actor: str | None = None
+    acceptor_actor: str | None = None
+    single_operator_override: bool = False
 
 
 class ProposalListResponse(BaseModel):
@@ -325,6 +333,9 @@ class ProposalAcceptResponse(BaseModel):
     promoted_from_version: str
     active_version: str
     accepted_at: datetime
+    proposer_actor: str | None = None
+    acceptor_actor: str | None = None
+    single_operator_override: bool = False
 
 
 # ---------- Template proposals ----------
@@ -347,6 +358,9 @@ class TemplateProposalEntry(BaseModel):
     version: str
     markdown: str
     created_at: datetime
+    proposer_actor: str | None = None
+    acceptor_actor: str | None = None
+    single_operator_override: bool = False
 
 
 class TemplateProposalListResponse(BaseModel):
@@ -360,6 +374,9 @@ class TemplateProposalAcceptResponse(BaseModel):
     promoted_from_version: str
     active_version: str
     accepted_at: datetime
+    proposer_actor: str | None = None
+    acceptor_actor: str | None = None
+    single_operator_override: bool = False
 
 
 # ---------- Subtype-shift proposals (#33) ----------
@@ -413,6 +430,7 @@ class PartSubtypeShiftEntry(BaseModel):
     created_at: datetime
     accepted_at: datetime | None = None
     accepted_by: str | None = None
+    single_operator_override: bool = False
 
 
 class PartSubtypeShiftCreateResponse(BaseModel):
@@ -438,6 +456,7 @@ class PartSubtypeShiftAcceptResponse(BaseModel):
     accepted_at: datetime
     accepted_by: str | None
     body_realign_required: bool
+    single_operator_override: bool = False
 
 
 class ContractSubtypeShiftCreate(BaseModel):
@@ -459,6 +478,7 @@ class ContractSubtypeShiftEntry(BaseModel):
     created_at: datetime
     accepted_at: datetime | None = None
     accepted_by: str | None = None
+    single_operator_override: bool = False
 
 
 class ContractSubtypeShiftCreateResponse(BaseModel):
@@ -489,3 +509,4 @@ class ContractSubtypeShiftAcceptResponse(BaseModel):
     accepted_at: datetime
     accepted_by: str | None
     body_realign_required: bool
+    single_operator_override: bool = False

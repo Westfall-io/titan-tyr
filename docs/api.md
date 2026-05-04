@@ -185,6 +185,7 @@ RC-suffixed versions are never returned here.
 ```sh
 curl -H 'Authorization: Bearer sysmlv2' \
      -H 'Content-Type: application/json' \
+     -H 'X-Actor: alice' \
      -d '{ "version": "1.1.0-rc1", "markdown": "..." }' \
      http://localhost:8000/templates/software/proposals
 ```
@@ -192,6 +193,10 @@ curl -H 'Authorization: Bearer sysmlv2' \
 Same rules as contract proposals: required `version` matching
 `^\d+\.\d+\.\d+(-rc\d+)?$`, strictly greater than the latest existing
 version on this template.
+
+`X-Actor` (optional) is recorded as `proposer_actor`. See
+[Two-party attribution](#two-party-attribution-x-actor-handshake) under
+Proposals — the same rule applies to the template flow.
 
 `201` response:
 ```json
@@ -209,16 +214,27 @@ curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/software
   "kind": "software",
   "active_version": "1.0.0",
   "proposals": [
-    { "version": "1.1.0-rc1", "markdown": "...", "created_at": "..." },
-    { "version": "1.1.0",     "markdown": "...", "created_at": "..." }
+    {
+      "version": "1.1.0-rc1",
+      "markdown": "...",
+      "created_at": "...",
+      "proposer_actor": "alice",
+      "acceptor_actor": null,
+      "single_operator_override": false
+    }
   ]
 }
 ```
+
+The `proposer_actor`, `acceptor_actor`, and
+`single_operator_override` fields are present in v0.16.0+ (#38);
+pre-v0.16.0 responses omitted them.
 
 ### `POST /templates/{kind}/proposals/{version}/accept` — promote
 
 ```sh
 curl -X POST -H 'Authorization: Bearer sysmlv2' \
+     -H 'X-Actor: bob' \
      http://localhost:8000/templates/software/proposals/1.1.0-rc2/accept
 ```
 
@@ -226,13 +242,21 @@ Stable proposal → flipped in place. RC proposal → new stable active
 row created at the stripped version; the RC row stays as proposal for
 posterity.
 
+`X-Actor` is checked against the proposal row's `proposer_actor`
+(provider v0.16.0+, #38); rejected with `422` if equal unless
+`?single_operator=true` is set. Templates affect every consumer; the
+two-party gate matters more here than for any single contract.
+
 `200` response:
 ```json
 {
   "kind": "software",
   "promoted_from_version": "1.1.0-rc2",
   "active_version": "1.1.0",
-  "accepted_at": "2026-04-29T15:00:00Z"
+  "accepted_at": "2026-04-29T15:00:00Z",
+  "proposer_actor": "alice",
+  "acceptor_actor": "bob",
+  "single_operator_override": false
 }
 ```
 
@@ -361,6 +385,7 @@ one result comes back.
 ```sh
 curl -H 'Authorization: Bearer sysmlv2' \
      -H 'Content-Type: application/json' \
+     -H 'X-Actor: alice' \
      -d '{
        "name": "payments-service",
        "subtype": "software",
@@ -372,6 +397,14 @@ curl -H 'Authorization: Bearer sysmlv2' \
      }' \
      http://localhost:8000/parts
 ```
+
+`X-Actor` (optional, provider v0.16.0+, #39) is recorded as the
+part's `created_by_actor`. There is no propose/accept dance on
+initial creation — this is a one-shot active write — so the
+`X-Actor` is the only attribution the row will ever carry until it
+gets its first body bump or subtype shift. Subsequent changes carry
+their own proposer/acceptor actors. Pre-v0.16.0 rows have
+`created_by_actor: null`.
 
 `subtype` is **required** and must be one of `software`, `image`,
 `container`, `pod`, `compose`. It is set at registration time and
@@ -625,6 +658,7 @@ total, not one per subtype.
 ```sh
 curl -H 'Authorization: Bearer sysmlv2' \
      -H 'Content-Type: application/json' \
+     -H 'X-Actor: alice' \
      -d '{
        "owner_part": "payments-service",
        "counterparty_part": "orders-service",
@@ -634,6 +668,13 @@ curl -H 'Authorization: Bearer sysmlv2' \
      }' \
      http://localhost:8000/contracts
 ```
+
+`X-Actor` (optional, provider v0.16.0+, #39) is recorded as the
+contract's `created_by_actor`. Same posture as `POST /parts` — a
+one-shot active create with no propose/accept handshake; this is
+the only attribution the row gets until it acquires its first
+content proposal or subtype shift. Pre-v0.16.0 rows have
+`created_by_actor: null`.
 
 `subtype` is **required** and must be one of `interaction`, `binding`,
 `connection`.
@@ -861,11 +902,37 @@ Errors:
 Proposals are the only place the API exposes RC-suffixed versions —
 all other endpoints return only stable `MAJOR.MINOR.PATCH`.
 
+### Two-party attribution (X-Actor handshake)
+
+> **New in v0.16.0** (#38). All four propose / accept endpoints below
+> (and the parallel template endpoints) accept an `X-Actor: <identity>`
+> header. The proposer's actor is recorded on the version row;
+> the acceptor's actor is checked against it on accept and rejected
+> with `422` if they match — unless `?single_operator=true` is set on
+> the accept call. The mechanics are identical to the
+> [Subtype shifts](#subtype-shifts) two-party rule that shipped in
+> v0.15.0; this section extends it to content + template proposals.
+
+| Proposer  | Acceptor  | `?single_operator` | Result                                                  |
+| --------- | --------- | ------------------ | ------------------------------------------------------- |
+| set       | different | not set            | `200` accept, `single_operator_override=false`          |
+| set       | same      | not set            | `422` — same actor cannot both propose and accept       |
+| set       | same      | `=true`            | `200` accept, `single_operator_override=true`           |
+| anonymous | any       | n/a                | `200` accept — rule unenforceable, accept proceeds      |
+| any       | anonymous | n/a                | `200` accept — rule unenforceable, accept proceeds      |
+
+The proposer / acceptor / override-flag values are stored on the
+version row and surfaced on the **proposal listing** and the
+**accept response**. They are intentionally **not** surfaced on the
+`/history` endpoints; actor identity on history is reserved until
+real per-caller auth lands.
+
 ### `POST /contracts/{contract_id}/proposals` — propose a new contract body
 
 ```sh
 curl -H 'Authorization: Bearer sysmlv2' \
      -H 'Content-Type: application/json' \
+     -H 'X-Actor: alice' \
      -d '{ "version": "1.3.0-rc1", "markdown": "..." }' \
      http://localhost:8000/contracts/ab12cd34-.../proposals
 ```
@@ -875,6 +942,9 @@ curl -H 'Authorization: Bearer sysmlv2' \
 existing version on this contract — including any prior proposals,
 under semver ordering (a stable version beats any RC at the same triple,
 RC numbers compare numerically).
+
+`X-Actor` (optional) is recorded on the new version row as
+`proposer_actor`. See "Two-party attribution" above.
 
 `201` response:
 ```json
@@ -903,12 +973,38 @@ curl -H 'Authorization: Bearer sysmlv2' \
   "contract_id": "ab12cd34-...",
   "active_version": "1.2.0",
   "proposals": [
-    { "version": "1.3.0-rc1", "markdown": "...", "created_at": "..." },
-    { "version": "1.3.0-rc2", "markdown": "...", "created_at": "..." },
-    { "version": "2.0.0",     "markdown": "...", "created_at": "..." }
+    {
+      "version": "1.3.0-rc1",
+      "markdown": "...",
+      "created_at": "...",
+      "proposer_actor": "alice",
+      "acceptor_actor": null,
+      "single_operator_override": false
+    },
+    {
+      "version": "1.3.0-rc2",
+      "markdown": "...",
+      "created_at": "...",
+      "proposer_actor": "bob",
+      "acceptor_actor": null,
+      "single_operator_override": false
+    },
+    {
+      "version": "2.0.0",
+      "markdown": "...",
+      "created_at": "...",
+      "proposer_actor": null,
+      "acceptor_actor": null,
+      "single_operator_override": false
+    }
   ]
 }
 ```
+
+The `proposer_actor`, `acceptor_actor`, and
+`single_operator_override` fields are present in v0.16.0+
+(#38); pre-v0.16.0 responses omitted them. Treat missing fields as
+all `null` / `false`.
 
 ### `POST /contracts/{contract_id}/proposals/{version}/accept` — promote a proposal
 
@@ -928,8 +1024,15 @@ Any earlier RCs of the same target version also remain in place.
 
 ```sh
 curl -X POST -H 'Authorization: Bearer sysmlv2' \
+     -H 'X-Actor: bob' \
      http://localhost:8000/contracts/ab12cd34-.../proposals/1.3.0-rc2/accept
 ```
+
+`X-Actor` is checked against the proposal row's `proposer_actor`;
+see "Two-party attribution" above. Use
+`?single_operator=true` to override for solo setups. The acceptor
+actor is recorded on the resulting active row (and on the original
+RC row when an RC is being promoted).
 
 `200` response:
 ```json
@@ -937,7 +1040,10 @@ curl -X POST -H 'Authorization: Bearer sysmlv2' \
   "contract_id": "ab12cd34-...",
   "promoted_from_version": "1.3.0-rc2",
   "active_version": "1.3.0",
-  "accepted_at": "2026-04-29T15:00:00Z"
+  "accepted_at": "2026-04-29T15:00:00Z",
+  "proposer_actor": "alice",
+  "acceptor_actor": "bob",
+  "single_operator_override": false
 }
 ```
 
@@ -946,7 +1052,9 @@ Errors:
 - `409 Conflict` — the version is not in `proposal` status (e.g.
   already accepted), or you are accepting an RC whose stable target
   already exists.
-- `422 Unprocessable Entity` — malformed version in the path.
+- `422 Unprocessable Entity` — malformed version in the path, or
+  `proposer_actor == X-Actor` without `?single_operator=true`
+  (provider v0.16.0+).
 
 ---
 

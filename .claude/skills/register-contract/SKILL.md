@@ -24,6 +24,7 @@ Read these from the environment:
 | ----------------- | -------- | -------------------------------------------------------------------------------------- |
 | `TITAN_TYR_URL`   | yes      | Base URL of the API, e.g. `http://localhost:8000`. No trailing slash.                  |
 | `TITAN_TYR_TOKEN` | no       | Bearer token. Defaults to `sysmlv2` (the placeholder password — see titan-tyr DESIGN.md). |
+| `TITAN_TYR_ACTOR` | no       | Identity for the X-Actor header (provider v0.16.0+, #39). Stored as `created_by_actor` on the new contract row — the only attribution signal until real per-caller auth lands. If unset, the contract records `null` for the creator and the paper trail goes blank — warn the user. |
 
 If `TITAN_TYR_URL` is unset, **stop and tell the user**:
 
@@ -322,9 +323,16 @@ print(json.dumps(payload))
 curl -fsS -X POST \
      -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
      -H "Content-Type: application/json" \
+     -H "X-Actor: $TITAN_TYR_ACTOR" \
      --data @.scratch/contract-body.json \
      "$TITAN_TYR_URL/contracts"
 ```
+
+The `X-Actor` header is recorded as `created_by_actor` on the new
+contract row (provider v0.16.0+, #39). Initial creation is one-shot
+active — no propose/accept dance — so this is the only attribution
+the row's existence will ever carry. If `TITAN_TYR_ACTOR` is unset,
+the paper trail goes blank — warn the user.
 
 ### 11. Report the result
 

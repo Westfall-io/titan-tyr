@@ -3,13 +3,14 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth import require_password
 from src.db import get_session
 from src.models import Contract, ContractVersion
+from src.routers._subtype_helpers import enforce_two_party
 from src.routers.parts import _latest_active_contract_version
 from src.schemas import (
     ProposalAcceptResponse,
@@ -44,6 +45,7 @@ async def create_proposal(
     contract_id: uuid.UUID,
     payload: ProposalCreate,
     session: AsyncSession = Depends(get_session),
+    x_actor: str | None = Header(default=None, alias="X-Actor"),
 ) -> ProposalCreateResponse:
     contract = (
         await session.execute(
@@ -70,6 +72,7 @@ async def create_proposal(
         prerelease=new_version.prerelease,
         markdown=payload.markdown,
         status="proposal",
+        proposer_actor=x_actor,
     )
     session.add(cv)
     await session.commit()
@@ -109,7 +112,16 @@ async def list_proposals(
         v = Version(r.version_major, r.version_minor, r.version_patch, r.prerelease)
         if active_v is not None and not (v > active_v):
             continue
-        proposals.append(ProposalEntry(version=str(v), markdown=r.markdown, created_at=r.created_at))
+        proposals.append(
+            ProposalEntry(
+                version=str(v),
+                markdown=r.markdown,
+                created_at=r.created_at,
+                proposer_actor=r.proposer_actor,
+                acceptor_actor=r.acceptor_actor,
+                single_operator_override=r.single_operator_override,
+            )
+        )
 
     return ProposalListResponse(
         contract_id=contract_id,
@@ -123,6 +135,8 @@ async def accept_proposal(
     contract_id: uuid.UUID,
     version: str,
     session: AsyncSession = Depends(get_session),
+    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    single_operator: bool = False,
 ) -> ProposalAcceptResponse:
     contract = (
         await session.execute(
@@ -154,17 +168,28 @@ async def accept_proposal(
             detail=f"Version {target} is not in 'proposal' status",
         )
 
+    enforce_two_party(
+        proposer_actor=proposal_row.proposer_actor,
+        acceptor_actor=x_actor,
+        single_operator=single_operator,
+    )
+
     now = datetime.now(timezone.utc)
 
     if not target.is_prerelease:
         proposal_row.status = "active"
         proposal_row.accepted_at = now
+        proposal_row.acceptor_actor = x_actor
+        proposal_row.single_operator_override = single_operator
         await session.commit()
         return ProposalAcceptResponse(
             contract_id=contract_id,
             promoted_from_version=str(target),
             active_version=str(target),
             accepted_at=now,
+            proposer_actor=proposal_row.proposer_actor,
+            acceptor_actor=x_actor,
+            single_operator_override=single_operator,
         )
 
     stable = target.stable()
@@ -185,6 +210,11 @@ async def accept_proposal(
             detail=f"A stable {stable} already exists; cannot promote {target}",
         )
 
+    # Stamp the override on the RC row too (it stays as `proposal` for
+    # posterity but should reflect that the bypass was used). Per the
+    # ticket: the user-visible stable target carries the same flag.
+    proposal_row.single_operator_override = single_operator
+
     new_active = ContractVersion(
         contract_id=contract_id,
         version_major=stable.major,
@@ -195,6 +225,9 @@ async def accept_proposal(
         status="active",
         accepted_at=now,
         promoted_from_prerelease=target.prerelease,
+        proposer_actor=proposal_row.proposer_actor,
+        acceptor_actor=x_actor,
+        single_operator_override=single_operator,
     )
     session.add(new_active)
     await session.commit()
@@ -204,4 +237,7 @@ async def accept_proposal(
         promoted_from_version=str(target),
         active_version=str(stable),
         accepted_at=now,
+        proposer_actor=proposal_row.proposer_actor,
+        acceptor_actor=x_actor,
+        single_operator_override=single_operator,
     )

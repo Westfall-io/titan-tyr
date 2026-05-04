@@ -54,6 +54,11 @@ class Part(Base):
     subtype_shifted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Initial-creation attribution (#39). The X-Actor recorded at
+    # POST /parts time. Nullable because pre-v0.16.0 rows have no
+    # value, and because callers can register without setting the
+    # header (rule unenforceable, paper trail just goes blank).
+    created_by_actor: Mapped[str | None] = mapped_column(String, nullable=True)
 
     versions: Mapped[list["PartVersion"]] = relationship(
         back_populates="part", cascade="all, delete-orphan", passive_deletes=True
@@ -159,6 +164,9 @@ class Contract(Base):
     subtype_shifted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Initial-creation attribution (#39). The X-Actor recorded at
+    # POST /contracts time. Nullable for the same reasons as on parts.
+    created_by_actor: Mapped[str | None] = mapped_column(String, nullable=True)
 
     owner: Mapped[Part] = relationship(foreign_keys=[owner_part_id])
     counterparty: Mapped[Part] = relationship(foreign_keys=[counterparty_part_id])
@@ -253,6 +261,11 @@ class TemplateVersion(Base):
         DateTime(timezone=True), nullable=True
     )
     promoted_from_prerelease: Mapped[str | None] = mapped_column(String, nullable=True)
+    proposer_actor: Mapped[str | None] = mapped_column(String, nullable=True)
+    acceptor_actor: Mapped[str | None] = mapped_column(String, nullable=True)
+    single_operator_override: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
 
     template: Mapped[Template] = relationship(back_populates="versions")
 
@@ -316,6 +329,11 @@ class ContractVersion(Base):
         DateTime(timezone=True), nullable=True
     )
     promoted_from_prerelease: Mapped[str | None] = mapped_column(String, nullable=True)
+    proposer_actor: Mapped[str | None] = mapped_column(String, nullable=True)
+    acceptor_actor: Mapped[str | None] = mapped_column(String, nullable=True)
+    single_operator_override: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
 
     contract: Mapped[Contract] = relationship(back_populates="versions")
 
@@ -374,6 +392,9 @@ class PartSubtypeProposal(Base):
         DateTime(timezone=True), nullable=True
     )
     accepted_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    single_operator_override: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
 
     part: Mapped[Part] = relationship(back_populates="subtype_proposals")
 
@@ -436,5 +457,8 @@ class ContractSubtypeProposal(Base):
         DateTime(timezone=True), nullable=True
     )
     accepted_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    single_operator_override: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
 
     contract: Mapped[Contract] = relationship(back_populates="subtype_proposals")

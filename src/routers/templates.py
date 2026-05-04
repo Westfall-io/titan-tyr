@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.auth import require_password
 from src.db import get_session
 from src.models import Template, TemplateVersion
+from src.routers._subtype_helpers import enforce_two_party
 from src.schemas import (
     TemplateProposalAcceptResponse,
     TemplateProposalCreate,
@@ -108,6 +109,7 @@ async def create_template_proposal(
     kind: str,
     payload: TemplateProposalCreate,
     session: AsyncSession = Depends(get_session),
+    x_actor: str | None = Header(default=None, alias="X-Actor"),
 ) -> TemplateProposalCreateResponse:
     template = await _get_template(session, kind, lock=True)
     new_version = Version.parse(payload.version, allow_prerelease=True)
@@ -127,6 +129,7 @@ async def create_template_proposal(
         prerelease=new_version.prerelease,
         markdown=payload.markdown,
         status="proposal",
+        proposer_actor=x_actor,
     )
     session.add(tv)
     await session.commit()
@@ -167,7 +170,14 @@ async def list_template_proposals(
         if active_v is not None and not (v > active_v):
             continue
         proposals.append(
-            TemplateProposalEntry(version=str(v), markdown=r.markdown, created_at=r.created_at)
+            TemplateProposalEntry(
+                version=str(v),
+                markdown=r.markdown,
+                created_at=r.created_at,
+                proposer_actor=r.proposer_actor,
+                acceptor_actor=r.acceptor_actor,
+                single_operator_override=r.single_operator_override,
+            )
         )
 
     return TemplateProposalListResponse(
@@ -185,6 +195,8 @@ async def accept_template_proposal(
     kind: str,
     version: str,
     session: AsyncSession = Depends(get_session),
+    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    single_operator: bool = False,
 ) -> TemplateProposalAcceptResponse:
     template = await _get_template(session, kind, lock=True)
 
@@ -215,17 +227,28 @@ async def accept_template_proposal(
             detail=f"Version {target} is not in 'proposal' status",
         )
 
+    enforce_two_party(
+        proposer_actor=proposal_row.proposer_actor,
+        acceptor_actor=x_actor,
+        single_operator=single_operator,
+    )
+
     now = datetime.now(timezone.utc)
 
     if not target.is_prerelease:
         proposal_row.status = "active"
         proposal_row.accepted_at = now
+        proposal_row.acceptor_actor = x_actor
+        proposal_row.single_operator_override = single_operator
         await session.commit()
         return TemplateProposalAcceptResponse(
             kind=kind,
             promoted_from_version=str(target),
             active_version=str(target),
             accepted_at=now,
+            proposer_actor=proposal_row.proposer_actor,
+            acceptor_actor=x_actor,
+            single_operator_override=single_operator,
         )
 
     stable = target.stable()
@@ -246,6 +269,8 @@ async def accept_template_proposal(
             detail=f"A stable {stable} already exists; cannot promote {target}",
         )
 
+    proposal_row.single_operator_override = single_operator
+
     new_active = TemplateVersion(
         template_id=template.id,
         version_major=stable.major,
@@ -256,6 +281,9 @@ async def accept_template_proposal(
         status="active",
         accepted_at=now,
         promoted_from_prerelease=target.prerelease,
+        proposer_actor=proposal_row.proposer_actor,
+        acceptor_actor=x_actor,
+        single_operator_override=single_operator,
     )
     session.add(new_active)
     await session.commit()
@@ -265,4 +293,7 @@ async def accept_template_proposal(
         promoted_from_version=str(target),
         active_version=str(stable),
         accepted_at=now,
+        proposer_actor=proposal_row.proposer_actor,
+        acceptor_actor=x_actor,
+        single_operator_override=single_operator,
     )

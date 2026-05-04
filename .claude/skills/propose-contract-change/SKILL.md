@@ -27,6 +27,7 @@ Same env vars as the other titan-tyr skills:
 | ----------------- | -------- | ------------------------------------------------ |
 | `TITAN_TYR_URL`   | yes      | Base URL of the API. No trailing slash.          |
 | `TITAN_TYR_TOKEN` | no       | Bearer token. Defaults to `sysmlv2`.             |
+| `TITAN_TYR_ACTOR` | no       | Identity for the X-Actor header (provider v0.16.0+, #38). The provider records the proposer on the version row; the accept side enforces proposer-doesn't-accept. If unset, the proposal records `null` and any acceptor is allowed — warn the user. |
 
 If `TITAN_TYR_URL` is unset, **stop and tell the user**:
 
@@ -282,9 +283,15 @@ print(json.dumps({
 curl -fsS -X POST \
      -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
      -H "Content-Type: application/json" \
+     -H "X-Actor: $TITAN_TYR_ACTOR" \
      --data @.scratch/contract-<contract_id>-<version>-rc1.json \
      "$TITAN_TYR_URL/contracts/{contract_id}/proposals"
 ```
+
+The `X-Actor` header records the proposer for the two-party rule
+enforced on accept (provider v0.16.0+, #38). If unset, the proposal
+records `proposer_actor: null` and any acceptor will be allowed —
+warn the user.
 
 ### 9. Report the API result
 

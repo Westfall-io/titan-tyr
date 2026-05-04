@@ -19,6 +19,7 @@ Read these from the environment:
 | ----------------- | -------- | -------------------------------------------------------------------------------------- |
 | `TITAN_TYR_URL`   | yes      | Base URL of the API, e.g. `http://localhost:8000`. No trailing slash.                  |
 | `TITAN_TYR_TOKEN` | no       | Bearer token. Defaults to `sysmlv2` (the placeholder password — see titan-tyr DESIGN.md). |
+| `TITAN_TYR_ACTOR` | no       | Identity for the X-Actor header (provider v0.16.0+, #39). Stored as `created_by_actor` on the new part row — the only attribution signal until real per-caller auth lands. If unset, the part records `null` for the creator and the paper trail goes blank — warn the user. |
 
 If `TITAN_TYR_URL` is unset, **stop and tell the user**:
 
@@ -238,9 +239,17 @@ print(json.dumps({
 curl -fsS -X POST \
      -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
      -H "Content-Type: application/json" \
+     -H "X-Actor: $TITAN_TYR_ACTOR" \
      --data @.scratch/body.json \
      "$TITAN_TYR_URL/parts"
 ```
+
+The `X-Actor` header is recorded as `created_by_actor` on the new
+part row (provider v0.16.0+, #39). It's the only attribution signal
+this row will ever carry — every subsequent change has its own
+proposer/acceptor attribution, but the initial registration is a
+one-shot create. If `TITAN_TYR_ACTOR` is unset, the paper trail
+goes blank — warn the user.
 
 ### 10. Report the result
 

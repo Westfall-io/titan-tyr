@@ -109,6 +109,7 @@ async def list_parts(
         Part.repo_uri,
         Part.issue_tracker_uri,
         Part.aliases,
+        Part.created_by_actor,
         latest_versions.c.pv_major,
         latest_versions.c.pv_minor,
         latest_versions.c.pv_patch,
@@ -152,7 +153,10 @@ async def list_parts(
     items: list[PartListItem] = []
     last_t = None
     last_id = None
-    for p_id, p_name, p_subtype, p_repo, p_tracker, p_aliases, vmaj, vmin, vpat, vts in rows:
+    for (
+        p_id, p_name, p_subtype, p_repo, p_tracker, p_aliases, p_creator,
+        vmaj, vmin, vpat, vts,
+    ) in rows:
         items.append(
             PartListItem(
                 id=p_id,
@@ -163,6 +167,7 @@ async def list_parts(
                 aliases=list(p_aliases or []),
                 version=str(Version(vmaj, vmin, vpat)),
                 updated_at=vts,
+                created_by_actor=p_creator,
             )
         )
         last_t, last_id = vts, p_id
@@ -175,6 +180,7 @@ async def list_parts(
 async def register_part(
     payload: PartCreate,
     session: AsyncSession = Depends(get_session),
+    x_actor: str | None = Header(default=None, alias="X-Actor"),
 ) -> PartCreateResponse:
     version = Version.parse(payload.version, allow_prerelease=False)
     existing = (
@@ -191,6 +197,7 @@ async def register_part(
         repo_uri=payload.repo_uri,
         issue_tracker_uri=payload.issue_tracker_uri,
         aliases=payload.aliases,
+        created_by_actor=x_actor,
     )
     session.add(part)
     await session.flush()
@@ -235,6 +242,7 @@ async def get_part(
         version=str(version),
         markdown=latest.markdown,
         updated_at=latest.created_at,
+        created_by_actor=part.created_by_actor,
     )
 
 
@@ -450,6 +458,7 @@ async def _list_active_contracts(
             Contract.id,
             Contract.subtype,
             Contract.connection_type,
+            Contract.created_by_actor,
             owner_alias.c.name.label("owner_name"),
             cp_alias.c.name.label("cp_name"),
             latest_active.c.cv_major,
@@ -501,7 +510,10 @@ async def _list_active_contracts(
     items: list[ContractListItem] = []
     last_t = None
     last_id = None
-    for c_id, c_subtype, c_conn_type, owner_name, cp_name, vmaj, vmin, vpat, vts, accepted_at in rows:
+    for (
+        c_id, c_subtype, c_conn_type, c_creator,
+        owner_name, cp_name, vmaj, vmin, vpat, vts, accepted_at,
+    ) in rows:
         items.append(
             ContractListItem(
                 contract_id=c_id,
@@ -511,6 +523,7 @@ async def _list_active_contracts(
                 connection_type=c_conn_type,
                 version=str(Version(vmaj, vmin, vpat)),
                 updated_at=accepted_at or vts,
+                created_by_actor=c_creator,
             )
         )
         last_t, last_id = vts, c_id
@@ -733,6 +746,7 @@ async def list_part_subtype_shifts(
                 created_at=r.created_at,
                 accepted_at=r.accepted_at,
                 accepted_by=r.accepted_by,
+                single_operator_override=r.single_operator_override,
             )
         )
 
@@ -810,6 +824,7 @@ async def accept_part_subtype_shift(
     proposal.status = "accepted"
     proposal.accepted_at = now
     proposal.accepted_by = x_actor
+    proposal.single_operator_override = single_operator
 
     await session.commit()
 
@@ -821,4 +836,5 @@ async def accept_part_subtype_shift(
         accepted_at=now,
         accepted_by=x_actor,
         body_realign_required=proposal.body_realign_required,
+        single_operator_override=single_operator,
     )
