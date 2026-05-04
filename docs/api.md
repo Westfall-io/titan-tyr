@@ -430,10 +430,28 @@ Within a single payload, entries are deduplicated case-insensitively
 design** — `?match=` surfaces all candidates and the caller
 disambiguates.
 
-`201` response:
+`201` response (provider v0.20.0+, #47): the full persisted row,
+same shape as `GET /parts/{name}`:
 ```json
-{ "id": "12c3a4b5-...", "name": "payments-service", "subtype": "software", "version": "1.0.0" }
+{
+  "id": "12c3a4b5-...",
+  "name": "payments-service",
+  "subtype": "software",
+  "repo_uri": "https://github.com/example/payments-service",
+  "issue_tracker_uri": null,
+  "aliases": [],
+  "version": "1.0.0",
+  "markdown": "# payments-service\n...",
+  "updated_at": "2026-04-29T14:30:00Z",
+  "created_by_actor": "alice@example.com",
+  "project": null
+}
 ```
+
+> **Pre-v0.20.0** the response was the bare
+> `{ "id", "name", "subtype", "version" }`. The widening is purely
+> additive (existing fields preserved); consumers reading only `name`
+> or `version` continue to work without change.
 
 Errors:
 - `409 Conflict` — name already taken (across all subtypes — names are
@@ -513,10 +531,31 @@ as on register (1–128 chars, no control characters, case-preserved,
 case-insensitive per-payload dedupe). Setting an empty list (`[]`) is
 equivalent to setting `null` — both clear.
 
-`200` response:
+`200` response (provider v0.20.0+, #47): the full persisted row,
+same shape as `GET /parts/{name}` and `POST /parts`. Eliminates the
+verify-with-GET round-trip — `update-part` callers can render the
+echoed `markdown`, `updated_at`, and project / metadata fields
+straight from the PUT response.
+
 ```json
-{ "name": "payments-service", "version": "2.1.0" }
+{
+  "id": "12c3a4b5-...",
+  "name": "payments-service",
+  "subtype": "software",
+  "repo_uri": "https://github.com/example/payments-service-renamed",
+  "issue_tracker_uri": "https://linear.app/example/team/PAY",
+  "aliases": ["payments", "billing"],
+  "version": "2.1.0",
+  "markdown": "...",
+  "updated_at": "2026-04-29T14:30:00Z",
+  "created_by_actor": "alice@example.com",
+  "project": null
+}
 ```
+
+> **Pre-v0.20.0** the response was the bare
+> `{ "name", "version" }`. The widening is purely additive; consumers
+> reading only those two fields continue to work without change.
 
 Errors:
 - `404 Not Found` — part not registered.

@@ -237,10 +237,13 @@ curl -fsS -X PUT \
 
 ### 9. Report
 
-On `200`, summarise:
+On `200`, summarise. The PUT response carries the full persisted row
+(provider v0.20.0+, #47) — same shape as `GET /parts/{name}` —
+so quote the echoed `version`, `updated_at`, and any project /
+metadata fields directly from the response without a follow-up
+GET.
 
-> Updated `<name>` to version `<new-version>`.
-> Read it back: `curl -H 'Authorization: Bearer sysmlv2' $TITAN_TYR_URL/parts/<name>`
+> Updated `<name>` to version `<new-version>` (updated_at: `<echoed timestamp>`).
 
 Note whether the update closed any template drift (stamp now matches
 active template), or whether it only addressed content.

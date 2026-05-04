@@ -206,10 +206,20 @@ class PartCreate(BaseModel):
 
 
 class PartCreateResponse(BaseModel):
+    # Same shape as `PartDetail` (#47): both POST /parts and
+    # PUT /parts/{name} echo the full persisted row so callers don't
+    # need a follow-up GET to verify what landed.
     id: uuid.UUID
     name: str
     subtype: str
+    repo_uri: str
+    issue_tracker_uri: str | None = None
+    aliases: list[str] = []
     version: str
+    markdown: str
+    updated_at: datetime
+    created_by_actor: str | None = None
+    project: str | None = None
 
 
 class PartUpdate(BaseModel):
@@ -237,8 +247,21 @@ class PartUpdate(BaseModel):
 
 
 class PartUpdateResponse(BaseModel):
+    # Same shape as `PartDetail` (#47): the PUT echoes the full
+    # persisted row so callers don't need a follow-up GET to verify
+    # the new template stamp landed, the updated_at is fresh, and
+    # the metadata patch took effect.
+    id: uuid.UUID
     name: str
+    subtype: str
+    repo_uri: str
+    issue_tracker_uri: str | None = None
+    aliases: list[str] = []
     version: str
+    markdown: str
+    updated_at: datetime
+    created_by_actor: str | None = None
+    project: str | None = None
 
 
 class PartDetail(BaseModel):

@@ -245,11 +245,23 @@ async def register_part(
     )
     session.add(pv)
     await session.commit()
+    await session.refresh(pv)
+    project_name = None
+    if part.project_id is not None:
+        proj = await session.get(Project, part.project_id)
+        project_name = proj.name if proj is not None else None
     return PartCreateResponse(
         id=part.id,
         name=part.name,
         subtype=part.subtype,
+        repo_uri=part.repo_uri,
+        issue_tracker_uri=part.issue_tracker_uri,
+        aliases=list(part.aliases or []),
         version=str(version),
+        markdown=pv.markdown,
+        updated_at=pv.created_at,
+        created_by_actor=part.created_by_actor,
+        project=project_name,
     )
 
 
@@ -338,7 +350,24 @@ async def update_part(
     )
     session.add(pv)
     await session.commit()
-    return PartUpdateResponse(name=part.name, version=str(new_version))
+    await session.refresh(pv)
+    project_name = None
+    if part.project_id is not None:
+        proj = await session.get(Project, part.project_id)
+        project_name = proj.name if proj is not None else None
+    return PartUpdateResponse(
+        id=part.id,
+        name=part.name,
+        subtype=part.subtype,
+        repo_uri=part.repo_uri,
+        issue_tracker_uri=part.issue_tracker_uri,
+        aliases=list(part.aliases or []),
+        version=str(new_version),
+        markdown=pv.markdown,
+        updated_at=pv.created_at,
+        created_by_actor=part.created_by_actor,
+        project=project_name,
+    )
 
 
 @router.get("/{name}/history", response_model=VersionHistoryResponse)
