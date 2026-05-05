@@ -6,9 +6,10 @@ description: Pull or check the titan-tyr skill catalog from github.com/Westfall-
 # update-skills
 
 Pull the titan-tyr skill catalog into the consumer repo. Each skill's
-helper scripts are captured under the skill's own directory
-(`.claude/skills/<name>/scripts/`) so the pull never touches the
-consumer's top-level `scripts/` dir.
+helper scripts are co-located with the skill itself
+(`.claude/skills/<name>/scripts/`), and cross-cutting helpers used
+by multiple skills live in `.claude/skills/_shared/scripts/`. The
+pull never touches the consumer's top-level `scripts/` dir.
 
 This skill is for **downstream consumers** of titan-tyr — repos whose
 agents call the titan-tyr API and need the propose / accept / register /
@@ -67,7 +68,7 @@ git remote get-url origin 2>/dev/null
 upstream. No writes. Exits 1 if anything would change on a real sync.
 
 ```sh
-scripts/sync-titan-tyr-skills.sh --check
+.claude/skills/update-skills/scripts/sync-titan-tyr-skills.sh --check
 ```
 
 Output is one line per file with a status column:
@@ -86,17 +87,17 @@ Default to `--check` when the user asks "are my skills current?" or
 local copy. Use when the user explicitly wants to refresh.
 
 ```sh
-scripts/sync-titan-tyr-skills.sh
+.claude/skills/update-skills/scripts/sync-titan-tyr-skills.sh
 ```
 
 Either mode:
 - discovers every skill under `.claude/skills/<name>/` on `main` via the
   GitHub trees API;
 - (sync) writes each `SKILL.md` to `.claude/skills/<name>/SKILL.md`;
-- (sync) captures every `scripts/<x>.sh` referenced by a skill body into
-  `.claude/skills/<name>/scripts/<x>.sh`;
-- (sync) rewrites the `scripts/<x>.sh` paths in each `SKILL.md` to the
-  namespaced location;
+- (sync) pulls each skill's own `scripts/` directory wholesale to
+  `.claude/skills/<name>/scripts/`;
+- (sync) pulls the shared helper bundle from
+  `.claude/skills/_shared/scripts/` to the matching local path;
 - (sync) marks pulled `.sh` files executable.
 
 All fetches go through `gh api` so the consumer's `gh` auth is the only
@@ -141,10 +142,11 @@ custom skills), so the user decides whether to remove them.
 - **Source of truth is `main`, not a release tag.** titan-tyr ships skills
   only after CI passes on `main`; there is no separate release channel
   for the skill catalog.
-- **Per-skill script namespacing.** `accept.sh` is referenced by 5 skills
-  on titan-tyr; after pulling, the consumer ends up with 5 copies (one
-  per skill dir). Disk-space cost is negligible (~2KB each); the win is
-  that the consumer's top-level `scripts/` dir stays untouched.
+- **Helper layout mirrors source.** Each skill's own helpers live under
+  `.claude/skills/<name>/scripts/`; cross-cutting helpers (the `tyr-*`
+  family) live under `.claude/skills/_shared/scripts/`. Source and
+  destination paths match, so SKILL bodies reference the same path
+  whether you're in titan-tyr or a downstream consumer.
 - **Deletion is manual.** A skill removed upstream lingers locally until
   the user removes it. This avoids wiping any custom skills the consumer
   added under `.claude/skills/`.
