@@ -40,7 +40,12 @@ async def _project_counts(
 ) -> tuple[int, int]:
     parts = (
         await session.execute(
-            select(func.count()).select_from(Part).where(Part.project_id == project_id)
+            select(func.count())
+            .select_from(Part)
+            .where(
+                Part.project_id == project_id,
+                Part.deleted_at.is_(None),
+            )
         )
     ).scalar_one()
     contracts = (

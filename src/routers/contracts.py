@@ -108,7 +108,16 @@ def _check_part_subtype_implemented(
 
 
 async def _resolve_part(session: AsyncSession, name: str) -> Part:
-    pt = (await session.execute(select(Part).where(Part.name == name))).scalar_one_or_none()
+    # A soft-deleted part (#76) is logically gone for write paths;
+    # register_contract / endpoint shifts must not be able to point
+    # at one. Match the gating pattern used elsewhere — 404, not a
+    # specific "deleted" message, so the externally-visible shape
+    # is uniform regardless of deletion state.
+    pt = (
+        await session.execute(
+            select(Part).where(Part.name == name, Part.deleted_at.is_(None))
+        )
+    ).scalar_one_or_none()
     if pt is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Part {name!r} not found")
     return pt

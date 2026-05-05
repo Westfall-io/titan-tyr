@@ -222,6 +222,13 @@ class PartCreateResponse(BaseModel):
     updated_at: datetime
     created_by_actor: str | None = None
     project: str | None = None
+    # Soft-delete fields mirror PartDetail (#76) so the round-trip
+    # POST→GET stays identical. POST returns nulls (a freshly
+    # registered part is never deleted).
+    deleted_at: datetime | None = None
+    deleted_by_proposer_actor: str | None = None
+    deleted_by_acceptor_actor: str | None = None
+    deletion_rationale: str | None = None
 
 
 class PartUpdate(BaseModel):
@@ -264,6 +271,13 @@ class PartUpdateResponse(BaseModel):
     updated_at: datetime
     created_by_actor: str | None = None
     project: str | None = None
+    # Soft-delete fields mirror PartDetail (#76) so the PUT-then-GET
+    # round-trip stays identical. PUT 404s on soft-deleted parts, so
+    # these are always null on a successful PUT.
+    deleted_at: datetime | None = None
+    deleted_by_proposer_actor: str | None = None
+    deleted_by_acceptor_actor: str | None = None
+    deletion_rationale: str | None = None
 
 
 class PartDetail(BaseModel):
@@ -280,6 +294,12 @@ class PartDetail(BaseModel):
     updated_at: datetime
     created_by_actor: str | None = None
     project: str | None = None
+    # Soft-delete fields surfaced via `?include_deleted=true` (#76).
+    # NULL on live rows.
+    deleted_at: datetime | None = None
+    deleted_by_proposer_actor: str | None = None
+    deleted_by_acceptor_actor: str | None = None
+    deletion_rationale: str | None = None
 
 
 class PartListItem(BaseModel):
@@ -293,6 +313,9 @@ class PartListItem(BaseModel):
     updated_at: datetime
     created_by_actor: str | None = None
     project: str | None = None
+    # Populated on soft-deleted rows surfaced via `?include_deleted=true`
+    # (#76). NULL on live rows.
+    deleted_at: datetime | None = None
 
 
 class PartListResponse(BaseModel):
@@ -915,3 +938,87 @@ class ContractDeletionAcceptResponse(BaseModel):
     rationale: str
     impact: ContractDeletionImpact
     single_operator_override: bool = False
+
+
+# ---------- Part deletion proposals (#76) ----------
+#
+# Parallel to ContractDeletionProposal* (#69) with two extras:
+#   1. The impact block carries `touching_contracts` — the
+#      cascade-vs-block driver. Non-empty + cascade=false → 422
+#      hard-block at accept.
+#   2. `cascaded_contract_ids` on the accept response surfaces which
+#      contracts were cascade-deleted alongside the part.
+#
+# Human-confirmation rule (acceptor X-Actor must not be in the
+# KNOWN_AGENT_ACTORS allowlist; ?single_operator=true forbidden) is
+# enforced at the router layer; not visible in the schema.
+
+
+class TouchingContractRef(BaseModel):
+    contract_id: uuid.UUID
+    owner: str
+    counterparty: str
+    subtype: ContractSubtype
+    connection_type: ConnectionType | None = None
+
+
+class PartDeletionImpact(BaseModel):
+    """Cascade preview + dangling-reference summary for part deletion.
+
+    `touching_contracts` is the cascade-vs-block driver. Non-empty
+    means accept will 422 unless the caller passes `?cascade=true`,
+    which soft-deletes each listed contract in the same transaction.
+
+    `referenced_in_part_bodies` mirrors the contract impact block —
+    other parts whose latest body references THIS part by whole-token
+    slug. Soft-warn only.
+
+    `active_history_entries` is the count of accepted history events
+    on the part (body bumps + subtype shifts + name shifts).
+    """
+
+    touching_contracts: list[TouchingContractRef] = []
+    referenced_in_part_bodies: list[str] = []
+    active_history_entries: int = 0
+
+
+class PartDeletionProposalCreate(BaseModel):
+    rationale: str = Field(min_length=1, max_length=2000)
+
+
+class PartDeletionProposalEntry(BaseModel):
+    proposal_id: uuid.UUID
+    rationale: str
+    proposer_actor: str | None
+    status: str
+    created_at: datetime
+    accepted_at: datetime | None
+    accepted_by: str | None
+    single_operator_override: bool = False
+    cascade: bool = False
+
+
+class PartDeletionProposalCreateResponse(BaseModel):
+    proposal_id: uuid.UUID
+    part_name: str
+    rationale: str
+    proposer_actor: str | None
+    impact: PartDeletionImpact
+    status: str
+
+
+class PartDeletionProposalListResponse(BaseModel):
+    part_name: str
+    proposals: list[PartDeletionProposalEntry]
+
+
+class PartDeletionAcceptResponse(BaseModel):
+    proposal_id: uuid.UUID
+    part_name: str
+    deleted_at: datetime
+    proposer_actor: str | None
+    acceptor_actor: str | None
+    rationale: str
+    impact: PartDeletionImpact
+    cascade: bool
+    cascaded_contract_ids: list[uuid.UUID] = []

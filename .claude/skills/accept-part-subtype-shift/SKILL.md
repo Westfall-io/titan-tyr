@@ -175,7 +175,9 @@ explicitly drift; the broader audit catches everything else.
 - **History endpoint** picks up the shift event automatically:
   `GET /parts/<name>/history` returns one entry per body bump
   *and* one per accepted shift, distinguished by the `kind` field
-  (`body_bump` or `subtype_shift`).
+  (`body_bump`, `subtype_shift`, or `name_shift`).
+  Soft-deletion events (`deletion_proposed`, `deletion_accepted`,
+  v0.27.0+, #76) only surface with `?include_deleted=true`.
 - **Acceptance re-validates.** A shift proposed against subtype X
   may no longer apply if the part has shifted independently in the
   meantime — the accept endpoint detects no-ops and 409s. Re-propose
