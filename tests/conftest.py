@@ -51,26 +51,44 @@ def database_url() -> Iterator[str]:
         container.stop()
 
 
-@pytest_asyncio.fixture()
+@pytest_asyncio.fixture(scope="session")
 async def engine(database_url):
-    """Function-scoped engine using NullPool so each event loop gets fresh connections."""
+    """Session-scoped engine + schema build.
+
+    Building the schema once and resetting state between tests with
+    TRUNCATE (rather than drop_all + create_all per test) is the
+    main test-speed lever — full create_all costs ~300-500ms because
+    of the CHECK constraints, FKs, and indexes. Reusing the schema
+    drops per-test cost from ~600ms to ~30ms.
+
+    Requires `asyncio_default_fixture_loop_scope = "session"` in
+    pyproject so the engine's loop matches the per-test loop.
+    """
     engine = create_async_engine(database_url, future=True, poolclass=NullPool)
     async with engine.begin() as conn:
         await conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS pgcrypto")
+        await conn.run_sync(Base.metadata.create_all)
     yield engine
     await engine.dispose()
 
 
 @pytest_asyncio.fixture()
 async def db_session(engine) -> AsyncIterator[AsyncSession]:
+    # Per-test reset: TRUNCATE every table with CASCADE + RESTART
+    # IDENTITY so SERIAL/sequences (none today, but defensive) reset
+    # too. Schema lives across tests; only data is wiped.
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
+        table_names = ", ".join(
+            f'"{t.name}"' for t in reversed(Base.metadata.sorted_tables)
+        )
+        await conn.exec_driver_sql(
+            f"TRUNCATE TABLE {table_names} RESTART IDENTITY CASCADE"
+        )
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with sessionmaker() as session:
-        # Seed the two templates with placeholder v1.0.0 active rows so that
-        # GET /templates/{kind} works out of the box, mirroring what migration
-        # 0002 does in production.
+        # Seed the eight templates with placeholder v1.0.0 active rows
+        # so GET /templates/{kind} works out of the box, mirroring
+        # what migration 0002 does in production.
         for kind, markdown in (
             ("software", SEED_SOFTWARE_TEMPLATE),
             ("container", SEED_CONTAINER_TEMPLATE),
