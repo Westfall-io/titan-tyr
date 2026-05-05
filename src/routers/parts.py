@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -8,11 +9,13 @@ from sqlalchemy import func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth import require_password
+from src.config import get_settings
 from src.db import get_session
 from src.models import (
     Contract,
     ContractVersion,
     Part,
+    PartDeletionProposal,
     PartNameProposal,
     PartSubtypeProposal,
     PartVersion,
@@ -29,6 +32,7 @@ from src.routers._projects import resolve_project_slug
 from src.routers._rules import BINDING_OWNER_SUBTYPES, CONNECTION_RULES
 from src.routers._subtype_helpers import (
     body_realign_required,
+    enforce_human_confirmation,
     enforce_two_party,
 )
 from src.schemas import (
@@ -38,6 +42,12 @@ from src.schemas import (
     PartContractsListResponse,
     PartCreate,
     PartCreateResponse,
+    PartDeletionAcceptResponse,
+    PartDeletionImpact,
+    PartDeletionProposalCreate,
+    PartDeletionProposalCreateResponse,
+    PartDeletionProposalEntry,
+    PartDeletionProposalListResponse,
     PartDetail,
     PartListItem,
     PartListResponse,
@@ -55,6 +65,7 @@ from src.schemas import (
     PartUpdateResponse,
     RelatedRowAffected,
     SubtypeShiftImpact,
+    TouchingContractRef,
     VersionHistoryItem,
     VersionHistoryResponse,
 )
@@ -84,6 +95,7 @@ async def list_parts(
     match: str | None = Query(default=None, max_length=128),
     subtype: str | None = Query(default=None),
     project: str | None = Query(default=None, max_length=64),
+    include_deleted: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
 ) -> PartListResponse:
     limit = validate_limit(limit)
@@ -133,6 +145,7 @@ async def list_parts(
             Part.issue_tracker_uri,
             Part.aliases,
             Part.created_by_actor,
+            Part.deleted_at,
             Project.name.label("project_name"),
             latest_versions.c.pv_major,
             latest_versions.c.pv_minor,
@@ -145,6 +158,9 @@ async def list_parts(
 
     if subtype is not None:
         stmt = stmt.where(Part.subtype == subtype)
+
+    if not include_deleted:
+        stmt = stmt.where(Part.deleted_at.is_(None))
 
     if project_filter_unprojected:
         stmt = stmt.where(Part.project_id.is_(None))
@@ -187,7 +203,7 @@ async def list_parts(
     last_id = None
     for (
         p_id, p_name, p_subtype, p_repo, p_tracker, p_aliases, p_creator,
-        p_project, vmaj, vmin, vpat, vts,
+        p_deleted_at, p_project, vmaj, vmin, vpat, vts,
     ) in rows:
         items.append(
             PartListItem(
@@ -201,6 +217,7 @@ async def list_parts(
                 updated_at=vts,
                 created_by_actor=p_creator,
                 project=p_project,
+                deleted_at=p_deleted_at,
             )
         )
         last_t, last_id = vts, p_id
@@ -216,8 +233,15 @@ async def register_part(
     x_actor: str | None = Header(default=None, alias="X-Actor"),
 ) -> PartCreateResponse:
     version = Version.parse(payload.version, allow_prerelease=False)
+    # The uniqueness key on `parts.name` is partial-on-live (#76),
+    # so soft-deleted rows do not block re-registration. Match the
+    # router-level existence check to that semantics.
     existing = (
-        await session.execute(select(Part.id).where(Part.name == payload.name))
+        await session.execute(
+            select(Part.id).where(
+                Part.name == payload.name, Part.deleted_at.is_(None)
+            )
+        )
     ).scalar_one_or_none()
     if existing is not None:
         raise HTTPException(
@@ -268,6 +292,7 @@ async def register_part(
 @router.get("/{name}", response_model=PartDetail)
 async def get_part(
     name: str,
+    include_deleted: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
 ) -> PartDetail:
     row = (
@@ -280,6 +305,8 @@ async def get_part(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Part {name!r} not found")
     part, project_name = row
+    if part.deleted_at is not None and not include_deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Part {name!r} not found")
     latest = await _latest_part_version(session, part.id)
     if latest is None:  # invariant: every part row has at least one version
         raise HTTPException(status_code=500, detail="Part has no versions")
@@ -296,6 +323,10 @@ async def get_part(
         updated_at=latest.created_at,
         created_by_actor=part.created_by_actor,
         project=project_name,
+        deleted_at=part.deleted_at,
+        deleted_by_proposer_actor=part.deleted_by_proposer_actor,
+        deleted_by_acceptor_actor=part.deleted_by_acceptor_actor,
+        deletion_rationale=part.deletion_rationale,
     )
 
 
@@ -311,7 +342,7 @@ async def update_part(
             select(Part).where(Part.name == name).with_for_update()
         )
     ).scalar_one_or_none()
-    if part is None:
+    if part is None or part.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Part {name!r} not found")
 
     new_version = Version.parse(payload.version, allow_prerelease=False)
@@ -384,15 +415,21 @@ async def get_part_history(
     name: str,
     after: str | None = Query(default=None),
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    include_deleted: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
 ) -> VersionHistoryResponse:
     limit = validate_limit(limit)
 
-    part = (
-        await session.execute(select(Part.id).where(Part.name == name))
-    ).scalar_one_or_none()
-    if part is None:
+    part_row = (
+        await session.execute(
+            select(Part.id, Part.deleted_at).where(Part.name == name)
+        )
+    ).first()
+    if part_row is None or (
+        part_row.deleted_at is not None and not include_deleted
+    ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Part {name!r} not found")
+    part = part_row.id
 
     body_rows = (
         await session.execute(
@@ -435,6 +472,27 @@ async def get_part_history(
             )
         )
     ).all()
+
+    # Deletion proposals contribute two events per row:
+    # `deletion_proposed` at created_at and `deletion_accepted` at
+    # accepted_at (if accepted). Both are gated behind
+    # `include_deleted=true` since deletion is the kind of audit
+    # event that warrants the explicit opt-in (#76).
+    deletion_rows = []
+    if include_deleted:
+        deletion_rows = (
+            await session.execute(
+                select(
+                    PartDeletionProposal.id,
+                    PartDeletionProposal.created_at,
+                    PartDeletionProposal.accepted_at,
+                    PartDeletionProposal.proposer_actor,
+                    PartDeletionProposal.accepted_by,
+                    PartDeletionProposal.single_operator_override,
+                    PartDeletionProposal.status,
+                ).where(PartDeletionProposal.part_id == part)
+            )
+        ).all()
 
     # For each shift, the version emitted is the latest body version
     # whose row was created at or before the shift's accept time —
@@ -504,6 +562,33 @@ async def get_part_history(
                 bool(r.single_operator_override),
             )
         )
+    for r in deletion_rows:
+        # The propose event records the proposer; acceptor is null
+        # until accept lands. Both events carry the proposer for
+        # continuity (mirrors #69's contract treatment).
+        entries.append(
+            (
+                r.created_at,
+                r.id,
+                "deletion_proposed",
+                _version_at(r.created_at),
+                r.proposer_actor,
+                None,
+                False,
+            )
+        )
+        if r.accepted_at is not None:
+            entries.append(
+                (
+                    r.accepted_at,
+                    r.id,
+                    "deletion_accepted",
+                    _version_at(r.accepted_at),
+                    r.proposer_actor,
+                    r.accepted_by,
+                    bool(r.single_operator_override),
+                )
+            )
 
     entries.sort(key=lambda e: (e[0], e[1]), reverse=True)
 
@@ -543,7 +628,10 @@ async def list_part_contracts(
     part = (
         await session.execute(select(Part).where(Part.name == name))
     ).scalar_one_or_none()
-    if part is None:
+    # The same `?include_deleted=true` flag controls visibility of
+    # both the part itself and the contracts it touches (#76, #69).
+    # A soft-deleted part is hidden from this listing by default.
+    if part is None or (part.deleted_at is not None and not include_deleted):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Part {name!r} not found")
 
     items, next_cursor = await _list_active_contracts(
@@ -820,7 +908,7 @@ async def propose_part_subtype_shift(
     part = (
         await session.execute(select(Part).where(Part.name == name).with_for_update())
     ).scalar_one_or_none()
-    if part is None:
+    if part is None or part.deleted_at is not None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"Part {name!r} not found"
         )
@@ -879,7 +967,7 @@ async def list_part_subtype_shifts(
     part = (
         await session.execute(select(Part).where(Part.name == name))
     ).scalar_one_or_none()
-    if part is None:
+    if part is None or part.deleted_at is not None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"Part {name!r} not found"
         )
@@ -941,7 +1029,7 @@ async def accept_part_subtype_shift(
     part = (
         await session.execute(select(Part).where(Part.name == name).with_for_update())
     ).scalar_one_or_none()
-    if part is None:
+    if part is None or part.deleted_at is not None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"Part {name!r} not found"
         )
@@ -1037,7 +1125,7 @@ async def propose_part_name_shift(
             select(Part).where(Part.name == name).with_for_update()
         )
     ).scalar_one_or_none()
-    if part is None:
+    if part is None or part.deleted_at is not None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"Part {name!r} not found"
         )
@@ -1051,12 +1139,15 @@ async def propose_part_name_shift(
             ),
         )
 
-    # Reject early if another part already owns the proposed slug.
-    # Re-checked at accept time (the check is racy — another shift
-    # might land between propose and accept).
+    # Reject early if another live part already owns the proposed
+    # slug. Soft-deleted rows do not block per #76's partial-on-live
+    # uniqueness key. Re-checked at accept time (the check is racy —
+    # another shift might land between propose and accept).
     clash = (
         await session.execute(
-            select(Part.id).where(Part.name == payload.new_name)
+            select(Part.id).where(
+                Part.name == payload.new_name, Part.deleted_at.is_(None)
+            )
         )
     ).scalar_one_or_none()
     if clash is not None:
@@ -1099,7 +1190,7 @@ async def list_part_name_shifts(
     part = (
         await session.execute(select(Part).where(Part.name == name))
     ).scalar_one_or_none()
-    if part is None:
+    if part is None or part.deleted_at is not None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"Part {name!r} not found"
         )
@@ -1151,7 +1242,7 @@ async def accept_part_name_shift(
             select(Part).where(Part.name == name).with_for_update()
         )
     ).scalar_one_or_none()
-    if part is None:
+    if part is None or part.deleted_at is not None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"Part {name!r} not found"
         )
@@ -1202,7 +1293,11 @@ async def accept_part_name_shift(
     clash = (
         await session.execute(
             select(Part.id).where(
-                Part.name == proposal.new_name, Part.id != part.id
+                Part.name == proposal.new_name,
+                Part.id != part.id,
+                # Match the partial-on-live uniqueness key (#76):
+                # soft-deleted rows do not block a name shift.
+                Part.deleted_at.is_(None),
             )
         )
     ).scalar_one_or_none()
@@ -1236,4 +1331,359 @@ async def accept_part_name_shift(
         accepted_at=now,
         accepted_by=x_actor,
         single_operator_override=single_operator,
+    )
+
+
+# ---------- Deletion proposals (#76) ----------
+#
+# Parts-side parallel of #69's contract deletion. Acceptance soft-
+# deletes by stamping `parts.deleted_at` plus the proposer / acceptor
+# / rationale columns. Two extras vs the contract flow:
+#
+#   1. Cascade-vs-block. A part is a node, contracts are edges. Live
+#      touching contracts hard-block the accept (422) unless
+#      `?cascade=true`, which soft-deletes each touching contract in
+#      the same transaction. Contracts get the same proposer /
+#      acceptor and a rationale prefixed
+#      "cascaded from /propose-part-deletion: ...".
+#
+#   2. Human confirmation. The acceptor X-Actor must NOT be in the
+#      KNOWN_AGENT_ACTORS allowlist (default {titan-tyr,
+#      titan-archaedas}); ?single_operator=true is forbidden. Two
+#      agents bouncing the handshake otherwise satisfies the soft
+#      two-party rule without a human ever confirming a cascading
+#      wipe.
+
+
+async def _compute_part_deletion_impact(
+    session: AsyncSession,
+    *,
+    part: Part,
+) -> tuple[PartDeletionImpact, list[Contract]]:
+    """Build the impact block + return the touching live contracts.
+
+    Returns the populated `PartDeletionImpact` plus the list of
+    live Contract rows that touch this part (owner or counterparty
+    side). Returning the list separately lets the cascade path
+    operate on the same set without re-querying.
+    """
+    # Touching contracts (live only — soft-deleted contracts don't
+    # need cascading, they're already gone).
+    contracts = (
+        await session.execute(
+            select(Contract)
+            .where(
+                or_(
+                    Contract.owner_part_id == part.id,
+                    Contract.counterparty_part_id == part.id,
+                ),
+                Contract.deleted_at.is_(None),
+            )
+        )
+    ).scalars().all()
+
+    refs: list[TouchingContractRef] = []
+    for c in contracts:
+        owner = await session.get(Part, c.owner_part_id)
+        cp = await session.get(Part, c.counterparty_part_id)
+        refs.append(
+            TouchingContractRef(
+                contract_id=c.id,
+                owner=owner.name,
+                counterparty=cp.name,
+                subtype=c.subtype,
+                connection_type=c.connection_type,
+            )
+        )
+
+    # Body references: scan the latest active version of every other
+    # live part for a whole-token match of THIS part's name. Same
+    # treatment as #69's contract impact block; the bound prevents
+    # false positives on shared substrings.
+    pattern = (
+        r"(?<![a-z0-9-])" + re.escape(part.name) + r"(?![a-z0-9-])"
+    )
+    referenced: list[str] = []
+    other_part_rows = (
+        await session.execute(
+            select(Part).where(
+                Part.id != part.id, Part.deleted_at.is_(None)
+            )
+        )
+    ).scalars().all()
+    for other in other_part_rows:
+        latest = await _latest_part_version(session, other.id)
+        if latest is None or latest.markdown is None:
+            continue
+        if re.search(pattern, latest.markdown):
+            referenced.append(other.name)
+
+    # Active history events on the part.
+    body_count = (
+        await session.execute(
+            select(func.count())
+            .select_from(PartVersion)
+            .where(PartVersion.part_id == part.id)
+        )
+    ).scalar_one()
+    accepted_subtype = (
+        await session.execute(
+            select(func.count())
+            .select_from(PartSubtypeProposal)
+            .where(
+                PartSubtypeProposal.part_id == part.id,
+                PartSubtypeProposal.status == "accepted",
+            )
+        )
+    ).scalar_one()
+    accepted_name = (
+        await session.execute(
+            select(func.count())
+            .select_from(PartNameProposal)
+            .where(
+                PartNameProposal.part_id == part.id,
+                PartNameProposal.status == "accepted",
+            )
+        )
+    ).scalar_one()
+
+    impact = PartDeletionImpact(
+        touching_contracts=refs,
+        referenced_in_part_bodies=referenced,
+        active_history_entries=int(body_count)
+        + int(accepted_subtype)
+        + int(accepted_name),
+    )
+    return impact, list(contracts)
+
+
+@router.post(
+    "/{name}/deletion-proposals",
+    response_model=PartDeletionProposalCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def propose_part_deletion(
+    name: str,
+    payload: PartDeletionProposalCreate,
+    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    session: AsyncSession = Depends(get_session),
+) -> PartDeletionProposalCreateResponse:
+    part = (
+        await session.execute(
+            select(Part).where(Part.name == name).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if part is None or part.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Part {name!r} not found"
+        )
+
+    impact, _ = await _compute_part_deletion_impact(session, part=part)
+
+    proposal = PartDeletionProposal(
+        part_id=part.id,
+        rationale=payload.rationale,
+        proposer_actor=x_actor,
+        status="proposal",
+    )
+    session.add(proposal)
+    await session.flush()
+    proposal_id = proposal.id
+    await session.commit()
+
+    return PartDeletionProposalCreateResponse(
+        proposal_id=proposal_id,
+        part_name=part.name,
+        rationale=payload.rationale,
+        proposer_actor=x_actor,
+        impact=impact,
+        status="proposal",
+    )
+
+
+@router.get(
+    "/{name}/deletion-proposals",
+    response_model=PartDeletionProposalListResponse,
+)
+async def list_part_deletion_proposals(
+    name: str,
+    include_deleted: bool = Query(default=False),
+    session: AsyncSession = Depends(get_session),
+) -> PartDeletionProposalListResponse:
+    part = (
+        await session.execute(select(Part).where(Part.name == name))
+    ).scalar_one_or_none()
+    if part is None or (
+        part.deleted_at is not None and not include_deleted
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Part {name!r} not found"
+        )
+
+    rows = (
+        await session.execute(
+            select(PartDeletionProposal)
+            .where(PartDeletionProposal.part_id == part.id)
+            .order_by(PartDeletionProposal.created_at.desc())
+        )
+    ).scalars().all()
+
+    entries = [
+        PartDeletionProposalEntry(
+            proposal_id=r.id,
+            rationale=r.rationale,
+            proposer_actor=r.proposer_actor,
+            status=r.status,
+            created_at=r.created_at,
+            accepted_at=r.accepted_at,
+            accepted_by=r.accepted_by,
+            single_operator_override=r.single_operator_override,
+            cascade=r.cascade,
+        )
+        for r in rows
+    ]
+    return PartDeletionProposalListResponse(
+        part_name=part.name, proposals=entries
+    )
+
+
+@router.post(
+    "/{name}/deletion-proposals/{proposal_id}/accept",
+    response_model=PartDeletionAcceptResponse,
+)
+async def accept_part_deletion(
+    name: str,
+    proposal_id: uuid.UUID,
+    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    single_operator: bool = Query(default=False),
+    cascade: bool = Query(default=False),
+    session: AsyncSession = Depends(get_session),
+) -> PartDeletionAcceptResponse:
+    # Human-confirmation rule (#76): part deletion is destructive +
+    # cascading; the soft two-party rule (proposer != acceptor) isn't
+    # enough on its own. The bypass that suspends two-party
+    # (single_operator=true) defeats the human-confirmation
+    # purpose, so reject it up-front before doing any DB work.
+    if single_operator:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "?single_operator=true is not allowed for part deletion; "
+                "the human-confirmation rule requires a real two-party "
+                "handshake with a human acceptor"
+            ),
+        )
+
+    part = (
+        await session.execute(
+            select(Part).where(Part.name == name).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if part is None or part.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Part {name!r} not found"
+        )
+
+    proposal = (
+        await session.execute(
+            select(PartDeletionProposal).where(
+                PartDeletionProposal.id == proposal_id,
+                PartDeletionProposal.part_id == part.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if proposal is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"Deletion proposal {proposal_id} not found for "
+                f"part {part.name!r}"
+            ),
+        )
+    if proposal.status != "proposal":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"proposal {proposal_id} is in status {proposal.status!r}; "
+                f"only 'proposal' rows can be accepted"
+            ),
+        )
+
+    # Soft two-party (distinct actors) AND strict
+    # human-confirmation (acceptor not in agent allowlist). Together
+    # they ensure no two-agent round-trip can wipe a part + cascade
+    # to its contracts.
+    enforce_two_party(
+        proposer_actor=proposal.proposer_actor,
+        acceptor_actor=x_actor,
+        single_operator=False,
+    )
+    enforce_human_confirmation(
+        acceptor_actor=x_actor,
+        known_agents=get_settings().known_agent_actors,
+    )
+
+    # Re-compute impact at accept time so the response reflects
+    # current state. Touching-contract list drives the cascade-vs-
+    # block decision: non-empty + cascade=false → 422 hard-block.
+    impact, touching = await _compute_part_deletion_impact(session, part=part)
+    if touching and not cascade:
+        contract_ids = [str(c.id) for c in touching]
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"part {part.name!r} has {len(touching)} live touching "
+                f"contract(s): {contract_ids}. Either delete them first "
+                f"via /propose-contract-deletion + /accept-contract-deletion, "
+                f"or pass ?cascade=true to soft-delete them in the same "
+                f"transaction."
+            ),
+        )
+
+    now = datetime.now(timezone.utc)
+    cascaded_ids: list[uuid.UUID] = []
+    if cascade:
+        # Stamp each touching contract directly. We don't create a
+        # contract_deletion_proposal row per cascade — the audit
+        # trail is "find the part deleted at the same instant for
+        # context" via matching timestamps + actors. The rationale
+        # prefix makes the cause explicit when a reader looks at
+        # the contract row directly.
+        cascade_rationale = (
+            f"cascaded from /propose-part-deletion on {part.name!r}: "
+            f"{proposal.rationale}"
+        )
+        for c in touching:
+            c.deleted_at = now
+            c.deleted_by_proposer_actor = proposal.proposer_actor
+            c.deleted_by_acceptor_actor = x_actor
+            c.deletion_rationale = cascade_rationale
+            c.deletion_single_operator_override = False
+            cascaded_ids.append(c.id)
+
+    part.deleted_at = now
+    part.deleted_by_proposer_actor = proposal.proposer_actor
+    part.deleted_by_acceptor_actor = x_actor
+    part.deletion_rationale = proposal.rationale
+    # Always false on part deletion — the route rejects
+    # ?single_operator=true above. Stamped explicitly for clarity.
+    part.deletion_single_operator_override = False
+    proposal.status = "accepted"
+    proposal.accepted_at = now
+    proposal.accepted_by = x_actor
+    proposal.single_operator_override = False
+    proposal.cascade = cascade
+
+    await session.commit()
+
+    return PartDeletionAcceptResponse(
+        proposal_id=proposal.id,
+        part_name=part.name,
+        deleted_at=now,
+        proposer_actor=proposal.proposer_actor,
+        acceptor_actor=x_actor,
+        rationale=proposal.rationale,
+        impact=impact,
+        cascade=cascade,
+        cascaded_contract_ids=cascaded_ids,
     )

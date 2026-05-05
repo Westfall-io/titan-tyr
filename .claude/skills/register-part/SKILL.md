@@ -343,6 +343,15 @@ the new part proactively. Otherwise ask, or default to unprojected.
   `subtype_shifted_at` without bumping the version or mutating the
   body. Only register a new part if you actually want a separate
   node, not a corrected subtype.
+- **To remove a part, see `/propose-part-deletion`** (v0.27.0+,
+  #76). Deletion is a two-party soft-delete with stricter
+  human-confirmation rules than the other shifts: the acceptor
+  X-Actor must be a real human (not in the agent allowlist), and
+  `?single_operator=true` is forbidden on accept. The same `name`
+  can be re-registered fresh afterwards (uniqueness is
+  partial-on-live). If the part has touching contracts, the
+  accept also requires `?cascade=true` to soft-delete those edges
+  in the same transaction; otherwise it 422s.
 - **Do not** put a `Version` field inside the markdown body — the API
   tracks it on the version row separately. The template's header note
   explains why.

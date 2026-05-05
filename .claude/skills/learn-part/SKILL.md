@@ -65,7 +65,20 @@ curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
 ```
 
 - `200` → continue to step 3.
-- `404` → unknown target. Branch to step 6.
+- `404` → the part is either truly unknown or **soft-deleted**
+  (provider v0.27.0+, #76). Retry with `?include_deleted=true`:
+
+  ```sh
+  curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
+    "$TITAN_TYR_URL/parts/$target?include_deleted=true"
+  ```
+
+  If that returns `200` and the body has a non-null `deleted_at`,
+  return a `"status": "deleted"` shape surfacing `deleted_at`,
+  `deleted_by_proposer_actor`, `deleted_by_acceptor_actor`, and
+  `deletion_rationale`. Skip steps 3-5 (touching-contracts and
+  shift-proposal listings 404 on a soft-deleted part too).
+  Otherwise (still `404`) branch to step 6 (substring suggestions).
 - Anything else → surface the response body verbatim and stop.
 
 ### 3. Pull contracts touching the target
@@ -247,6 +260,25 @@ the agent sees what *is* there. Otherwise return an empty list.
     {"name": "user-ui", "aliases": []}
   ],
   "hint": "No part named '<target>' is registered. The closest matches by name or alias are listed in `suggestions`. Pick one and call /learn-part again, or call /register-part to add it."
+}
+```
+
+If step 2's `?include_deleted=true` retry resolved to a soft-deleted
+row, return this `"deleted"` shape instead (no fuzzy lookup
+needed — we already know what they meant):
+
+```json
+{
+  "status": "deleted",
+  "part": {
+    "name": "<target>",
+    "subtype": "...",
+    "deleted_at": "...",
+    "deleted_by_proposer_actor": "...",
+    "deleted_by_acceptor_actor": "...",
+    "deletion_rationale": "..."
+  },
+  "hint": "This part was soft-deleted (provider v0.27.0+, #76). Read the full audit trail with GET /parts/<target>/history?include_deleted=true. The same name can be re-registered fresh — the uniqueness key is partial-on-live."
 }
 ```
 

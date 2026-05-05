@@ -164,6 +164,8 @@ rule was unenforceable and that fact should be visible.
   `GET /parts/<new>/history` returns one entry per body bump *and*
   one per accepted name shift, distinguished by the `kind` field
   (`body_bump`, `subtype_shift`, or `name_shift`).
+  Soft-deletion events (`deletion_proposed`, `deletion_accepted`,
+  v0.27.0+, #76) only surface with `?include_deleted=true`.
 - **Acceptance re-validates.** A rename proposed against slug X may
   no longer apply if another part has taken X in the meantime — the
   accept endpoint detects collisions and 409s. Re-propose with a

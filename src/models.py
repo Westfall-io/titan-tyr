@@ -53,6 +53,24 @@ class Part(Base):
             "subtype IN ('software', 'container', 'image', 'pod', 'compose')",
             name="ck_parts_subtype_allowed",
         ),
+        # Partial-on-live name uniqueness (#76): soft-deleted rows are
+        # excluded so the same name can be re-registered after delete.
+        # Recreation in migration 0019 dropped the original total
+        # `uq_parts_name` constraint and recreated it as this partial
+        # unique index.
+        Index(
+            "uq_parts_name",
+            "name",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        # Live-row partial index (#76): keeps the common
+        # `WHERE deleted_at IS NULL` lookup fast.
+        Index(
+            "ix_parts_live",
+            "id",
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -60,7 +78,9 @@ class Part(Base):
         primary_key=True,
         server_default=text("gen_random_uuid()"),
     )
-    name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    # `unique=True` removed — now enforced by the partial-on-live
+    # `uq_parts_name` index in __table_args__ (#76).
+    name: Mapped[str] = mapped_column(String, nullable=False)
     subtype: Mapped[str] = mapped_column(String, nullable=False)
     repo_uri: Mapped[str] = mapped_column(String, nullable=False)
     issue_tracker_uri: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -95,6 +115,27 @@ class Part(Base):
     name_shifted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Soft-delete bookkeeping (#76). Same shape as Contract's
+    # equivalents from #69. `deleted_at` is the load-bearing flag —
+    # every list / detail query that should hide deleted rows filters
+    # on `deleted_at IS NULL`. The proposer / acceptor / rationale
+    # columns are copies of the deletion-proposal row that landed.
+    # `deletion_single_operator_override` exists for shape parity with
+    # the contract treatment but is structurally always false on parts
+    # (the router rejects ?single_operator=true with 422).
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deleted_by_proposer_actor: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )
+    deleted_by_acceptor_actor: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )
+    deletion_rationale: Mapped[str | None] = mapped_column(String, nullable=True)
+    deletion_single_operator_override: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
 
     versions: Mapped[list["PartVersion"]] = relationship(
         back_populates="part", cascade="all, delete-orphan", passive_deletes=True
@@ -103,6 +144,9 @@ class Part(Base):
         back_populates="part", cascade="all, delete-orphan", passive_deletes=True
     )
     name_proposals: Mapped[list["PartNameProposal"]] = relationship(
+        back_populates="part", cascade="all, delete-orphan", passive_deletes=True
+    )
+    deletion_proposals: Mapped[list["PartDeletionProposal"]] = relationship(
         back_populates="part", cascade="all, delete-orphan", passive_deletes=True
     )
     project: Mapped[Project | None] = relationship(foreign_keys=[project_id])
@@ -747,3 +791,61 @@ class ContractDeletionProposal(Base):
     )
 
     contract: Mapped[Contract] = relationship(back_populates="deletion_proposals")
+
+
+# ---------- Part deletion proposals (#76) ----------
+#
+# The parts-side parallel of `ContractDeletionProposal` (#69). Same
+# propose/accept shape; two extras:
+#   1. `cascade` is recorded at accept time so the audit trail
+#      reflects whether touching live contracts were soft-deleted in
+#      the same transaction.
+#   2. The router enforces a stricter rule: the acceptor X-Actor must
+#      not be in the `KNOWN_AGENT_ACTORS` allowlist, and
+#      `?single_operator=true` is forbidden. The
+#      `single_operator_override` column exists for shape parity but
+#      is structurally always false today.
+
+
+class PartDeletionProposal(Base):
+    __tablename__ = "part_deletion_proposals"
+    __table_args__ = (
+        Index(
+            "ix_part_deletion_proposals_part_id_status",
+            "part_id",
+            "status",
+        ),
+        CheckConstraint(
+            "status IN ('proposal', 'accepted')",
+            name="ck_part_deletion_proposals_status_allowed",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    part_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("parts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    rationale: Mapped[str] = mapped_column(String, nullable=False)
+    proposer_actor: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    accepted_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    single_operator_override: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    cascade: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+
+    part: Mapped[Part] = relationship(back_populates="deletion_proposals")

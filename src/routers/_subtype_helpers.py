@@ -52,6 +52,57 @@ def body_realign_required(markdown: str | None, new_template_kind: str) -> bool:
     return stamp_kind != new_template_kind
 
 
+def enforce_human_confirmation(
+    *,
+    acceptor_actor: str | None,
+    known_agents: frozenset[str] | set[str],
+) -> None:
+    """403 if the acceptor X-Actor is unset or in the known-agent allowlist.
+
+    Stricter sibling of `enforce_two_party` for destructive flows
+    (today: part deletion, #76). Two distinct agents bouncing a
+    handshake back and forth satisfies the soft two-party rule but
+    leaves no human in the loop — for irreversible / cascading
+    operations that's not enough. The acceptor must be a human
+    operator (i.e., not a known agent identity).
+
+    The proposer is intentionally NOT checked: the typical flow is
+    "agent notices something needs cleanup, human confirms." Only
+    acceptance is gated.
+
+    Edge cases:
+    - acceptor_actor is None → 422 (unconfirmable, treated as
+      missing-confirmation rather than agent).
+    - acceptor_actor is in `known_agents` → 403.
+    - acceptor_actor is anything else → allow.
+
+    Callers should also reject `?single_operator=true` separately —
+    the bypass defeats the purpose of human confirmation. This
+    helper does not check the bypass flag because the helper is
+    composable; the route has the right context to give a clearer
+    422 message.
+    """
+    if acceptor_actor is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "destructive accept requires an X-Actor header on the "
+                "request — null actor cannot satisfy the human-"
+                "confirmation rule"
+            ),
+        )
+    if acceptor_actor in known_agents:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"destructive accept requires a human operator — "
+                f"acceptor X-Actor {acceptor_actor!r} is a known agent "
+                f"(allowlist: {sorted(known_agents)}). Have a human "
+                f"set X-Actor and re-run the accept."
+            ),
+        )
+
+
 def enforce_two_party(
     *,
     proposer_actor: str | None,
