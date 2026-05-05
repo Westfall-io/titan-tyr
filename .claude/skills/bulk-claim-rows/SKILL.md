@@ -1,6 +1,6 @@
 ---
 name: bulk-claim-rows
-description: One-shot sweep that tags every part / contract in the catalog with a project (#44) and/or claims them under an X-Actor identity (#54). Use when the user wants to "backfill the watchervault project tag", "claim all the unattributed rows", "retroactively tag every contract", or any "set X on everything" follow-up after registering a new project or after the X-Actor migration. Wraps `scripts/bulk-claim-rows.sh`. Distinct from `/update-part` and `/update-contract`, which are the right tools for one-row edits.
+description: One-shot sweep that tags every part / contract in the catalog with a project (#44) and/or claims them under an X-Actor identity (#54). Use when the user wants to "backfill the watchervault project tag", "claim all the unattributed rows", "retroactively tag every contract", or any "set X on everything" follow-up after registering a new project or after the X-Actor migration. Wraps `.claude/skills/bulk-claim-rows/scripts/bulk-claim-rows.sh`. Distinct from `/update-part` and `/update-contract`, which are the right tools for one-row edits.
 ---
 
 # bulk-claim-rows
@@ -9,7 +9,8 @@ You are running a one-pass sweep over every part and contract in the
 catalog, setting `project` and/or claiming `created_by_actor` on each
 row that matches the filter. The mechanics — paging, filtering,
 dry-run table, confirmation gate, summary — live in
-`scripts/bulk-claim-rows.sh`. Your job is to figure out the right
+`.claude/skills/bulk-claim-rows/scripts/bulk-claim-rows.sh`. Your
+job is to figure out the right
 flags with the user, run the script, and read the dry-run together
 before approving.
 
@@ -78,7 +79,7 @@ you'd need a content-proposal flow, not this sweep.
 Hand it to the user before approving:
 
 ```sh
-scripts/bulk-claim-rows.sh \
+.claude/skills/bulk-claim-rows/scripts/bulk-claim-rows.sh \
   [--project <slug>] \
   [--actor <identity>] \
   [--current-project <slug | __none__>] \
@@ -123,9 +124,10 @@ no-ops on the next pass.
 
 - Verify with `GET /projects/{slug}` (or `/list-projects`) that
   `part_count` and `contract_count` match expectations.
-- Spot-check one row with `/find-part` or
-  `scripts/list-part-contracts.sh` to confirm the project tag and
-  actor stuck.
+- Spot-check one row with `/find-part` or `scripts/list-part-contracts.sh`
+  to confirm the project tag and actor stuck (`scripts/` here is the
+  repo's top-level dev-tools dir; downstream consumers won't have it
+  unless they pulled that script in separately).
 
 ## Notes
 
