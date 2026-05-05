@@ -185,7 +185,7 @@ class Contract(Base):
         CheckConstraint(
             "connection_type IS NULL OR connection_type IN "
             "('builds-from', 'instantiates', 'runs', "
-            "'member-of', 'depends-on', 'submodule')",
+            "'member-of', 'depends-on', 'submodule', 'serves-static')",
             name="ck_contracts_connection_type_allowed",
         ),
     )
@@ -502,7 +502,7 @@ class ContractSubtypeProposal(Base):
         CheckConstraint(
             "new_connection_type IS NULL OR new_connection_type IN "
             "('builds-from', 'instantiates', 'runs', "
-            "'member-of', 'depends-on', 'submodule')",
+            "'member-of', 'depends-on', 'submodule', 'serves-static')",
             name="ck_contract_subtype_proposals_connection_type_allowed",
         ),
     )

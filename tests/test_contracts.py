@@ -319,11 +319,11 @@ class TestBindingSubtype:
 class TestConnectionSubtype:
     """Connection contracts (#32): structural binding with no data flow.
 
-    All six labels (`depends-on`, `submodule`, `builds-from`,
-    `instantiates`, `runs`, `member-of`) work end-to-end after #37.
-    The router still has a deferred-subtype guard for any future
-    rule that references a not-yet-implemented Part subtype, but no
-    current rule trips it.
+    All seven labels (`depends-on`, `submodule`, `builds-from`,
+    `instantiates`, `runs`, `member-of`, `serves-static`) work
+    end-to-end after #37 + #62. The router still has a
+    deferred-subtype guard for any future rule that references a
+    not-yet-implemented Part subtype, but no current rule trips it.
     """
 
     async def test_register_depends_on_container_to_container(self, client):
@@ -644,6 +644,84 @@ class TestConnectionSubtype:
         )
         assert r.status_code == 422
         assert "container" in r.json()["detail"]
+
+    async def test_serves_static_software_to_software(self, client):
+        # `serves-static` is software → software (#62): the owner
+        # serves the counterparty's compiled / static artifacts to
+        # consumers at runtime (e.g. nginx serving an SPA bundle).
+        await _register_part(client, "mimiron-server", subtype="software")
+        await _register_part(client, "mimiron-spa", subtype="software")
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "mimiron-server",
+                "counterparty_part": "mimiron-spa",
+                "subtype": "connection",
+                "connection_type": "serves-static",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert body["subtype"] == "connection"
+        assert body["connection_type"] == "serves-static"
+
+    async def test_serves_static_owner_must_be_software(self, client):
+        # Container → software with serves-static is rejected.
+        await _register_part(client, "ctr", subtype="container")
+        await _register_part(client, "spa", subtype="software")
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "ctr",
+                "counterparty_part": "spa",
+                "subtype": "connection",
+                "connection_type": "serves-static",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 422
+        assert "software" in r.json()["detail"]
+
+    async def test_serves_static_counterparty_must_be_software(self, client):
+        # Software → image with serves-static is rejected.
+        await _register_part(client, "svc", subtype="software")
+        await _register_part(client, "img", subtype="image")
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "svc",
+                "counterparty_part": "img",
+                "subtype": "connection",
+                "connection_type": "serves-static",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 422
+        assert "software" in r.json()["detail"]
+
+    async def test_serves_static_surfaced_on_part_contracts(self, client):
+        # GET /parts/{name}/contracts surfaces connection_type intact
+        # so renderers can pick it up — explicit acceptance criterion
+        # on #62.
+        await _register_part(client, "server", subtype="software")
+        await _register_part(client, "spa", subtype="software")
+        await client.post(
+            "/contracts",
+            json={
+                "owner_part": "server",
+                "counterparty_part": "spa",
+                "subtype": "connection",
+                "connection_type": "serves-static",
+                "markdown": "m",
+            },
+        )
+        r = await client.get("/parts/server/contracts")
+        assert r.status_code == 200, r.text
+        results = r.json()["results"]
+        assert len(results) == 1
+        assert results[0]["connection_type"] == "serves-static"
+        assert results[0]["subtype"] == "connection"
 
     async def test_connection_type_returned_on_get(self, client):
         await _register_part(client, "c1", subtype="container")

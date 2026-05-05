@@ -686,14 +686,16 @@ label has its own From/To Part subtype rule:
 | `member-of`       | `container`         | `compose`                 | Container is a service entry in a compose stack     |
 | `depends-on`      | `container`         | `container`               | Startup ordering within a compose stack              |
 | `submodule`       | `software`          | `software`                | One repository includes another via `.gitmodules`   |
+| `serves-static`   | `software`          | `software`                | Owner serves counterparty's compiled / static artifacts to consumers at runtime (e.g. nginx serving an SPA bundle). Distinct from `submodule`, which is source-tree composition, and from `depends-on`, which is runtime startup ordering between containers (#62). |
 
-All six labels work end-to-end after #37. The router still has a
-deferred-subtype guard for any future rule that references a
+All seven labels work end-to-end after #37 + #62. The router still
+has a deferred-subtype guard for any future rule that references a
 not-yet-implemented Part subtype, but no current rule trips it.
 Tracking issues:
 - `image` Part subtype → shipped in #35.
 - `pod` Part subtype → shipped in #36.
 - `compose` Part subtype → shipped in #37.
+- `serves-static` connection_type → shipped in #62.
 
 The unique constraint is on `(owner_part_id, counterparty_part_id)` —
 subtype is **not** part of the key, so `A → B` can hold one contract
@@ -1367,7 +1369,7 @@ curl -X POST -H 'Authorization: Bearer sysmlv2' \
 
 `new_subtype` ∈ `{interaction, binding, connection}`.
 `new_connection_type` is **required iff** `new_subtype == "connection"`
-and ∈ `{builds-from, instantiates, runs, member-of, depends-on, submodule}`;
+and ∈ `{builds-from, instantiates, runs, member-of, depends-on, submodule, serves-static}`;
 must be `null` for the other two subtypes.
 
 A label-only shift (subtype stays `connection`, label changes) is

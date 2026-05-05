@@ -34,6 +34,7 @@ CONNECTION_TYPES: tuple[str, ...] = (
     "member-of",
     "depends-on",
     "submodule",
+    "serves-static",
 )
 ConnectionType = Literal[
     "builds-from",
@@ -42,6 +43,7 @@ ConnectionType = Literal[
     "member-of",
     "depends-on",
     "submodule",
+    "serves-static",
 ]
 
 

@@ -23,4 +23,5 @@ CONNECTION_RULES: dict[str, dict[str, set[str]]] = {
     "member-of":    {"owner": {"container"},         "counterparty": {"compose"}},
     "depends-on":   {"owner": {"container"},         "counterparty": {"container"}},
     "submodule":    {"owner": {"software"},          "counterparty": {"software"}},
+    "serves-static":{"owner": {"software"},          "counterparty": {"software"}},
 }
