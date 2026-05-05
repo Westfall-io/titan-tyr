@@ -40,9 +40,16 @@ def upgrade() -> None:
         "'member-of', 'depends-on', 'submodule', 'serves-static')",
     )
 
+    # 0011 created this constraint via `sa.CheckConstraint(name=...)`
+    # inside `op.create_table`, with the full `ck_<table>_...` name in
+    # the literal — so the naming convention prefixed it a second
+    # time. Result: a doubled prefix on this one constraint only.
+    # Drop by the actual stored name; recreate clean (single-prefix)
+    # via `op.create_check_constraint`.
     op.execute(
         "ALTER TABLE contract_subtype_proposals "
-        "DROP CONSTRAINT ck_contract_subtype_proposals_connection_type_allowed"
+        "DROP CONSTRAINT "
+        "ck_contract_subtype_proposals_ck_contract_subtype_proposals_connection_type_allowed"
     )
     op.create_check_constraint(
         "connection_type_allowed",
@@ -54,6 +61,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Upgrade left this table's constraint at the single-prefix
+    # alembic-conventional name, so drop *that* (not the doubled
+    # name 0011 originally created).
     op.execute(
         "ALTER TABLE contract_subtype_proposals "
         "DROP CONSTRAINT ck_contract_subtype_proposals_connection_type_allowed"
