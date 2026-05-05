@@ -52,7 +52,7 @@ async def create_proposal(
             select(Contract).where(Contract.id == contract_id).with_for_update()
         )
     ).scalar_one_or_none()
-    if contract is None:
+    if contract is None or contract.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found")
 
     new_version = Version.parse(payload.version, allow_prerelease=True)
@@ -85,7 +85,7 @@ async def list_proposals(
     session: AsyncSession = Depends(get_session),
 ) -> ProposalListResponse:
     contract = await session.get(Contract, contract_id)
-    if contract is None:
+    if contract is None or contract.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found")
 
     latest_active = await _latest_active_contract_version(session, contract_id)
@@ -143,7 +143,7 @@ async def accept_proposal(
             select(Contract).where(Contract.id == contract_id).with_for_update()
         )
     ).scalar_one_or_none()
-    if contract is None:
+    if contract is None or contract.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found")
 
     try:

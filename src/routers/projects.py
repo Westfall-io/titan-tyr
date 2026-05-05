@@ -47,7 +47,10 @@ async def _project_counts(
         await session.execute(
             select(func.count())
             .select_from(Contract)
-            .where(Contract.project_id == project_id)
+            .where(
+                Contract.project_id == project_id,
+                Contract.deleted_at.is_(None),
+            )
         )
     ).scalar_one()
     return int(parts), int(contracts)

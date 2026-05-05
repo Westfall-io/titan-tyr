@@ -418,6 +418,12 @@ ask, or default to unprojected.
 - **Subtype is structural.** It can't be changed after registration
   (no PUT path mutates it). If you really need a different subtype,
   the contract has to be re-created — out-of-band today.
+- **To remove a contract, see `/propose-contract-deletion`** (#69).
+  Deletion is a two-party soft-delete via the same propose/accept
+  pattern as the other shifts; the row stays in the database for
+  audit (visible via `?include_deleted=true`) and the same
+  `(owner, counterparty, subtype, connection_type)` can be
+  re-registered fresh afterwards.
 - **Initial creation is active by design.** This is the only
   contract-mutation endpoint where the result is `active` without an
   acceptance step. The propose/accept flow only exists for subsequent

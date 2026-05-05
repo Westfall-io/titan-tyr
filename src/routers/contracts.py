@@ -1,21 +1,24 @@
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Union
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from sqlalchemy import and_, or_, select, tuple_
+from sqlalchemy import and_, func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth import require_password
 from src.db import get_session
 from src.models import (
     Contract,
+    ContractDeletionProposal,
     ContractEndpointProposal,
     ContractSubtypeProposal,
     ContractVersion,
     Part,
+    PartVersion,
     Project,
 )
 from src.pagination import (
@@ -38,6 +41,12 @@ from src.schemas import (
     PROJECT_NONE_SENTINEL,
     ContractCreate,
     ContractCreateResponse,
+    ContractDeletionAcceptResponse,
+    ContractDeletionImpact,
+    ContractDeletionProposalCreate,
+    ContractDeletionProposalCreateResponse,
+    ContractDeletionProposalEntry,
+    ContractDeletionProposalListResponse,
     ContractDetail,
     ContractListResponse,
     ContractEndpointShiftAcceptResponse,
@@ -204,6 +213,7 @@ async def register_contract(
                 Contract.connection_type.is_(payload.connection_type)
                 if payload.connection_type is None
                 else Contract.connection_type == payload.connection_type,
+                Contract.deleted_at.is_(None),
             )
         )
     ).scalar_one_or_none()
@@ -265,6 +275,7 @@ async def list_or_search_contracts(
     project: str | None = Query(default=None, max_length=64),
     after: str | None = Query(default=None),
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    include_deleted: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
 ):
     # Search mode requires both filters; list mode requires neither.
@@ -323,6 +334,7 @@ async def list_or_search_contracts(
             connection_type=connection_type,
             project_filter_id=project_filter_id,
             project_filter_unprojected=project_filter_unprojected,
+            include_deleted=include_deleted,
         )
         return ContractListResponse(results=items, next=next_cursor)
 
@@ -346,6 +358,8 @@ async def list_or_search_contracts(
         stmt = stmt.where(Contract.subtype == subtype)
     if connection_type is not None:
         stmt = stmt.where(Contract.connection_type == connection_type)
+    if not include_deleted:
+        stmt = stmt.where(Contract.deleted_at.is_(None))
     if project_filter_unprojected:
         stmt = stmt.where(Contract.project_id.is_(None))
     elif project_filter_id is not None:
@@ -383,10 +397,13 @@ async def list_or_search_contracts(
 @router.get("/{contract_id}", response_model=ContractDetail)
 async def get_contract(
     contract_id: uuid.UUID,
+    include_deleted: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
 ) -> ContractDetail:
     contract = await session.get(Contract, contract_id)
-    if contract is None:
+    if contract is None or (
+        contract.deleted_at is not None and not include_deleted
+    ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found")
     latest = await _latest_active_contract_version(session, contract_id)
     if latest is None:
@@ -408,6 +425,10 @@ async def get_contract(
         updated_at=latest.accepted_at or latest.created_at,
         created_by_actor=contract.created_by_actor,
         project=project_name,
+        deleted_at=contract.deleted_at,
+        deleted_by_proposer_actor=contract.deleted_by_proposer_actor,
+        deleted_by_acceptor_actor=contract.deleted_by_acceptor_actor,
+        deletion_rationale=contract.deletion_rationale,
     )
 
 
@@ -437,7 +458,7 @@ async def update_contract(
             select(Contract).where(Contract.id == contract_id).with_for_update()
         )
     ).scalar_one_or_none()
-    if contract is None:
+    if contract is None or contract.deleted_at is not None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found"
         )
@@ -489,12 +510,15 @@ async def get_contract_history(
     contract_id: uuid.UUID,
     after: str | None = Query(default=None),
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    include_deleted: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
 ) -> VersionHistoryResponse:
     limit = validate_limit(limit)
 
     contract = await session.get(Contract, contract_id)
-    if contract is None:
+    if contract is None or (
+        contract.deleted_at is not None and not include_deleted
+    ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found")
 
     # Only accepted versions land in history. The active_must_be_stable check
@@ -548,6 +572,28 @@ async def get_contract_history(
             )
         )
     ).all()
+
+    # Deletion proposals contribute two events per row: `deletion_proposed`
+    # at created_at and `deletion_accepted` at accepted_at (if accepted).
+    # Both are gated behind `include_deleted=true` since deletion is the
+    # kind of audit event that warrants the explicit opt-in (#69).
+    deletion_rows = []
+    if include_deleted:
+        deletion_rows = (
+            await session.execute(
+                select(
+                    ContractDeletionProposal.id,
+                    ContractDeletionProposal.created_at,
+                    ContractDeletionProposal.accepted_at,
+                    ContractDeletionProposal.proposer_actor,
+                    ContractDeletionProposal.accepted_by,
+                    ContractDeletionProposal.single_operator_override,
+                    ContractDeletionProposal.status,
+                ).where(
+                    ContractDeletionProposal.contract_id == contract_id,
+                )
+            )
+        ).all()
 
     body_sorted = sorted(body_rows, key=lambda r: r.accepted_at or r.created_at)
 
@@ -612,6 +658,32 @@ async def get_contract_history(
                 bool(r.single_operator_override),
             )
         )
+    for r in deletion_rows:
+        # The propose event records the proposer; acceptor is null until
+        # accept lands. Both events carry the proposer for continuity.
+        entries.append(
+            (
+                r.created_at,
+                r.id,
+                "deletion_proposed",
+                _version_at(r.created_at),
+                r.proposer_actor,
+                None,
+                False,
+            )
+        )
+        if r.accepted_at is not None:
+            entries.append(
+                (
+                    r.accepted_at,
+                    r.id,
+                    "deletion_accepted",
+                    _version_at(r.accepted_at),
+                    r.proposer_actor,
+                    r.accepted_by,
+                    bool(r.single_operator_override),
+                )
+            )
 
     entries.sort(key=lambda e: (e[0], e[1]), reverse=True)
 
@@ -742,7 +814,7 @@ async def propose_contract_subtype_shift(
             select(Contract).where(Contract.id == contract_id).with_for_update()
         )
     ).scalar_one_or_none()
-    if contract is None:
+    if contract is None or contract.deleted_at is not None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found"
         )
@@ -815,7 +887,7 @@ async def list_contract_subtype_shifts(
     session: AsyncSession = Depends(get_session),
 ) -> ContractSubtypeShiftListResponse:
     contract = await session.get(Contract, contract_id)
-    if contract is None:
+    if contract is None or contract.deleted_at is not None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found"
         )
@@ -881,7 +953,7 @@ async def accept_contract_subtype_shift(
             select(Contract).where(Contract.id == contract_id).with_for_update()
         )
     ).scalar_one_or_none()
-    if contract is None:
+    if contract is None or contract.deleted_at is not None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found"
         )
@@ -1092,6 +1164,7 @@ async def _check_endpoint_uniqueness(
         Contract.connection_type.is_(contract.connection_type)
         if contract.connection_type is None
         else Contract.connection_type == contract.connection_type,
+        Contract.deleted_at.is_(None),
     )
     clash = (await session.execute(stmt)).scalar_one_or_none()
     if clash is not None:
@@ -1124,7 +1197,7 @@ async def propose_contract_endpoint_shift(
             select(Contract).where(Contract.id == contract_id).with_for_update()
         )
     ).scalar_one_or_none()
-    if contract is None:
+    if contract is None or contract.deleted_at is not None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found"
         )
@@ -1218,7 +1291,7 @@ async def list_contract_endpoint_shifts(
     session: AsyncSession = Depends(get_session),
 ) -> ContractEndpointShiftListResponse:
     contract = await session.get(Contract, contract_id)
-    if contract is None:
+    if contract is None or contract.deleted_at is not None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found"
         )
@@ -1287,7 +1360,7 @@ async def accept_contract_endpoint_shift(
             select(Contract).where(Contract.id == contract_id).with_for_update()
         )
     ).scalar_one_or_none()
-    if contract is None:
+    if contract is None or contract.deleted_at is not None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found"
         )
@@ -1417,5 +1490,329 @@ async def accept_contract_endpoint_shift(
         shifted_to_counterparty=final_cp.name,
         accepted_at=now,
         accepted_by=x_actor,
+        single_operator_override=single_operator,
+    )
+
+
+# ---------- Deletion proposals (#69) ----------
+#
+# A contract is never hard-deleted. Acceptance soft-deletes by
+# stamping `contracts.deleted_at` plus the proposer / acceptor /
+# rationale / single_operator_override columns. Read endpoints hide
+# soft-deleted rows by default and surface them on
+# `?include_deleted=true`. Write endpoints (PUT, body proposals,
+# subtype/endpoint/deletion proposals) treat a soft-deleted row as
+# 404 — the row is logically gone for everything except audit reads.
+#
+# The impact block computed at propose AND accept time surfaces:
+#   - parts whose latest active body references the OTHER endpoint
+#     by name (typical "Connections" section reference); soft-warn
+#     only, mirrors existing tolerance for stale name references
+#     when a contract is repurposed.
+#   - count of open propose-level rows on this contract that lose
+#     their target on accept (body + subtype + endpoint + sibling
+#     deletion proposals).
+#   - count of accepted history events on the contract (body bumps
+#     + subtype shifts + endpoint shifts).
+
+
+async def _compute_deletion_impact(
+    session: AsyncSession,
+    *,
+    contract: Contract,
+    exclude_proposal_id: uuid.UUID | None = None,
+) -> ContractDeletionImpact:
+    owner_part = await session.get(Part, contract.owner_part_id)
+    cp_part = await session.get(Part, contract.counterparty_part_id)
+
+    # Body references: scan the latest active version of each endpoint
+    # part and report whether it mentions the OTHER endpoint by name.
+    # This catches the typical "Connections" section reference. We
+    # only scan the two endpoint parts — third-party references are
+    # rare enough not to be worth a full-table scan on every propose.
+    #
+    # Naive substring match would false-positive on shared substrings
+    # ("a" inside "build"). Slug names use [a-z0-9-]; bound the match
+    # so it only fires on whole-token occurrences.
+    referenced: list[str] = []
+    for owner_side, other_name in (
+        (owner_part, cp_part.name),
+        (cp_part, owner_part.name),
+    ):
+        latest = (
+            await session.execute(
+                select(PartVersion)
+                .where(PartVersion.part_id == owner_side.id)
+                .order_by(
+                    PartVersion.version_major.desc(),
+                    PartVersion.version_minor.desc(),
+                    PartVersion.version_patch.desc(),
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if latest is None or latest.markdown is None:
+            continue
+        pattern = (
+            r"(?<![a-z0-9-])" + re.escape(other_name) + r"(?![a-z0-9-])"
+        )
+        if re.search(pattern, latest.markdown):
+            referenced.append(owner_side.name)
+
+    # Open propose-level rows on this contract.
+    open_body = (
+        await session.execute(
+            select(func.count())
+            .select_from(ContractVersion)
+            .where(
+                ContractVersion.contract_id == contract.id,
+                ContractVersion.status == "proposal",
+            )
+        )
+    ).scalar_one()
+    open_subtype = (
+        await session.execute(
+            select(func.count())
+            .select_from(ContractSubtypeProposal)
+            .where(
+                ContractSubtypeProposal.contract_id == contract.id,
+                ContractSubtypeProposal.status == "proposal",
+            )
+        )
+    ).scalar_one()
+    open_endpoint = (
+        await session.execute(
+            select(func.count())
+            .select_from(ContractEndpointProposal)
+            .where(
+                ContractEndpointProposal.contract_id == contract.id,
+                ContractEndpointProposal.status == "proposal",
+            )
+        )
+    ).scalar_one()
+    open_deletion_stmt = select(func.count()).select_from(
+        ContractDeletionProposal
+    ).where(
+        ContractDeletionProposal.contract_id == contract.id,
+        ContractDeletionProposal.status == "proposal",
+    )
+    if exclude_proposal_id is not None:
+        open_deletion_stmt = open_deletion_stmt.where(
+            ContractDeletionProposal.id != exclude_proposal_id
+        )
+    open_deletion = (await session.execute(open_deletion_stmt)).scalar_one()
+
+    # Active history events on the contract.
+    active_body = (
+        await session.execute(
+            select(func.count())
+            .select_from(ContractVersion)
+            .where(
+                ContractVersion.contract_id == contract.id,
+                ContractVersion.status == "active",
+            )
+        )
+    ).scalar_one()
+    accepted_subtype = (
+        await session.execute(
+            select(func.count())
+            .select_from(ContractSubtypeProposal)
+            .where(
+                ContractSubtypeProposal.contract_id == contract.id,
+                ContractSubtypeProposal.status == "accepted",
+            )
+        )
+    ).scalar_one()
+    accepted_endpoint = (
+        await session.execute(
+            select(func.count())
+            .select_from(ContractEndpointProposal)
+            .where(
+                ContractEndpointProposal.contract_id == contract.id,
+                ContractEndpointProposal.status == "accepted",
+            )
+        )
+    ).scalar_one()
+
+    return ContractDeletionImpact(
+        referenced_in_part_bodies=referenced,
+        referenced_in_open_proposals=int(open_body)
+        + int(open_subtype)
+        + int(open_endpoint)
+        + int(open_deletion),
+        active_history_entries=int(active_body)
+        + int(accepted_subtype)
+        + int(accepted_endpoint),
+    )
+
+
+@router.post(
+    "/{contract_id}/deletion-proposals",
+    response_model=ContractDeletionProposalCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def propose_contract_deletion(
+    contract_id: uuid.UUID,
+    payload: ContractDeletionProposalCreate,
+    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    session: AsyncSession = Depends(get_session),
+) -> ContractDeletionProposalCreateResponse:
+    contract = (
+        await session.execute(
+            select(Contract).where(Contract.id == contract_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if contract is None or contract.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found"
+        )
+
+    impact = await _compute_deletion_impact(session, contract=contract)
+
+    proposal = ContractDeletionProposal(
+        contract_id=contract.id,
+        rationale=payload.rationale,
+        proposer_actor=x_actor,
+        status="proposal",
+    )
+    session.add(proposal)
+    await session.flush()
+    proposal_id = proposal.id
+    await session.commit()
+
+    return ContractDeletionProposalCreateResponse(
+        proposal_id=proposal_id,
+        contract_id=contract.id,
+        rationale=payload.rationale,
+        proposer_actor=x_actor,
+        impact=impact,
+        status="proposal",
+    )
+
+
+@router.get(
+    "/{contract_id}/deletion-proposals",
+    response_model=ContractDeletionProposalListResponse,
+)
+async def list_contract_deletion_proposals(
+    contract_id: uuid.UUID,
+    include_deleted: bool = Query(default=False),
+    session: AsyncSession = Depends(get_session),
+) -> ContractDeletionProposalListResponse:
+    contract = await session.get(Contract, contract_id)
+    if contract is None or (
+        contract.deleted_at is not None and not include_deleted
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found"
+        )
+
+    rows = (
+        await session.execute(
+            select(ContractDeletionProposal)
+            .where(ContractDeletionProposal.contract_id == contract_id)
+            .order_by(ContractDeletionProposal.created_at.desc())
+        )
+    ).scalars().all()
+
+    entries = [
+        ContractDeletionProposalEntry(
+            proposal_id=r.id,
+            rationale=r.rationale,
+            proposer_actor=r.proposer_actor,
+            status=r.status,
+            created_at=r.created_at,
+            accepted_at=r.accepted_at,
+            accepted_by=r.accepted_by,
+            single_operator_override=r.single_operator_override,
+        )
+        for r in rows
+    ]
+    return ContractDeletionProposalListResponse(
+        contract_id=contract.id, proposals=entries
+    )
+
+
+@router.post(
+    "/{contract_id}/deletion-proposals/{proposal_id}/accept",
+    response_model=ContractDeletionAcceptResponse,
+)
+async def accept_contract_deletion(
+    contract_id: uuid.UUID,
+    proposal_id: uuid.UUID,
+    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    single_operator: bool = Query(default=False),
+    session: AsyncSession = Depends(get_session),
+) -> ContractDeletionAcceptResponse:
+    contract = (
+        await session.execute(
+            select(Contract).where(Contract.id == contract_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if contract is None or contract.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found"
+        )
+
+    proposal = (
+        await session.execute(
+            select(ContractDeletionProposal).where(
+                ContractDeletionProposal.id == proposal_id,
+                ContractDeletionProposal.contract_id == contract.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if proposal is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"Deletion proposal {proposal_id} not found for "
+                f"contract {contract.id}"
+            ),
+        )
+    if proposal.status != "proposal":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"proposal {proposal_id} is in status {proposal.status!r}; "
+                f"only 'proposal' rows can be accepted"
+            ),
+        )
+
+    enforce_two_party(
+        proposer_actor=proposal.proposer_actor,
+        acceptor_actor=x_actor,
+        single_operator=single_operator,
+    )
+
+    # Re-compute the impact at accept time so the response reflects
+    # the current state — references in part bodies may have been
+    # cleaned up since propose, or new sibling proposals may have
+    # landed. Soft-warn only; we do not block on a non-empty impact.
+    impact = await _compute_deletion_impact(
+        session, contract=contract, exclude_proposal_id=proposal.id
+    )
+
+    now = datetime.now(timezone.utc)
+    contract.deleted_at = now
+    contract.deleted_by_proposer_actor = proposal.proposer_actor
+    contract.deleted_by_acceptor_actor = x_actor
+    contract.deletion_rationale = proposal.rationale
+    contract.deletion_single_operator_override = single_operator
+    proposal.status = "accepted"
+    proposal.accepted_at = now
+    proposal.accepted_by = x_actor
+    proposal.single_operator_override = single_operator
+
+    await session.commit()
+
+    return ContractDeletionAcceptResponse(
+        proposal_id=proposal.id,
+        contract_id=contract.id,
+        deleted_at=now,
+        proposer_actor=proposal.proposer_actor,
+        acceptor_actor=x_actor,
+        rationale=proposal.rationale,
+        impact=impact,
         single_operator_override=single_operator,
     )
