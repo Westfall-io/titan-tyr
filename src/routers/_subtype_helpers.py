@@ -12,6 +12,8 @@ from __future__ import annotations
 import re
 
 from fastapi import HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # Stamp on the first line of every Part / Contract / Template markdown:
 #   <!-- template: <kind>@<MAJOR.MINOR.PATCH(-rcN)?> -->
@@ -50,6 +52,27 @@ def body_realign_required(markdown: str | None, new_template_kind: str) -> bool:
     if stamp_kind is None:
         return False
     return stamp_kind != new_template_kind
+
+
+async def get_active_agent_actors(session: AsyncSession) -> frozenset[str]:
+    """Return the live agent-actor allowlist from the agent_actors table (#78).
+
+    Replaces the hardcoded `settings.known_agent_actors` config default
+    that #76 shipped. Callers fetch the set per request and pass it
+    into `enforce_human_confirmation` — keeps the gate function pure
+    and the DB read explicit at the call site.
+
+    Imported lazily to avoid a circular import: `models` imports
+    `db.Base`, this module is imported by routers that own models.
+    """
+    from src.models import AgentActor
+
+    rows = (
+        await session.execute(
+            select(AgentActor.actor).where(AgentActor.revoked_at.is_(None))
+        )
+    ).scalars().all()
+    return frozenset(rows)
 
 
 def enforce_human_confirmation(

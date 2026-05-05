@@ -21,9 +21,10 @@ accordingly.
 
 Part deletion enforces a stricter rule than other accepts:
 
-1. The acceptor X-Actor must be set AND must NOT be in the
-   `KNOWN_AGENT_ACTORS` allowlist (default
-   `{"titan-tyr", "titan-archaedas"}`). Two agents bouncing the
+1. The acceptor X-Actor must be set AND must NOT be in the live
+   `agent_actors` allowlist (DB-backed since #78; check with
+   `GET /agent-actors` for the current set — typically includes
+   `titan-tyr`, `archaedas`, `mimiron`). Two agents bouncing the
    handshake doesn't satisfy this — a human operator must confirm.
 2. The standard two-party rule still applies: proposer X-Actor ≠
    acceptor X-Actor.
@@ -46,7 +47,7 @@ ask them to override `TITAN_TYR_ACTOR` for the accept.
 | ----------------- | -------- | ------------------------------------------------ |
 | `TITAN_TYR_URL`   | yes      | Base URL of the API. No trailing slash.          |
 | `TITAN_TYR_TOKEN` | no       | Bearer token. Defaults to `sysmlv2`.             |
-| `TITAN_TYR_ACTOR` | yes (here) | The acceptor identity. **Must be a human's identifier** — anything not in the agent allowlist. The accept will 403 if this is `titan-tyr` / `titan-archaedas` / etc. |
+| `TITAN_TYR_ACTOR` | yes (here) | The acceptor identity. **Must be a human's identifier** — anything not in the live `agent_actors` allowlist (`GET /agent-actors`). The accept will 403 if this is e.g. `titan-tyr` / `archaedas` / `mimiron`. |
 
 If `TITAN_TYR_URL` is unset, **stop and tell the user**.
 

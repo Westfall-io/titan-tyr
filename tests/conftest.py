@@ -14,7 +14,7 @@ from src import db as db_module
 from src.auth import PASSWORD
 from src.db import Base
 from src.main import create_app
-from src.models import Template, TemplateVersion
+from src.models import AgentActor, Template, TemplateVersion
 
 SEED_SOFTWARE_TEMPLATE = "# software template seed\n\n## Purpose\nseed body\n"
 SEED_INTERACTION_TEMPLATE = "# interaction template seed\n\n## Provider obligations\nseed body\n"
@@ -113,6 +113,17 @@ async def db_session(engine) -> AsyncIterator[AsyncSession]:
                     status="active",
                 )
             )
+        # Seed the agent_actors allowlist (#78). Mirrors what migration
+        # 0020 inserts in prod, plus `titan-archaedas` so the existing
+        # part-deletion human-confirmation tests (which use that name
+        # as the agent acceptor) still see it gated as an agent.
+        for actor, description in (
+            ("titan-tyr", "titan-tyr backend agent"),
+            ("titan-archaedas", "titan-archaedas DevOps agent (legacy slug used in tests)"),
+            ("archaedas", "titan-archaedas DevOps agent (real prod slug)"),
+            ("mimiron", "titan-mimiron UI agent"),
+        ):
+            session.add(AgentActor(actor=actor, description=description))
         await session.commit()
         yield session
 

@@ -9,7 +9,6 @@ from sqlalchemy import func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth import require_password
-from src.config import get_settings
 from src.db import get_session
 from src.models import (
     Contract,
@@ -34,6 +33,7 @@ from src.routers._subtype_helpers import (
     body_realign_required,
     enforce_human_confirmation,
     enforce_two_party,
+    get_active_agent_actors,
 )
 from src.schemas import (
     PART_SUBTYPES,
@@ -1348,9 +1348,9 @@ async def accept_part_name_shift(
 #      "cascaded from /propose-part-deletion: ...".
 #
 #   2. Human confirmation. The acceptor X-Actor must NOT be in the
-#      KNOWN_AGENT_ACTORS allowlist (default {titan-tyr,
-#      titan-archaedas}); ?single_operator=true is forbidden. Two
-#      agents bouncing the handshake otherwise satisfies the soft
+#      live agent_actors allowlist (DB-backed since #78; previously
+#      a config default in #76); ?single_operator=true is forbidden.
+#      Two agents bouncing the handshake otherwise satisfies the soft
 #      two-party rule without a human ever confirming a cascading
 #      wipe.
 
@@ -1620,7 +1620,7 @@ async def accept_part_deletion(
     )
     enforce_human_confirmation(
         acceptor_actor=x_actor,
-        known_agents=get_settings().known_agent_actors,
+        known_agents=await get_active_agent_actors(session),
     )
 
     # Re-compute impact at accept time so the response reflects

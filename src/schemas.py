@@ -949,8 +949,8 @@ class ContractDeletionAcceptResponse(BaseModel):
 #   2. `cascaded_contract_ids` on the accept response surfaces which
 #      contracts were cascade-deleted alongside the part.
 #
-# Human-confirmation rule (acceptor X-Actor must not be in the
-# KNOWN_AGENT_ACTORS allowlist; ?single_operator=true forbidden) is
+# Human-confirmation rule (acceptor X-Actor must not be in the live
+# `agent_actors` allowlist; ?single_operator=true forbidden) is
 # enforced at the router layer; not visible in the schema.
 
 
@@ -1022,3 +1022,54 @@ class PartDeletionAcceptResponse(BaseModel):
     impact: PartDeletionImpact
     cascade: bool
     cascaded_contract_ids: list[uuid.UUID] = []
+
+
+# ---------- Agent-actor allowlist (#78) ----------
+#
+# DB-backed replacement for the hardcoded `KNOWN_AGENT_ACTORS` config
+# default. Same slug rule as part names so the actor identity stays
+# legible in URL paths and audit dumps. The description is required
+# (1-200 chars) so each row carries a "what is this" line — the
+# operator can see at a glance which agents are registered without
+# having to dig through CLAUDE.md or each project's docs.
+
+AGENT_ACTOR_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
+
+
+def _validate_agent_actor(v: str) -> str:
+    if not AGENT_ACTOR_PATTERN.fullmatch(v):
+        raise ValueError(
+            "must be a slug: lowercase letters, digits, hyphens; "
+            "1-64 chars; cannot start or end with a hyphen"
+        )
+    return v
+
+
+class AgentActorRegister(BaseModel):
+    actor: str
+    description: str = Field(min_length=1, max_length=200)
+
+    _a = field_validator("actor")(_validate_agent_actor)
+
+
+class AgentActorRevoke(BaseModel):
+    rationale: str = Field(min_length=1, max_length=2000)
+
+
+class AgentActorDetail(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    actor: str
+    description: str
+    registered_at: datetime
+    registered_by_actor: str | None = None
+    revoked_at: datetime | None = None
+    revoked_by_actor: str | None = None
+    revoke_rationale: str | None = None
+
+
+class AgentActorListResponse(BaseModel):
+    results: list[AgentActorDetail]
+    next: str | None
+
+
