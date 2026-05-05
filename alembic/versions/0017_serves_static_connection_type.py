@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Sequence, Union
 
+import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0017"
@@ -41,16 +42,25 @@ def upgrade() -> None:
     )
 
     # 0011 created this constraint via `sa.CheckConstraint(name=...)`
-    # inside `op.create_table`, with the full `ck_<table>_...` name
-    # in the literal — so the metadata naming convention prefixed it
-    # a second time, and Postgres then **truncated** the result at
-    # the 63-char identifier limit. The actual stored name is the
-    # truncated form below. Drop by that name; recreate clean
-    # (single-prefix, untruncated) via `op.create_check_constraint`.
+    # inside `op.create_table`. The metadata naming convention then
+    # re-prefixed the literal name, producing an 84-char identifier;
+    # SQLAlchemy auto-truncates such names with a 4-char deterministic
+    # hash suffix (`ck_contract_subtype_proposals_ck_contract_subtype_propo_<hex4>`).
+    # Look up the real name by definition so we don't have to guess
+    # the hash; the IN-list check on `new_connection_type` is the
+    # only constraint matching this pattern.
+    bind = op.get_bind()
+    name_row = bind.execute(
+        sa.text(
+            "SELECT conname FROM pg_constraint "
+            "WHERE conrelid = 'contract_subtype_proposals'::regclass "
+            "  AND contype = 'c' "
+            "  AND pg_get_constraintdef(oid) LIKE "
+            "      '%new_connection_type%builds-from%submodule%'"
+        )
+    ).scalar_one()
     op.execute(
-        "ALTER TABLE contract_subtype_proposals "
-        "DROP CONSTRAINT "
-        "ck_contract_subtype_proposals_ck_contract_subtype_proposals_con"
+        f'ALTER TABLE contract_subtype_proposals DROP CONSTRAINT "{name_row}"'
     )
     op.create_check_constraint(
         "connection_type_allowed",
