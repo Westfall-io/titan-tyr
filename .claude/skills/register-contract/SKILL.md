@@ -73,7 +73,7 @@ If the user says "contract" without qualifying, default to `interaction`
 (today's existing behaviour) and confirm.
 
 If the user picked `connection`, also pick the **connection_type** —
-one of six labels:
+one of seven labels:
 
 | `connection_type` | Owner part subtype  | Counterparty part subtype | What it records                                     |
 | ----------------- | ------------------- | ------------------------- | --------------------------------------------------- |
@@ -83,9 +83,10 @@ one of six labels:
 | `member-of`       | `container`         | `compose`                 | Container is a service entry in a compose stack     |
 | `depends-on`      | `container`         | `container`               | Startup ordering within a compose stack              |
 | `submodule`       | `software`          | `software`                | One repository includes another via `.gitmodules`   |
+| `serves-static`   | `software`          | `software`                | Owner serves counterparty's compiled / static artifacts at runtime (e.g. nginx serving an SPA bundle). Distinct from `submodule` (source-tree composition) and `depends-on` (container startup ordering). v0.25.0+ (#62). |
 
-All six labels work end-to-end after #37. The router still has a
-deferred-subtype guard for any future rule that references a
+All seven labels work end-to-end after #37 + #62. The router still
+has a deferred-subtype guard for any future rule that references a
 not-yet-implemented Part subtype, but no current rule trips it.
 
 The subtype determines which template you fetch in step 7 and shapes
@@ -403,8 +404,8 @@ ask, or default to unprojected.
   the unique constraint is `(owner_part_id, counterparty_part_id, subtype,
   connection_type) NULLS NOT DISTINCT` — so a single directed pair can
   hold one `interaction`, one `binding`, and one `connection` per
-  `connection_type` (six labels, so up to six connection rows + one
-  interaction + one binding = eight rows max in one direction). This is
+  `connection_type` (seven labels, so up to seven connection rows + one
+  interaction + one binding = nine rows max in one direction). This is
   what enables the multi-row Connections tables in `container@3.0.0`
   and the templates that depend on it. Just because you *can* register
   multiple subtypes on the same pair doesn't mean you *should* — most

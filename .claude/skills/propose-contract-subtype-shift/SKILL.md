@@ -76,7 +76,8 @@ curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
 Ask which subtype the contract should shift to. Valid contract
 subtypes: `interaction`, `binding`, `connection`. If `connection`,
 also prompt for `new_connection_type` (one of: `builds-from`,
-`instantiates`, `runs`, `member-of`, `depends-on`, `submodule`).
+`instantiates`, `runs`, `member-of`, `depends-on`, `submodule`,
+`serves-static`).
 
 The provider pre-validates the new subtype's source/target rule
 against the current endpoint parts. Walk through the rule tables
@@ -96,6 +97,7 @@ with the user **before** POSTing so they aren't surprised by a 422:
 | `member-of`       | `container`         | `compose`                 |
 | `depends-on`      | `container`         | `container`               |
 | `submodule`       | `software`          | `software`                |
+| `serves-static`   | `software`          | `software`                |
 
 If the proposed shift would violate the rule, the propose endpoint
 **hard-blocks with 422** (unlike part shifts, which only soft-warn
