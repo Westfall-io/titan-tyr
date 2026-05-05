@@ -63,7 +63,23 @@ curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
   "$TITAN_TYR_URL/contracts/$contract_id"
 ```
 
-`404` → return the not-found shape (step 6). `200` → continue.
+`200` → continue.
+
+`404` → the contract is either truly unknown or **soft-deleted**
+(provider v0.26.0+, #69). Retry with `?include_deleted=true`:
+
+```sh
+curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
+  "$TITAN_TYR_URL/contracts/$contract_id?include_deleted=true"
+```
+
+If that returns `200` and the body has a non-null `deleted_at`,
+return a `"status": "deleted"` shape (see step 6) surfacing
+`deleted_at`, `deleted_by_proposer_actor`, `deleted_by_acceptor_actor`,
+and `deletion_rationale`. Skip steps 3-5 (sibling-proposal listings
+404 on a soft-deleted contract too — they're not interesting once
+the row is retired). Otherwise (still `404`) return the not-found
+shape from step 6.
 
 ### 3. Fetch open content proposals + open subtype-shift proposals (parallel)
 
@@ -186,7 +202,30 @@ before acting on `contract.subtype` / `contract.connection_type` /
 in flight; a pending content proposal means the body is about to
 move.
 
-### 6. Return the "not found" response (404 from step 2)
+### 6. Return the "not found" or "deleted" response
+
+If the original `404` resolved on the `?include_deleted=true`
+retry, return:
+
+```json
+{
+  "status": "deleted",
+  "contract": {
+    "contract_id": "...",
+    "owner": "...",
+    "counterparty": "...",
+    "subtype": "...",
+    "connection_type": null,
+    "deleted_at": "...",
+    "deleted_by_proposer_actor": "...",
+    "deleted_by_acceptor_actor": "...",
+    "deletion_rationale": "..."
+  },
+  "hint": "This contract was soft-deleted (provider v0.26.0+, #69). Read the full audit trail with GET /contracts/{id}/history?include_deleted=true."
+}
+```
+
+Otherwise (still `404` even with `?include_deleted=true`):
 
 ```json
 {

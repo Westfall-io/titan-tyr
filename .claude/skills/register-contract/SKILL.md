@@ -212,7 +212,11 @@ need.
 > `connection_type` label) without bumping the version or mutating the
 > body, and runs through a separate two-party propose/accept handshake
 > via `/accept-contract-proposal`. Surface this as the path forward
-> rather than asking the user to tear the contract down out-of-band.
+> rather than asking the user to delete-and-re-register (which is now
+> possible via `/propose-contract-deletion` (v0.26.0+, #69), but
+> in-place subtype shift is the more legible audit trail when the
+> intent is "this contract should still exist, just classified
+> differently").
 
 If `results` is empty, continue.
 
@@ -415,9 +419,12 @@ ask, or default to unprojected.
   row and a `binding` row (the runs is the structural fact, the binding
   is the address); software `payments-service` → software `orders-service`
   is a single `interaction`.
-- **Subtype is structural.** It can't be changed after registration
-  (no PUT path mutates it). If you really need a different subtype,
-  the contract has to be re-created — out-of-band today.
+- **Subtype is structural.** It can't be changed via PUT. The
+  in-place fix is `/propose-contract-subtype-shift`; if the contract
+  must be wholly re-created, soft-delete via
+  `/propose-contract-deletion` (v0.26.0+, #69) and POST `/contracts`
+  fresh — the uniqueness key is partial-on-live so the same
+  endpoints+subtype can be re-registered after delete.
 - **To remove a contract, see `/propose-contract-deletion`** (#69).
   Deletion is a two-party soft-delete via the same propose/accept
   pattern as the other shifts; the row stays in the database for
