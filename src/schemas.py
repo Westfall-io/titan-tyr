@@ -310,6 +310,9 @@ class ContractListItem(BaseModel):
     updated_at: datetime
     created_by_actor: str | None = None
     project: str | None = None
+    # Populated on soft-deleted rows surfaced via `?include_deleted=true`
+    # (#69). NULL on live rows; non-NULL marks the row as soft-deleted.
+    deleted_at: datetime | None = None
 
 
 class ContractListResponse(BaseModel):
@@ -399,6 +402,14 @@ class ContractUpdateResponse(BaseModel):
     updated_at: datetime
     created_by_actor: str | None = None
     project: str | None = None
+    # Soft-delete fields mirror ContractDetail (#69) so the PUT-then-GET
+    # round-trip stays identical. PUT 404s on soft-deleted rows, so
+    # these are always null on a successful PUT response — but they
+    # must exist on the schema for shape parity.
+    deleted_at: datetime | None = None
+    deleted_by_proposer_actor: str | None = None
+    deleted_by_acceptor_actor: str | None = None
+    deletion_rationale: str | None = None
 
 
 class ContractSearchResult(BaseModel):
@@ -434,6 +445,12 @@ class ContractDetail(BaseModel):
     updated_at: datetime
     created_by_actor: str | None = None
     project: str | None = None
+    # Populated on soft-deleted rows surfaced via `?include_deleted=true`
+    # (#69). NULL on live rows.
+    deleted_at: datetime | None = None
+    deleted_by_proposer_actor: str | None = None
+    deleted_by_acceptor_actor: str | None = None
+    deletion_rationale: str | None = None
 
 
 # ---------- Version history ----------
@@ -454,7 +471,12 @@ class VersionHistoryItem(BaseModel):
     # `kind` to `"body_bump"` so a brief window of provider-old /
     # consumer-new round-trips renders correctly.
     kind: Literal[
-        "body_bump", "subtype_shift", "endpoint_shift", "name_shift"
+        "body_bump",
+        "subtype_shift",
+        "endpoint_shift",
+        "name_shift",
+        "deletion_proposed",
+        "deletion_accepted",
     ] = "body_bump"
     # Per-version actor surfacing on `/contracts/{id}/history` (#54).
     # `proposer_actor` is the X-Actor recorded on the `contract_versions`
@@ -819,4 +841,77 @@ class ContractEndpointShiftAcceptResponse(BaseModel):
     shifted_to_counterparty: str
     accepted_at: datetime
     accepted_by: str | None
+    single_operator_override: bool = False
+
+
+# ---------- Contract deletion proposals (#69) ----------
+#
+# A contract is never hard-deleted. Acceptance soft-deletes by
+# stamping `contracts.deleted_at` plus the proposer/acceptor/rationale
+# columns. The proposal row persists so `/contracts/{id}/history`
+# (with `?include_deleted=true`) reads back the full sequence
+# `registered → … → deletion_proposed → deletion_accepted`.
+
+
+class ContractDeletionImpact(BaseModel):
+    """Dangling-reference summary surfaced at propose and accept time.
+
+    `referenced_in_part_bodies` lists parts whose latest active body
+    mentions the *other* endpoint of the contract — the typical
+    "Connections" section reference. Soft-warn only; the issue's
+    judgement is to mirror the existing tolerance for stale name
+    references that already appears when contracts are repurposed.
+
+    `referenced_in_open_proposals` counts open propose-level rows on
+    this contract that would lose their target on accept (body
+    proposals + subtype + endpoint + sibling deletion proposals).
+
+    `active_history_entries` is the count of accepted history events
+    on the contract (body bumps + subtype shifts + endpoint shifts).
+    Surfaced so the proposer can see "this contract has 17 accepted
+    entries in its audit trail" before deciding to soft-delete it.
+    """
+
+    referenced_in_part_bodies: list[str] = []
+    referenced_in_open_proposals: int = 0
+    active_history_entries: int = 0
+
+
+class ContractDeletionProposalCreate(BaseModel):
+    rationale: str = Field(min_length=1, max_length=2000)
+
+
+class ContractDeletionProposalEntry(BaseModel):
+    proposal_id: uuid.UUID
+    rationale: str
+    proposer_actor: str | None
+    status: str
+    created_at: datetime
+    accepted_at: datetime | None
+    accepted_by: str | None
+    single_operator_override: bool = False
+
+
+class ContractDeletionProposalCreateResponse(BaseModel):
+    proposal_id: uuid.UUID
+    contract_id: uuid.UUID
+    rationale: str
+    proposer_actor: str | None
+    impact: ContractDeletionImpact
+    status: str
+
+
+class ContractDeletionProposalListResponse(BaseModel):
+    contract_id: uuid.UUID
+    proposals: list[ContractDeletionProposalEntry]
+
+
+class ContractDeletionAcceptResponse(BaseModel):
+    proposal_id: uuid.UUID
+    contract_id: uuid.UUID
+    deleted_at: datetime
+    proposer_actor: str | None
+    acceptor_actor: str | None
+    rationale: str
+    impact: ContractDeletionImpact
     single_operator_override: bool = False

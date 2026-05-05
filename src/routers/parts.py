@@ -535,6 +535,7 @@ async def list_part_contracts(
     name: str,
     after: str | None = Query(default=None),
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    include_deleted: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
 ) -> PartContractsListResponse:
     limit = validate_limit(limit)
@@ -550,6 +551,7 @@ async def list_part_contracts(
         after=after,
         limit=limit,
         touching_part_id=part.id,
+        include_deleted=include_deleted,
     )
     return PartContractsListResponse(part=part.name, results=items, next=next_cursor)
 
@@ -564,6 +566,7 @@ async def _list_active_contracts(
     connection_type: str | None = None,
     project_filter_id=None,
     project_filter_unprojected: bool = False,
+    include_deleted: bool = False,
 ) -> tuple[list[ContractListItem], str | None]:
     """Paginated listing of contracts with their latest active version.
 
@@ -612,6 +615,7 @@ async def _list_active_contracts(
             Contract.subtype,
             Contract.connection_type,
             Contract.created_by_actor,
+            Contract.deleted_at,
             owner_alias.c.name.label("owner_name"),
             cp_alias.c.name.label("cp_name"),
             Project.name.label("project_name"),
@@ -640,6 +644,9 @@ async def _list_active_contracts(
 
     if connection_type is not None:
         stmt = stmt.where(Contract.connection_type == connection_type)
+
+    if not include_deleted:
+        stmt = stmt.where(Contract.deleted_at.is_(None))
 
     if project_filter_unprojected:
         stmt = stmt.where(Contract.project_id.is_(None))
@@ -671,7 +678,7 @@ async def _list_active_contracts(
     last_t = None
     last_id = None
     for (
-        c_id, c_subtype, c_conn_type, c_creator,
+        c_id, c_subtype, c_conn_type, c_creator, c_deleted_at,
         owner_name, cp_name, project_name,
         vmaj, vmin, vpat, vts, accepted_at,
     ) in rows:
@@ -686,6 +693,7 @@ async def _list_active_contracts(
                 updated_at=accepted_at or vts,
                 created_by_actor=c_creator,
                 project=project_name,
+                deleted_at=c_deleted_at,
             )
         )
         last_t, last_id = vts, c_id

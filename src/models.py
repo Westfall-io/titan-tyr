@@ -160,6 +160,8 @@ class Contract(Base):
         # *per* connection_type per directed pair. Explicit short index
         # name avoids the 63-char Postgres identifier limit the
         # auto-generated `uq_contracts_<all-four-cols>` would exceed.
+        # Partial-on-live (#69): soft-deleted rows are excluded so the
+        # same endpoints+subtype can be re-registered after deletion.
         Index(
             "uq_contracts_subtype_pair",
             "owner_part_id",
@@ -168,6 +170,15 @@ class Contract(Base):
             "connection_type",
             unique=True,
             postgresql_nulls_not_distinct=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        # Live-row partial index (#69): keeps the common
+        # `WHERE deleted_at IS NULL` lookup fast without paying storage
+        # for the rarer deleted rows.
+        Index(
+            "ix_contracts_live",
+            "id",
+            postgresql_where=text("deleted_at IS NULL"),
         ),
         CheckConstraint(
             "owner_part_id <> counterparty_part_id",
@@ -242,6 +253,25 @@ class Contract(Base):
     endpoint_shifted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Soft-delete bookkeeping (#69). `deleted_at` is the load-bearing
+    # flag — every list / detail query that should hide deleted rows
+    # filters on `deleted_at IS NULL`. The proposer / acceptor /
+    # rationale / override columns are copies of the deletion-proposal
+    # row that landed; storing them on the contract row lets restoration
+    # tooling and audit reads inspect the cause without re-joining.
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deleted_by_proposer_actor: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )
+    deleted_by_acceptor_actor: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )
+    deletion_rationale: Mapped[str | None] = mapped_column(String, nullable=True)
+    deletion_single_operator_override: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
 
     owner: Mapped[Part] = relationship(foreign_keys=[owner_part_id])
     counterparty: Mapped[Part] = relationship(foreign_keys=[counterparty_part_id])
@@ -253,6 +283,9 @@ class Contract(Base):
         back_populates="contract", cascade="all, delete-orphan", passive_deletes=True
     )
     endpoint_proposals: Mapped[list["ContractEndpointProposal"]] = relationship(
+        back_populates="contract", cascade="all, delete-orphan", passive_deletes=True
+    )
+    deletion_proposals: Mapped[list["ContractDeletionProposal"]] = relationship(
         back_populates="contract", cascade="all, delete-orphan", passive_deletes=True
     )
 
@@ -662,3 +695,55 @@ class ContractEndpointProposal(Base):
     new_counterparty: Mapped[Part | None] = relationship(
         foreign_keys=[new_counterparty_part_id]
     )
+
+
+# ---------- Deletion proposals (#69) ----------
+#
+# A contract is never hard-deleted. The accept handshake sets
+# `contracts.deleted_at` (plus the proposer / acceptor / rationale
+# bookkeeping cols) and the proposal row persists. Read endpoints
+# hide soft-deleted rows by default; `?include_deleted=true` opts
+# back in. The proposal itself follows the same propose/accept
+# shape as the other shifts: rationale + proposer_actor + status +
+# accepted_by + single_operator_override.
+
+
+class ContractDeletionProposal(Base):
+    __tablename__ = "contract_deletion_proposals"
+    __table_args__ = (
+        Index(
+            "ix_contract_deletion_proposals_contract_id_status",
+            "contract_id",
+            "status",
+        ),
+        CheckConstraint(
+            "status IN ('proposal', 'accepted')",
+            name="ck_contract_deletion_proposals_status_allowed",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    contract_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("contracts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    rationale: Mapped[str] = mapped_column(String, nullable=False)
+    proposer_actor: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    accepted_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    single_operator_override: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+
+    contract: Mapped[Contract] = relationship(back_populates="deletion_proposals")
