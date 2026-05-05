@@ -165,6 +165,8 @@ rule was unenforceable and that fact should be visible.
   `GET /contracts/<contract_id>/history` returns one entry per body
   bump *and* one per accepted shift, distinguished by the `kind`
   field (`body_bump`, `subtype_shift`, or `endpoint_shift`).
+  Soft-deletion events (`deletion_proposed`, `deletion_accepted`,
+  v0.26.0+, #69) only surface with `?include_deleted=true`.
 - **Acceptance re-validates.** Source/target rule (does the new
   endpoint's subtype satisfy the contract's binding/connection
   rule?) and uniqueness (does the new pair collide with an existing
