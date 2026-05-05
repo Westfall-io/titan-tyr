@@ -41,15 +41,16 @@ def upgrade() -> None:
     )
 
     # 0011 created this constraint via `sa.CheckConstraint(name=...)`
-    # inside `op.create_table`, with the full `ck_<table>_...` name in
-    # the literal — so the naming convention prefixed it a second
-    # time. Result: a doubled prefix on this one constraint only.
-    # Drop by the actual stored name; recreate clean (single-prefix)
-    # via `op.create_check_constraint`.
+    # inside `op.create_table`, with the full `ck_<table>_...` name
+    # in the literal — so the metadata naming convention prefixed it
+    # a second time, and Postgres then **truncated** the result at
+    # the 63-char identifier limit. The actual stored name is the
+    # truncated form below. Drop by that name; recreate clean
+    # (single-prefix, untruncated) via `op.create_check_constraint`.
     op.execute(
         "ALTER TABLE contract_subtype_proposals "
         "DROP CONSTRAINT "
-        "ck_contract_subtype_proposals_ck_contract_subtype_proposals_connection_type_allowed"
+        "ck_contract_subtype_proposals_ck_contract_subtype_proposals_con"
     )
     op.create_check_constraint(
         "connection_type_allowed",
