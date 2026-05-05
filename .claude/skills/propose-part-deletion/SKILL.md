@@ -145,9 +145,10 @@ explicitly so they know what to expect:
 
 > Acceptance requires:
 > 1. A different `X-Actor` than this proposer (standard two-party rule), AND
-> 2. The acceptor X-Actor must be a **human** — not in the agent
->    allowlist (default: `titan-tyr`, `titan-archaedas`). Two
->    agents bouncing the handshake won't satisfy the rule.
+> 2. The acceptor X-Actor must be a **human** — not in the live
+>    `agent_actors` allowlist (`GET /agent-actors` to see; typically
+>    `titan-tyr`, `archaedas`, `mimiron`). Two agents bouncing the
+>    handshake won't satisfy the rule.
 > 3. `?single_operator=true` is **forbidden** on this accept.
 > If the touching_contracts list above is non-empty, the acceptor
 > will also need to pass `?cascade=true` to land the deletion.

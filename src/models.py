@@ -801,8 +801,8 @@ class ContractDeletionProposal(Base):
 #      reflects whether touching live contracts were soft-deleted in
 #      the same transaction.
 #   2. The router enforces a stricter rule: the acceptor X-Actor must
-#      not be in the `KNOWN_AGENT_ACTORS` allowlist, and
-#      `?single_operator=true` is forbidden. The
+#      not be in the live `agent_actors` allowlist (DB-backed since
+#      #78), and `?single_operator=true` is forbidden. The
 #      `single_operator_override` column exists for shape parity but
 #      is structurally always false today.
 
@@ -849,3 +849,47 @@ class PartDeletionProposal(Base):
     )
 
     part: Mapped[Part] = relationship(back_populates="deletion_proposals")
+
+
+# ---------- Agent-actor allowlist (#78) ----------
+#
+# DB-backed replacement for the hardcoded `KNOWN_AGENT_ACTORS` config
+# default that #76 shipped. The router layer's `enforce_human_confirmation`
+# helper consults the live rows in this table (not the config) to decide
+# whether an acceptor X-Actor counts as an agent. Soft-delete pattern
+# (revoke) preserves the audit trail; partial-on-live unique index lets
+# a revoked actor be re-registered as a new row.
+
+
+class AgentActor(Base):
+    __tablename__ = "agent_actors"
+    __table_args__ = (
+        Index(
+            "uq_agent_actors_actor_live",
+            "actor",
+            unique=True,
+            postgresql_where=text("revoked_at IS NULL"),
+        ),
+        Index(
+            "ix_agent_actors_live",
+            "actor",
+            postgresql_where=text("revoked_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    actor: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(String, nullable=False)
+    registered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    registered_by_actor: Mapped[str | None] = mapped_column(String, nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    revoked_by_actor: Mapped[str | None] = mapped_column(String, nullable=True)
+    revoke_rationale: Mapped[str | None] = mapped_column(String, nullable=True)
