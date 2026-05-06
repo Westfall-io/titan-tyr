@@ -22,7 +22,7 @@ Same env vars as `register-part`:
 | Variable          | Required | Purpose                                          |
 | ----------------- | -------- | ------------------------------------------------ |
 | `TITAN_TYR_URL`   | yes      | Base URL of the API. No trailing slash.          |
-| `TITAN_TYR_TOKEN` | no       | Bearer token. Defaults to `sysmlv2`.             |
+| `TITAN_TYR_TOKEN` | no       | Bearer per-caller token (issue via `/issue-auth-token`). Required.             |
 | `TITAN_TYR_ACTOR` | no       | Identity for the X-Actor header (provider v0.16.0+, #38). The provider records the proposer on the version row; the accept side enforces proposer-doesn't-accept. If unset, the proposal records `null` and any acceptor is allowed — warn the user. |
 
 If `TITAN_TYR_URL` is unset, **stop and tell the user**:
@@ -162,10 +162,10 @@ On `201`, summarise:
 > Proposed `<version>` for the `<kind>` template. Status: `proposal`.
 >
 > List open proposals:
->   `curl -H 'Authorization: Bearer sysmlv2' $TITAN_TYR_URL/templates/<kind>/proposals`
+>   `curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' $TITAN_TYR_URL/templates/<kind>/proposals`
 >
 > Accept (when ready):
->   `curl -X POST -H 'Authorization: Bearer sysmlv2' \`
+>   `curl -X POST -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \`
 >     `$TITAN_TYR_URL/templates/<kind>/proposals/<version>/accept`
 
 **Do not auto-accept.** Even if the user appears to want it landed

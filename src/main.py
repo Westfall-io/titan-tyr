@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.cors import resolve_cors_config
 from src.routers import (
     agent_actors,
+    auth_tokens,
     contracts,
     health,
     parts,
@@ -46,6 +47,7 @@ def create_app() -> FastAPI:
     app.include_router(templates.router)
     app.include_router(projects.router)
     app.include_router(agent_actors.router)
+    app.include_router(auth_tokens.router)
     app.include_router(parts.router)
     app.include_router(contracts.router)
     app.include_router(proposals.router)

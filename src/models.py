@@ -893,3 +893,63 @@ class AgentActor(Base):
     )
     revoked_by_actor: Mapped[str | None] = mapped_column(String, nullable=True)
     revoke_rationale: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+# ---------- Per-caller auth tokens (#81 + #82 + #84) ----------
+#
+# Replaces the hardcoded `sysmlv2` shared bearer with per-caller
+# tokens stored hashed at rest. Each token carries an actor identity
+# (overrides any X-Actor header on use) and a scope set
+# (read | write | revoke-agent). The auth dependency looks up the
+# bearer's sha256 in `uq_auth_tokens_hash_live` and stashes the
+# row's actor + scopes in `request.state` for downstream handlers.
+#
+# Soft-delete via revoke; partial-on-live unique index on hash so a
+# revoked token's hash can never match the auth check.
+
+
+class AuthToken(Base):
+    __tablename__ = "auth_tokens"
+    __table_args__ = (
+        Index(
+            "uq_auth_tokens_hash_live",
+            "token_hash",
+            unique=True,
+            postgresql_where=text("revoked_at IS NULL"),
+        ),
+        Index(
+            "ix_auth_tokens_actor_live",
+            "actor",
+            postgresql_where=text("revoked_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    token_prefix: Mapped[str] = mapped_column(String(8), nullable=False)
+    actor: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(String, nullable=False)
+    scopes: Mapped[list[str]] = mapped_column(
+        ARRAY(String),
+        nullable=False,
+        server_default=text("'{}'::text[]"),
+    )
+    issued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    issued_by_actor: Mapped[str | None] = mapped_column(String, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    revoked_by_actor: Mapped[str | None] = mapped_column(String, nullable=True)
+    revoke_rationale: Mapped[str | None] = mapped_column(String, nullable=True)

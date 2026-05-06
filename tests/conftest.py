@@ -3,6 +3,11 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator, Iterator
 
+# Legacy shared-bearer env var must be set BEFORE importing src.config
+# (which is loaded transitively via src.auth / src.main). Settings is
+# cached on first read; later os.environ mutations won't be picked up.
+os.environ.setdefault("TITAN_TYR_BEARER_PASSWORD", "test-shared-bearer")
+
 import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
@@ -11,10 +16,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 
 from src import db as db_module
-from src.auth import PASSWORD
+from src.config import get_settings
 from src.db import Base
 from src.main import create_app
 from src.models import AgentActor, Template, TemplateVersion
+
+# Re-export the shared bearer under the historical PASSWORD name so
+# any test or helper that imports `from tests.conftest import PASSWORD`
+# (or did so before #81) keeps working.
+PASSWORD = get_settings().bearer_password
 
 SEED_SOFTWARE_TEMPLATE = "# software template seed\n\n## Purpose\nseed body\n"
 SEED_INTERACTION_TEMPLATE = "# interaction template seed\n\n## Provider obligations\nseed body\n"

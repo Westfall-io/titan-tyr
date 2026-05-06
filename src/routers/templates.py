@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.auth import require_password
+from src.auth import current_actor, require_scope, require_token
 from src.db import get_session
 from src.models import Template, TemplateVersion
 from src.routers._subtype_helpers import enforce_two_party
@@ -23,7 +23,7 @@ from src.versioning import InvalidVersion, Version
 router = APIRouter(
     prefix="/templates",
     tags=["templates"],
-    dependencies=[Depends(require_password)],
+    dependencies=[Depends(require_token)],
 )
 
 VALID_KINDS = (
@@ -87,6 +87,7 @@ async def _latest_any_template_version(session: AsyncSession, template_id) -> Ve
     "/{kind}",
     response_class=PlainTextResponse,
     responses={200: {"content": {"text/markdown": {}}}},
+    dependencies=[Depends(require_scope("read"))],
 )
 async def get_template(
     kind: str, session: AsyncSession = Depends(get_session)
@@ -104,12 +105,13 @@ async def get_template(
     "/{kind}/proposals",
     response_model=TemplateProposalCreateResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_scope("write"))],
 )
 async def create_template_proposal(
     kind: str,
     payload: TemplateProposalCreate,
     session: AsyncSession = Depends(get_session),
-    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    x_actor: str | None = Depends(current_actor),
 ) -> TemplateProposalCreateResponse:
     template = await _get_template(session, kind, lock=True)
     new_version = Version.parse(payload.version, allow_prerelease=True)
@@ -136,7 +138,11 @@ async def create_template_proposal(
     return TemplateProposalCreateResponse(kind=kind, version=str(new_version), status="proposal")
 
 
-@router.get("/{kind}/proposals", response_model=TemplateProposalListResponse)
+@router.get(
+    "/{kind}/proposals",
+    response_model=TemplateProposalListResponse,
+    dependencies=[Depends(require_scope("read"))],
+)
 async def list_template_proposals(
     kind: str, session: AsyncSession = Depends(get_session)
 ) -> TemplateProposalListResponse:
@@ -190,12 +196,13 @@ async def list_template_proposals(
 @router.post(
     "/{kind}/proposals/{version}/accept",
     response_model=TemplateProposalAcceptResponse,
+    dependencies=[Depends(require_scope("write"))],
 )
 async def accept_template_proposal(
     kind: str,
     version: str,
     session: AsyncSession = Depends(get_session),
-    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    x_actor: str | None = Depends(current_actor),
     single_operator: bool = False,
 ) -> TemplateProposalAcceptResponse:
     template = await _get_template(session, kind, lock=True)

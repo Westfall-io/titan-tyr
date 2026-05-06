@@ -22,11 +22,11 @@ human-confirmation on subsequent destructive flows.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.auth import require_password
+from src.auth import current_actor, require_scope, require_token
 from src.db import get_session
 from src.models import AgentActor
 from src.pagination import (
@@ -50,7 +50,7 @@ from src.schemas import (
 router = APIRouter(
     prefix="/agent-actors",
     tags=["agent-actors"],
-    dependencies=[Depends(require_password)],
+    dependencies=[Depends(require_token)],
 )
 
 
@@ -58,11 +58,12 @@ router = APIRouter(
     "",
     response_model=AgentActorDetail,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_scope("write"))],
 )
 async def register_agent_actor(
     payload: AgentActorRegister,
     session: AsyncSession = Depends(get_session),
-    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    x_actor: str | None = Depends(current_actor),
 ) -> AgentActorDetail:
     existing = (
         await session.execute(
@@ -88,7 +89,11 @@ async def register_agent_actor(
     return AgentActorDetail.model_validate(row)
 
 
-@router.get("", response_model=AgentActorListResponse)
+@router.get(
+    "",
+    response_model=AgentActorListResponse,
+    dependencies=[Depends(require_scope("read"))],
+)
 async def list_agent_actors(
     after: str | None = Query(default=None),
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
@@ -125,7 +130,11 @@ async def list_agent_actors(
     )
 
 
-@router.get("/{actor}", response_model=AgentActorDetail)
+@router.get(
+    "/{actor}",
+    response_model=AgentActorDetail,
+    dependencies=[Depends(require_scope("read"))],
+)
 async def get_agent_actor(
     actor: str,
     include_revoked: bool = Query(default=False),
@@ -146,12 +155,16 @@ async def get_agent_actor(
     return AgentActorDetail.model_validate(row)
 
 
-@router.post("/{actor}/revoke", response_model=AgentActorDetail)
+@router.post(
+    "/{actor}/revoke",
+    response_model=AgentActorDetail,
+    dependencies=[Depends(require_scope("revoke-agent"))],
+)
 async def revoke_agent_actor(
     actor: str,
     payload: AgentActorRevoke,
     session: AsyncSession = Depends(get_session),
-    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    x_actor: str | None = Depends(current_actor),
 ) -> AgentActorDetail:
     # Revoke is human-only. Otherwise an agent could quietly evict its
     # peers from the allowlist and turn the human-confirmation rule

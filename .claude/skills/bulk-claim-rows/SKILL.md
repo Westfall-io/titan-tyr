@@ -28,7 +28,7 @@ before approving.
 | Variable          | Required | Purpose                                                                  |
 | ----------------- | -------- | ------------------------------------------------------------------------ |
 | `TITAN_TYR_URL`   | yes      | Base URL. No trailing slash.                                             |
-| `TITAN_TYR_TOKEN` | no       | Bearer token. Defaults to `sysmlv2`.                                     |
+| `TITAN_TYR_TOKEN` | no       | Bearer per-caller token (issue via `/issue-auth-token`). Required.                                     |
 | `TITAN_TYR_ACTOR` | no       | Fallback for `--actor`. Convenient if the same identity claims everything. |
 
 If `TITAN_TYR_URL` is unset, run `/check-titan-tyr-env` first.

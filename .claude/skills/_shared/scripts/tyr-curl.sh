@@ -17,7 +17,9 @@
 # Behavior:
 #   - <PATH> is appended to $TITAN_TYR_URL. Pass either /parts or
 #     parts; both work.
-#   - Authorization: Bearer $TITAN_TYR_TOKEN (default sysmlv2).
+#   - Authorization: Bearer $TITAN_TYR_TOKEN (required; per-caller
+#     token issued via /issue-auth-token. The pre-#81 default of
+#     "sysmlv2" no longer works once the legacy bearer is disabled).
 #   - X-Actor: $TITAN_TYR_ACTOR (omitted if unset; warns on stderr
 #     for write methods so the missing paper trail is visible).
 #   - Content-Type: application/json on POST/PUT/PATCH (suppressed
@@ -61,7 +63,11 @@ case "$path" in
   *)  full="$url/$path" ;;
 esac
 
-token="${TITAN_TYR_TOKEN:-sysmlv2}"
+if [[ -z "${TITAN_TYR_TOKEN:-}" ]]; then
+  echo "TITAN_TYR_TOKEN is not set — issue one via /issue-auth-token" >&2
+  exit 2
+fi
+token="$TITAN_TYR_TOKEN"
 actor="${TITAN_TYR_ACTOR:-}"
 
 headers=(-H "Authorization: Bearer $token")

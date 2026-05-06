@@ -90,7 +90,7 @@ NEW_CONNECTION_TYPE="$new_connection_type" \
 NEW_OWNER="$new_owner" NEW_COUNTERPARTY="$new_counterparty" \
 RATIONALE="$rationale" VERSION="$version" MD="$md" \
 SINGLE_OPERATOR="$single_operator" \
-URL="${TITAN_TYR_URL%/}" TOKEN="${TITAN_TYR_TOKEN:-sysmlv2}" \
+URL="${TITAN_TYR_URL%/}" TOKEN="${TITAN_TYR_TOKEN:?TITAN_TYR_TOKEN must be set; issue a per-caller token via /issue-auth-token}" \
 ACTOR="${TITAN_TYR_ACTOR:-}" \
 python3 - <<'PY'
 import json

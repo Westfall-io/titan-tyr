@@ -13,7 +13,7 @@ at `/docs` and `/redoc` when the API is running.
 
 - All paths are JSON request / JSON response **except** the two
   `/templates/*` endpoints, which return `text/markdown`.
-- Every endpoint requires `Authorization: Bearer sysmlv2` **except**
+- Every endpoint requires `Authorization: Bearer $TITAN_TYR_TOKEN` **except**
   `GET /health`, which is unauthenticated so orchestrators can probe
   it. Missing or wrong tokens on protected endpoints get `401`.
 - Versions are semver strings. Parts and stable contract versions are
@@ -164,14 +164,14 @@ time depending on which subtype the caller is creating.
 ### `GET /templates/{kind}` — latest active template
 
 ```sh
-curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/software
-curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/container
-curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/image
-curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/pod
-curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/compose
-curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/interaction
-curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/binding
-curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/connection
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' http://localhost:8000/templates/software
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' http://localhost:8000/templates/container
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' http://localhost:8000/templates/image
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' http://localhost:8000/templates/pod
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' http://localhost:8000/templates/compose
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' http://localhost:8000/templates/interaction
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' http://localhost:8000/templates/binding
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' http://localhost:8000/templates/connection
 ```
 
 `kind` ∈ `{software, container, image, pod, compose, interaction, binding, connection}`.
@@ -183,7 +183,7 @@ RC-suffixed versions are never returned here.
 ### `POST /templates/{kind}/proposals` — propose a change
 
 ```sh
-curl -H 'Authorization: Bearer sysmlv2' \
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
      -H 'Content-Type: application/json' \
      -H 'X-Actor: alice' \
      -d '{ "version": "1.1.0-rc1", "markdown": "..." }' \
@@ -206,7 +206,7 @@ Proposals — the same rule applies to the template flow.
 ### `GET /templates/{kind}/proposals` — list open proposals
 
 ```sh
-curl -H 'Authorization: Bearer sysmlv2' http://localhost:8000/templates/software/proposals
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' http://localhost:8000/templates/software/proposals
 ```
 
 ```json
@@ -233,7 +233,7 @@ pre-v0.16.0 responses omitted them.
 ### `POST /templates/{kind}/proposals/{version}/accept` — promote
 
 ```sh
-curl -X POST -H 'Authorization: Bearer sysmlv2' \
+curl -X POST -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
      -H 'X-Actor: bob' \
      http://localhost:8000/templates/software/proposals/1.1.0-rc2/accept
 ```
@@ -315,7 +315,7 @@ stack (`payments`, `payments-image`, `payments-prod`, `payments-pod`,
 ### `GET /parts` — list registered parts (paginated)
 
 ```sh
-curl -H 'Authorization: Bearer sysmlv2' \
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
   'http://localhost:8000/parts?limit=2'
 ```
 
@@ -353,7 +353,7 @@ To fetch the next page, call again with `?after=<next>`.
 #### `?subtype=<software|image|container|pod|compose>` — filter by subtype
 
 ```sh
-curl -H 'Authorization: Bearer sysmlv2' \
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
   'http://localhost:8000/parts?subtype=container'
 ```
 
@@ -364,7 +364,7 @@ other than `software`, `image`, `container`, `pod`, or `compose`.
 #### `?match=<query>` — substring lookup over name + aliases
 
 ```sh
-curl -H 'Authorization: Bearer sysmlv2' \
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
   'http://localhost:8000/parts?match=front'
 ```
 
@@ -383,7 +383,7 @@ one result comes back.
 ### `POST /parts` — register a new part
 
 ```sh
-curl -H 'Authorization: Bearer sysmlv2' \
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
      -H 'Content-Type: application/json' \
      -H 'X-Actor: alice' \
      -d '{
@@ -466,7 +466,7 @@ Errors:
 ### `GET /parts/{name}` — latest description
 
 ```sh
-curl -H 'Authorization: Bearer sysmlv2' \
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
      http://localhost:8000/parts/payments-service
 ```
 
@@ -494,7 +494,7 @@ one (consumers fall back to GitHub Issues inference from `repo_uri`).
 ### `PUT /parts/{name}` — append a new version
 
 ```sh
-curl -H 'Authorization: Bearer sysmlv2' \
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
      -H 'Content-Type: application/json' \
      -X PUT \
      -d '{
@@ -579,7 +579,7 @@ counterparty, with that contract's latest active version. Paginated.
 the body.
 
 ```sh
-curl -H 'Authorization: Bearer sysmlv2' \
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
      'http://localhost:8000/parts/payments-service/contracts?limit=10'
 ```
 
@@ -622,7 +622,7 @@ event kinds are merged into one stream:
 `GET /parts/{name}`; per-version body retrieval is out of scope today.
 
 ```sh
-curl -H 'Authorization: Bearer sysmlv2' \
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
      'http://localhost:8000/parts/payments-service/history?limit=10'
 ```
 
@@ -704,7 +704,7 @@ total, not one per subtype.
 ### `POST /contracts` — register a new contract
 
 ```sh
-curl -H 'Authorization: Bearer sysmlv2' \
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
      -H 'Content-Type: application/json' \
      -H 'X-Actor: alice' \
      -d '{
@@ -779,7 +779,7 @@ Returns the active contract(s) between the two parts, in
 either direction. Zero, one, or two results. Includes full `markdown`.
 
 ```sh
-curl -H 'Authorization: Bearer sysmlv2' \
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
      'http://localhost:8000/contracts?owner=payments-service&counterparty=orders-service'
 ```
 
@@ -811,7 +811,7 @@ parser shape across `/contracts` (search), `/contracts` (list), and
 every contract with an active version. **No markdown** in list items.
 
 ```sh
-curl -H 'Authorization: Bearer sysmlv2' \
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
      'http://localhost:8000/contracts?limit=20'
 ```
 
@@ -834,7 +834,7 @@ curl -H 'Authorization: Bearer sysmlv2' \
 #### `?subtype=<interaction|binding|connection>` — filter by subtype
 
 ```sh
-curl -H 'Authorization: Bearer sysmlv2' \
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
   'http://localhost:8000/contracts?subtype=binding'
 ```
 
@@ -845,7 +845,7 @@ than `interaction`, `binding`, or `connection`.
 #### `?connection_type=<label>` — filter by connection sub-label
 
 ```sh
-curl -H 'Authorization: Bearer sysmlv2' \
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
   'http://localhost:8000/contracts?subtype=connection&connection_type=depends-on'
 ```
 
@@ -881,7 +881,7 @@ Search requires both filters; list requires neither.
 ### `GET /contracts/{contract_id}` — latest active contract by id
 
 ```sh
-curl -H 'Authorization: Bearer sysmlv2' \
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
      http://localhost:8000/contracts/ab12cd34-1234-1234-1234-1234567890ab
 ```
 
@@ -911,7 +911,7 @@ endpoints all flow through their dedicated propose-accept endpoints
 PUT does not touch any of them. No version bump.
 
 ```sh
-curl -H 'Authorization: Bearer sysmlv2' \
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
      -H 'Content-Type: application/json' \
      -X PUT \
      -d '{"project": "watchervault"}' \
@@ -959,7 +959,7 @@ event kinds are merged into one stream:
 **Markdown is not included.**
 
 ```sh
-curl -H 'Authorization: Bearer sysmlv2' \
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
      'http://localhost:8000/contracts/ab12cd34-1234-1234-1234-1234567890ab/history?limit=10'
 ```
 
@@ -1065,7 +1065,7 @@ real per-caller auth lands.
 ### `POST /contracts/{contract_id}/proposals` — propose a new contract body
 
 ```sh
-curl -H 'Authorization: Bearer sysmlv2' \
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
      -H 'Content-Type: application/json' \
      -H 'X-Actor: alice' \
      -d '{ "version": "1.3.0-rc1", "markdown": "..." }' \
@@ -1098,7 +1098,7 @@ version. Older proposals (now superseded by an accepted version) are
 preserved in the database but excluded from this listing.
 
 ```sh
-curl -H 'Authorization: Bearer sysmlv2' \
+curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
      http://localhost:8000/contracts/ab12cd34-.../proposals
 ```
 
@@ -1158,7 +1158,7 @@ RC. The original RC row stays as `status='proposal'` for posterity.
 Any earlier RCs of the same target version also remain in place.
 
 ```sh
-curl -X POST -H 'Authorization: Bearer sysmlv2' \
+curl -X POST -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
      -H 'X-Actor: bob' \
      http://localhost:8000/contracts/ab12cd34-.../proposals/1.3.0-rc2/accept
 ```
@@ -1251,7 +1251,7 @@ re-stamps to `<new-subtype>@<active-template-version>`.
 ### `POST /parts/{name}/subtype-proposals` — propose a part shift
 
 ```sh
-curl -X POST -H 'Authorization: Bearer sysmlv2' \
+curl -X POST -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
      -H 'Content-Type: application/json' \
      -H 'X-Actor: alice' \
      -d '{ "new_subtype": "container", "rationale": "registered as software but actually represents the prod deployment instance" }' \
@@ -1326,7 +1326,7 @@ Errors:
 ### `POST /parts/{name}/subtype-proposals/{proposal_id}/accept` — promote a part shift
 
 ```sh
-curl -X POST -H 'Authorization: Bearer sysmlv2' \
+curl -X POST -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
      -H 'X-Actor: bob' \
      'http://localhost:8000/parts/payments-service/subtype-proposals/9b1f.../accept?single_operator=false'
 ```
@@ -1360,7 +1360,7 @@ Errors:
 ### `POST /contracts/{contract_id}/subtype-proposals` — propose a contract shift
 
 ```sh
-curl -X POST -H 'Authorization: Bearer sysmlv2' \
+curl -X POST -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
      -H 'Content-Type: application/json' \
      -H 'X-Actor: alice' \
      -d '{ "new_subtype": "binding", "new_connection_type": null, "rationale": "owner is actually a container, this is environment-specific" }' \
@@ -1410,7 +1410,7 @@ both returned; filter by `status == "proposal"` for acceptable.
 ### `POST /contracts/{contract_id}/subtype-proposals/{proposal_id}/accept` — promote a contract shift
 
 ```sh
-curl -X POST -H 'Authorization: Bearer sysmlv2' \
+curl -X POST -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
      -H 'X-Actor: bob' \
      'http://localhost:8000/contracts/ab12.../subtype-proposals/7d3e.../accept'
 ```
@@ -1456,7 +1456,7 @@ Errors:
 ### `POST /parts/{name}/name-proposals` — propose a part rename
 
 ```sh
-curl -X POST -H 'Authorization: Bearer sysmlv2' \
+curl -X POST -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
      -H 'X-Actor: alice' \
      -H 'Content-Type: application/json' \
      -d '{"new_name": "payments-service", "rationale": "drop legacy suffix"}' \
@@ -1524,7 +1524,7 @@ are read-only history.
 ### `POST /parts/{name}/name-proposals/{proposal_id}/accept` — promote a rename
 
 ```sh
-curl -X POST -H 'Authorization: Bearer sysmlv2' \
+curl -X POST -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
      -H 'X-Actor: bob' \
      'http://localhost:8000/parts/payments-svc/name-proposals/9b1f.../accept'
 ```
@@ -1573,7 +1573,7 @@ Errors:
 ### `POST /contracts/{contract_id}/endpoint-proposals` — propose an endpoint shift
 
 ```sh
-curl -X POST -H 'Authorization: Bearer sysmlv2' \
+curl -X POST -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
      -H 'X-Actor: alice' \
      -H 'Content-Type: application/json' \
      -d '{"new_owner": "payments-service-v2", "rationale": "cutover to v2 prod"}' \
@@ -1649,7 +1649,7 @@ at read time (post any accepted shifts).
 ### `POST /contracts/{contract_id}/endpoint-proposals/{proposal_id}/accept` — promote an endpoint shift
 
 ```sh
-curl -X POST -H 'Authorization: Bearer sysmlv2' \
+curl -X POST -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
      -H 'X-Actor: bob' \
      'http://localhost:8000/contracts/ab12.../endpoint-proposals/7d3e.../accept'
 ```

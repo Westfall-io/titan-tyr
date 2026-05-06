@@ -15,7 +15,7 @@ membership is metadata that lives on the part / contract row.
 | Variable          | Required | Purpose                                  |
 | ----------------- | -------- | ---------------------------------------- |
 | `TITAN_TYR_URL`   | yes      | Base URL. No trailing slash.             |
-| `TITAN_TYR_TOKEN` | no       | Bearer token. Defaults to `sysmlv2`.     |
+| `TITAN_TYR_TOKEN` | no       | Bearer per-caller token (issue via `/issue-auth-token`). Required.     |
 | `TITAN_TYR_ACTOR` | no       | X-Actor header. Stored as `created_by_actor` on the new project row. If unset the paper trail goes blank — warn the user. |
 
 If `TITAN_TYR_URL` is unset, run `/check-titan-tyr-env` first.
@@ -39,7 +39,7 @@ The slug namespace is **separate** from parts — a project named
 
 ```sh
 curl -fsS -X POST \
-  -H "Authorization: Bearer ${TITAN_TYR_TOKEN:-sysmlv2}" \
+  -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
   -H "X-Actor: ${TITAN_TYR_ACTOR:-}" \
   -H "Content-Type: application/json" \
   --data '{

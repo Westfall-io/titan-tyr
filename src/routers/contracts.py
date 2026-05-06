@@ -5,11 +5,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import Union
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.auth import require_password
+from src.auth import current_actor, require_scope, require_token
 from src.db import get_session
 from src.models import (
     Contract,
@@ -69,7 +69,7 @@ from src.schemas import (
 )
 from src.versioning import Version
 
-router = APIRouter(prefix="/contracts", tags=["contracts"], dependencies=[Depends(require_password)])
+router = APIRouter(prefix="/contracts", tags=["contracts"], dependencies=[Depends(require_token)])
 
 # With #37 every Part subtype referenced by CONNECTION_RULES is
 # implemented; the deferred-subtype check below is now a no-op for the
@@ -123,11 +123,16 @@ async def _resolve_part(session: AsyncSession, name: str) -> Part:
     return pt
 
 
-@router.post("", response_model=ContractCreateResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=ContractCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_scope("write"))],
+)
 async def register_contract(
     payload: ContractCreate,
     session: AsyncSession = Depends(get_session),
-    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    x_actor: str | None = Depends(current_actor),
 ) -> ContractCreateResponse:
     if payload.owner_part == payload.counterparty_part:
         raise HTTPException(
@@ -275,7 +280,11 @@ async def register_contract(
     )
 
 
-@router.get("", response_model=Union[ContractSearchResponse, ContractListResponse])
+@router.get(
+    "",
+    response_model=Union[ContractSearchResponse, ContractListResponse],
+    dependencies=[Depends(require_scope("read"))],
+)
 async def list_or_search_contracts(
     owner: str | None = Query(default=None),
     counterparty: str | None = Query(default=None),
@@ -403,7 +412,11 @@ async def list_or_search_contracts(
     return ContractSearchResponse(results=results, next=None)
 
 
-@router.get("/{contract_id}", response_model=ContractDetail)
+@router.get(
+    "/{contract_id}",
+    response_model=ContractDetail,
+    dependencies=[Depends(require_scope("read"))],
+)
 async def get_contract(
     contract_id: uuid.UUID,
     include_deleted: bool = Query(default=False),
@@ -441,12 +454,16 @@ async def get_contract(
     )
 
 
-@router.put("/{contract_id}", response_model=ContractUpdateResponse)
+@router.put(
+    "/{contract_id}",
+    response_model=ContractUpdateResponse,
+    dependencies=[Depends(require_scope("write"))],
+)
 async def update_contract(
     contract_id: uuid.UUID,
     payload: ContractUpdate,
     session: AsyncSession = Depends(get_session),
-    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    x_actor: str | None = Depends(current_actor),
 ) -> ContractUpdateResponse:
     """Soft-metadata PATCH on contracts (#52, #53).
 
@@ -514,7 +531,11 @@ async def update_contract(
     )
 
 
-@router.get("/{contract_id}/history", response_model=VersionHistoryResponse)
+@router.get(
+    "/{contract_id}/history",
+    response_model=VersionHistoryResponse,
+    dependencies=[Depends(require_scope("read"))],
+)
 async def get_contract_history(
     contract_id: uuid.UUID,
     after: str | None = Query(default=None),
@@ -811,11 +832,12 @@ def _check_contract_shift_source_target(
     "/{contract_id}/subtype-proposals",
     response_model=ContractSubtypeShiftCreateResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_scope("write"))],
 )
 async def propose_contract_subtype_shift(
     contract_id: uuid.UUID,
     payload: ContractSubtypeShiftCreate,
-    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    x_actor: str | None = Depends(current_actor),
     session: AsyncSession = Depends(get_session),
 ) -> ContractSubtypeShiftCreateResponse:
     contract = (
@@ -890,6 +912,7 @@ async def propose_contract_subtype_shift(
 @router.get(
     "/{contract_id}/subtype-proposals",
     response_model=ContractSubtypeShiftListResponse,
+    dependencies=[Depends(require_scope("read"))],
 )
 async def list_contract_subtype_shifts(
     contract_id: uuid.UUID,
@@ -949,11 +972,12 @@ async def list_contract_subtype_shifts(
 @router.post(
     "/{contract_id}/subtype-proposals/{proposal_id}/accept",
     response_model=ContractSubtypeShiftAcceptResponse,
+    dependencies=[Depends(require_scope("write"))],
 )
 async def accept_contract_subtype_shift(
     contract_id: uuid.UUID,
     proposal_id: uuid.UUID,
-    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    x_actor: str | None = Depends(current_actor),
     single_operator: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
 ) -> ContractSubtypeShiftAcceptResponse:
@@ -1194,11 +1218,12 @@ async def _check_endpoint_uniqueness(
     "/{contract_id}/endpoint-proposals",
     response_model=ContractEndpointShiftCreateResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_scope("write"))],
 )
 async def propose_contract_endpoint_shift(
     contract_id: uuid.UUID,
     payload: ContractEndpointShiftCreate,
-    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    x_actor: str | None = Depends(current_actor),
     session: AsyncSession = Depends(get_session),
 ) -> ContractEndpointShiftCreateResponse:
     contract = (
@@ -1294,6 +1319,7 @@ async def propose_contract_endpoint_shift(
 @router.get(
     "/{contract_id}/endpoint-proposals",
     response_model=ContractEndpointShiftListResponse,
+    dependencies=[Depends(require_scope("read"))],
 )
 async def list_contract_endpoint_shifts(
     contract_id: uuid.UUID,
@@ -1356,11 +1382,12 @@ async def list_contract_endpoint_shifts(
 @router.post(
     "/{contract_id}/endpoint-proposals/{proposal_id}/accept",
     response_model=ContractEndpointShiftAcceptResponse,
+    dependencies=[Depends(require_scope("write"))],
 )
 async def accept_contract_endpoint_shift(
     contract_id: uuid.UUID,
     proposal_id: uuid.UUID,
-    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    x_actor: str | None = Depends(current_actor),
     single_operator: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
 ) -> ContractEndpointShiftAcceptResponse:
@@ -1659,11 +1686,12 @@ async def _compute_deletion_impact(
     "/{contract_id}/deletion-proposals",
     response_model=ContractDeletionProposalCreateResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_scope("write"))],
 )
 async def propose_contract_deletion(
     contract_id: uuid.UUID,
     payload: ContractDeletionProposalCreate,
-    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    x_actor: str | None = Depends(current_actor),
     session: AsyncSession = Depends(get_session),
 ) -> ContractDeletionProposalCreateResponse:
     contract = (
@@ -1702,6 +1730,7 @@ async def propose_contract_deletion(
 @router.get(
     "/{contract_id}/deletion-proposals",
     response_model=ContractDeletionProposalListResponse,
+    dependencies=[Depends(require_scope("read"))],
 )
 async def list_contract_deletion_proposals(
     contract_id: uuid.UUID,
@@ -1745,11 +1774,12 @@ async def list_contract_deletion_proposals(
 @router.post(
     "/{contract_id}/deletion-proposals/{proposal_id}/accept",
     response_model=ContractDeletionAcceptResponse,
+    dependencies=[Depends(require_scope("write"))],
 )
 async def accept_contract_deletion(
     contract_id: uuid.UUID,
     proposal_id: uuid.UUID,
-    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    x_actor: str | None = Depends(current_actor),
     single_operator: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
 ) -> ContractDeletionAcceptResponse:

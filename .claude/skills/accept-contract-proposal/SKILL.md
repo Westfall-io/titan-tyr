@@ -51,7 +51,7 @@ Same env vars as the other titan-tyr skills:
 | Variable          | Required | Purpose                                          |
 | ----------------- | -------- | ------------------------------------------------ |
 | `TITAN_TYR_URL`   | yes      | Base URL of the API. No trailing slash.          |
-| `TITAN_TYR_TOKEN` | no       | Bearer token. Defaults to `sysmlv2`.             |
+| `TITAN_TYR_TOKEN` | no       | Bearer per-caller token (issue via `/issue-auth-token`). Required.             |
 | `TITAN_TYR_ACTOR` | no       | Identity for the X-Actor header. **Strongly recommended** — both content and shift accepts enforce the proposer-doesn't-accept rule (provider v0.16.0+, #38) when both sides set it. Anonymous acceptors get past the rule but skip the structural review. |
 
 If `TITAN_TYR_URL` is unset, **stop and tell the user**:
@@ -297,7 +297,7 @@ On `200`, summarise the response:
 > Proposer: `<proposer_actor or "anonymous">`. Acceptor: `<acceptor_actor or "anonymous">`.
 >
 > Verify:
->   `curl -H 'Authorization: Bearer sysmlv2' $TITAN_TYR_URL/contracts/<contract_id>`
+>   `curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' $TITAN_TYR_URL/contracts/<contract_id>`
 
 If the response carries `single_operator_override: true`, surface it
 loudly in the summary:

@@ -18,7 +18,7 @@ Standard env vars:
 | Variable          | Required | Purpose                                  |
 | ----------------- | -------- | ---------------------------------------- |
 | `TITAN_TYR_URL`   | yes      | Base URL. No trailing slash.             |
-| `TITAN_TYR_TOKEN` | no       | Bearer token. Defaults to `sysmlv2`.     |
+| `TITAN_TYR_TOKEN` | no       | Bearer per-caller token (issue via `/issue-auth-token`). Required.     |
 
 If `TITAN_TYR_URL` is unset, run `/check-titan-tyr-env` first and
 surface its verdict.
@@ -26,7 +26,7 @@ surface its verdict.
 ## Workflow
 
 ```sh
-curl -fsS -H "Authorization: Bearer ${TITAN_TYR_TOKEN:-sysmlv2}" \
+curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
   "$TITAN_TYR_URL/projects"
 ```
 
@@ -62,7 +62,7 @@ work as before).
 For a quick check on one project:
 
 ```sh
-curl -fsS -H "Authorization: Bearer ${TITAN_TYR_TOKEN:-sysmlv2}" \
+curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
   "$TITAN_TYR_URL/projects/<slug>"
 ```
 

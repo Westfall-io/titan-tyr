@@ -28,7 +28,7 @@ allowed because the uniqueness key is partial-on-live.
 | Variable          | Required | Purpose                                          |
 | ----------------- | -------- | ------------------------------------------------ |
 | `TITAN_TYR_URL`   | yes      | Base URL of the API. No trailing slash.          |
-| `TITAN_TYR_TOKEN` | no       | Bearer token. Defaults to `sysmlv2`.             |
+| `TITAN_TYR_TOKEN` | no       | Bearer per-caller token (issue via `/issue-auth-token`). Required.             |
 | `TITAN_TYR_ACTOR` | no       | Identity for the X-Actor header. **Strongly recommended** here — without it the two-party rule cannot be enforced and the API allows anyone to accept. |
 
 If `TITAN_TYR_URL` is unset, **stop and tell the user**.

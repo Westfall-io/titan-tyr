@@ -10,7 +10,7 @@ its contents into downstream consumers at the matching local path,
 so source and destination layouts agree.
 
 Every helper here reads the same env vars the SKILL.mds standardize:
-`TITAN_TYR_URL` (required), `TITAN_TYR_TOKEN` (default `sysmlv2`),
+`TITAN_TYR_URL` (required), `TITAN_TYR_TOKEN` (required per-caller token; issue via `/issue-auth-token`),
 `TITAN_TYR_ACTOR` (the X-Actor identity).
 
 ## The `tyr-*` toolkit (#63)
