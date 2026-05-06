@@ -22,7 +22,7 @@ Same env vars as the other titan-tyr skills:
 | Variable          | Required | Purpose                                          |
 | ----------------- | -------- | ------------------------------------------------ |
 | `TITAN_TYR_URL`   | yes      | Base URL of the API. No trailing slash.          |
-| `TITAN_TYR_TOKEN` | no       | Bearer token. Defaults to `sysmlv2`.             |
+| `TITAN_TYR_TOKEN` | no       | Bearer per-caller token (issue via `/issue-auth-token`). Required.             |
 | `TITAN_TYR_ACTOR` | no       | Identity for the X-Actor header. **Strongly recommended** — accept enforces the proposer-doesn't-accept rule (provider v0.16.0+, #38). Anonymous acceptors get past the rule but skip the structural review. |
 
 If `TITAN_TYR_URL` is unset, **stop and tell the user**:
@@ -150,7 +150,7 @@ On `200`, summarise the response:
 > Proposer: `<proposer_actor or "anonymous">`. Acceptor: `<acceptor_actor or "anonymous">`.
 >
 > Verify:
->   `curl -H 'Authorization: Bearer sysmlv2' $TITAN_TYR_URL/templates/<kind>`
+>   `curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' $TITAN_TYR_URL/templates/<kind>`
 
 If the response carries `single_operator_override: true`, surface
 it loudly:
@@ -202,7 +202,7 @@ listing = json.load(sys.stdin)
 for entry in listing['results']:
     req = urllib.request.Request(
         f\"{os.environ['TITAN_TYR_URL']}/parts/{entry['name']}\",
-        headers={'Authorization': f\"Bearer {os.environ.get('TITAN_TYR_TOKEN', 'sysmlv2')}\"})
+        headers={'Authorization': f\"Bearer {os.environ['TITAN_TYR_TOKEN']}\"})
     body = json.load(urllib.request.urlopen(req))
     stamp = body['markdown'].split(chr(10), 1)[0]
     print(f\"{entry['name']:<40} {stamp}\")

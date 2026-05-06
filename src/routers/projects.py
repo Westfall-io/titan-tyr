@@ -8,11 +8,11 @@ contract.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.auth import require_password
+from src.auth import current_actor, require_scope, require_token
 from src.db import get_session
 from src.models import Contract, Part, Project
 from src.pagination import (
@@ -31,7 +31,7 @@ from src.schemas import (
 )
 
 router = APIRouter(
-    prefix="/projects", tags=["projects"], dependencies=[Depends(require_password)]
+    prefix="/projects", tags=["projects"], dependencies=[Depends(require_token)]
 )
 
 
@@ -65,11 +65,12 @@ async def _project_counts(
     "",
     response_model=ProjectCreateResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_scope("write"))],
 )
 async def create_project(
     payload: ProjectCreate,
     session: AsyncSession = Depends(get_session),
-    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    x_actor: str | None = Depends(current_actor),
 ) -> ProjectCreateResponse:
     existing = (
         await session.execute(
@@ -97,7 +98,11 @@ async def create_project(
     )
 
 
-@router.get("", response_model=ProjectListResponse)
+@router.get(
+    "",
+    response_model=ProjectListResponse,
+    dependencies=[Depends(require_scope("read"))],
+)
 async def list_projects(
     after: str | None = Query(default=None),
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
@@ -142,7 +147,11 @@ async def list_projects(
     return ProjectListResponse(results=items, next=next_cursor)
 
 
-@router.get("/{name}", response_model=ProjectDetail)
+@router.get(
+    "/{name}",
+    response_model=ProjectDetail,
+    dependencies=[Depends(require_scope("read"))],
+)
 async def get_project(
     name: str,
     session: AsyncSession = Depends(get_session),
@@ -166,7 +175,11 @@ async def get_project(
     )
 
 
-@router.put("/{name}", response_model=ProjectDetail)
+@router.put(
+    "/{name}",
+    response_model=ProjectDetail,
+    dependencies=[Depends(require_scope("write"))],
+)
 async def update_project(
     name: str,
     payload: ProjectUpdate,

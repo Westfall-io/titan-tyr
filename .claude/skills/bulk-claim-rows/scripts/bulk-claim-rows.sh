@@ -34,7 +34,7 @@
 #
 # Env:
 #   TITAN_TYR_URL    required (e.g. http://localhost:18000)
-#   TITAN_TYR_TOKEN  default sysmlv2
+#   TITAN_TYR_TOKEN  required (per-caller token; issue via /issue-auth-token)
 #   TITAN_TYR_ACTOR  fallback for --actor
 #
 # Exit codes:
@@ -77,7 +77,11 @@ if [[ -z "${TITAN_TYR_URL:-}" ]]; then
   exit 2
 fi
 url="$TITAN_TYR_URL"
-token="${TITAN_TYR_TOKEN:-sysmlv2}"
+if [[ -z "${TITAN_TYR_TOKEN:-}" ]]; then
+  echo "TITAN_TYR_TOKEN is not set — issue one via /issue-auth-token" >&2
+  exit 2
+fi
+token="$TITAN_TYR_TOKEN"
 [[ -z "$actor" ]] && actor="${TITAN_TYR_ACTOR:-}"
 
 if [[ $project_set -eq 0 && -z "$actor" ]]; then

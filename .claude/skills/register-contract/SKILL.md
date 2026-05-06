@@ -23,7 +23,7 @@ Read these from the environment:
 | Variable          | Required | Purpose                                                                                |
 | ----------------- | -------- | -------------------------------------------------------------------------------------- |
 | `TITAN_TYR_URL`   | yes      | Base URL of the API, e.g. `http://localhost:8000`. No trailing slash.                  |
-| `TITAN_TYR_TOKEN` | no       | Bearer token. Defaults to `sysmlv2` (the placeholder password — see titan-tyr DESIGN.md). |
+| `TITAN_TYR_TOKEN` | no       | Bearer per-caller token (issue via `/issue-auth-token`). Required.(the placeholder password — see titan-tyr DESIGN.md). |
 | `TITAN_TYR_ACTOR` | no       | Identity for the X-Actor header (provider v0.16.0+, #39). Stored as `created_by_actor` on the new contract row — the row's *creator* attribution. If unset, the contract records `null` for the creator and the paper trail starts blank — warn the user. The original creator may claim a `null`-attributed row later via `/update-contract` (first-write-wins backfill, provider v0.21.0+, #54); per-version proposer/acceptor attribution lives on the proposal/accept rows of `/contracts/{id}/proposals` and surfaces in `/contracts/{id}/history` (per-version actor on history landed in v0.21.0+, #54). |
 
 If `TITAN_TYR_URL` is unset, **stop and tell the user**:
@@ -33,9 +33,10 @@ If `TITAN_TYR_URL` is unset, **stop and tell the user**:
 
 Don't guess. Don't default to localhost silently.
 
-If `TITAN_TYR_TOKEN` is unset, use `sysmlv2` and mention you are doing
-so once in your reply, so the user can override if they're hitting an
-instance with a different placeholder.
+If `TITAN_TYR_TOKEN` is unset, **stop** and tell the user to issue
+themselves a per-caller token via `/issue-auth-token` (or the
+server-side bootstrap CLI on a fresh deploy — see `docs/auth.md`).
+The pre-#81 default of `sysmlv2` no longer works.
 
 ## Workflow
 
@@ -347,7 +348,7 @@ On `201`, summarise:
 > `<version>`. Contract ID: `<contract_id>`. Status: `active`.
 >
 > Read it back:
->   `curl -H 'Authorization: Bearer sysmlv2' $TITAN_TYR_URL/contracts/<contract_id>`
+>   `curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' $TITAN_TYR_URL/contracts/<contract_id>`
 >
 > Subsequent changes:
 >   - Propose: `/propose-contract-change` (or raw POST /contracts/<contract_id>/proposals)

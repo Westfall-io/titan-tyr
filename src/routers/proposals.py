@@ -3,11 +3,11 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.auth import require_password
+from src.auth import current_actor, require_scope, require_token
 from src.db import get_session
 from src.models import Contract, ContractVersion
 from src.routers._subtype_helpers import enforce_two_party
@@ -24,7 +24,7 @@ from src.versioning import InvalidVersion, Version
 router = APIRouter(
     prefix="/contracts/{contract_id}/proposals",
     tags=["proposals"],
-    dependencies=[Depends(require_password)],
+    dependencies=[Depends(require_token)],
 )
 
 
@@ -40,12 +40,17 @@ async def _latest_any_version(session: AsyncSession, contract_id: uuid.UUID) -> 
     return max(versions)
 
 
-@router.post("", response_model=ProposalCreateResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=ProposalCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_scope("write"))],
+)
 async def create_proposal(
     contract_id: uuid.UUID,
     payload: ProposalCreate,
     session: AsyncSession = Depends(get_session),
-    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    x_actor: str | None = Depends(current_actor),
 ) -> ProposalCreateResponse:
     contract = (
         await session.execute(
@@ -79,7 +84,11 @@ async def create_proposal(
     return ProposalCreateResponse(contract_id=contract_id, version=str(new_version), status="proposal")
 
 
-@router.get("", response_model=ProposalListResponse)
+@router.get(
+    "",
+    response_model=ProposalListResponse,
+    dependencies=[Depends(require_scope("read"))],
+)
 async def list_proposals(
     contract_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
@@ -130,12 +139,16 @@ async def list_proposals(
     )
 
 
-@router.post("/{version}/accept", response_model=ProposalAcceptResponse)
+@router.post(
+    "/{version}/accept",
+    response_model=ProposalAcceptResponse,
+    dependencies=[Depends(require_scope("write"))],
+)
 async def accept_proposal(
     contract_id: uuid.UUID,
     version: str,
     session: AsyncSession = Depends(get_session),
-    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    x_actor: str | None = Depends(current_actor),
     single_operator: bool = False,
 ) -> ProposalAcceptResponse:
     contract = (

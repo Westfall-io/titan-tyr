@@ -46,7 +46,7 @@ ask them to override `TITAN_TYR_ACTOR` for the accept.
 | Variable          | Required | Purpose                                          |
 | ----------------- | -------- | ------------------------------------------------ |
 | `TITAN_TYR_URL`   | yes      | Base URL of the API. No trailing slash.          |
-| `TITAN_TYR_TOKEN` | no       | Bearer token. Defaults to `sysmlv2`.             |
+| `TITAN_TYR_TOKEN` | no       | Bearer per-caller token (issue via `/issue-auth-token`). Required.             |
 | `TITAN_TYR_ACTOR` | yes (here) | The acceptor identity. **Must be a human's identifier** — anything not in the live `agent_actors` allowlist (`GET /agent-actors`). The accept will 403 if this is e.g. `titan-tyr` / `archaedas` / `mimiron`. |
 
 If `TITAN_TYR_URL` is unset, **stop and tell the user**.

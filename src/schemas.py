@@ -1045,6 +1045,23 @@ def _validate_agent_actor(v: str) -> str:
     return v
 
 
+# Auth-token actors are broader than agent_actors slugs: human
+# operators show up as `chris.cox@westfall.io` etc, and they need
+# tokens too. Rule is "non-empty, no whitespace, no control chars,
+# 1-128 chars" — permissive enough for emails / OIDC subjects but
+# still constrained enough to keep paper-trail dumps legible.
+_AUTH_ACTOR_BAD = re.compile(r"[\s\x00-\x1f\x7f]")
+
+
+def _validate_auth_actor(v: str) -> str:
+    s = v.strip()
+    if not s or len(s) > 128:
+        raise ValueError("actor must be 1-128 chars, non-empty after trim")
+    if _AUTH_ACTOR_BAD.search(s):
+        raise ValueError("actor may not contain whitespace or control characters")
+    return s
+
+
 class AgentActorRegister(BaseModel):
     actor: str
     description: str = Field(min_length=1, max_length=200)
@@ -1071,5 +1088,99 @@ class AgentActorDetail(BaseModel):
 class AgentActorListResponse(BaseModel):
     results: list[AgentActorDetail]
     next: str | None
+
+
+# ---------- Per-caller auth tokens (#81 + #82 + #84) ----------
+#
+# `read` ⊂ `write` ⊂ `revoke-agent`: granting a higher scope
+# implicitly grants the lower ones. Stored sorted on the row to
+# make scope-set comparison legible.
+
+AUTH_TOKEN_SCOPES: tuple[str, ...] = ("read", "write", "revoke-agent")
+AuthTokenScope = Literal["read", "write", "revoke-agent"]
+
+# Order matters for the implication chain: each scope grants every
+# scope to its left. Mapping a granted scope to its full effective
+# set lets `require_scope("read")` accept a token with `["write"]`.
+_SCOPE_IMPLIES: dict[str, frozenset[str]] = {
+    "read": frozenset({"read"}),
+    "write": frozenset({"read", "write"}),
+    "revoke-agent": frozenset({"read", "write", "revoke-agent"}),
+}
+
+
+def expand_scopes(granted: list[str] | tuple[str, ...]) -> frozenset[str]:
+    """Return the effective scope set after applying the implication chain."""
+    out: set[str] = set()
+    for s in granted:
+        out |= _SCOPE_IMPLIES.get(s, frozenset())
+    return frozenset(out)
+
+
+def _validate_scopes(v: list[str]) -> list[str]:
+    if not v:
+        raise ValueError("at least one scope is required")
+    bad = [s for s in v if s not in AUTH_TOKEN_SCOPES]
+    if bad:
+        raise ValueError(
+            f"unknown scope(s) {bad}; allowed: {list(AUTH_TOKEN_SCOPES)}"
+        )
+    # Stored sorted so two equal-but-differently-ordered scope sets
+    # compare equal at the row level.
+    return sorted(set(v))
+
+
+class AuthTokenIssue(BaseModel):
+    actor: str
+    description: str = Field(min_length=1, max_length=200)
+    scopes: list[AuthTokenScope]
+    expires_at: datetime | None = None
+
+    _a = field_validator("actor")(_validate_auth_actor)
+    _s = field_validator("scopes")(_validate_scopes)
+
+
+class AuthTokenIssueResponse(BaseModel):
+    """Issued exactly once at POST time. The plaintext is in `token`
+    and will never be returned again — the operator must save it now.
+    """
+
+    id: uuid.UUID
+    actor: str
+    description: str
+    scopes: list[str]
+    issued_at: datetime
+    issued_by_actor: str | None
+    expires_at: datetime | None
+    token_prefix: str
+    token: str  # plaintext, returned ONCE
+
+
+class AuthTokenDetail(BaseModel):
+    """Listing/detail shape — no plaintext, ever."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    actor: str
+    description: str
+    scopes: list[str]
+    issued_at: datetime
+    issued_by_actor: str | None = None
+    expires_at: datetime | None = None
+    last_used_at: datetime | None = None
+    token_prefix: str
+    revoked_at: datetime | None = None
+    revoked_by_actor: str | None = None
+    revoke_rationale: str | None = None
+
+
+class AuthTokenListResponse(BaseModel):
+    results: list[AuthTokenDetail]
+    next: str | None
+
+
+class AuthTokenRevoke(BaseModel):
+    rationale: str = Field(min_length=1, max_length=2000)
 
 

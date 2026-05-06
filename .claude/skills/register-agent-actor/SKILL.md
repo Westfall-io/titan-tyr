@@ -20,7 +20,7 @@ two-party rule with no human in the loop.
 | Variable          | Required | Purpose                                  |
 | ----------------- | -------- | ---------------------------------------- |
 | `TITAN_TYR_URL`   | yes      | Base URL. No trailing slash.             |
-| `TITAN_TYR_TOKEN` | no       | Bearer token. Defaults to `sysmlv2`.     |
+| `TITAN_TYR_TOKEN` | no       | Bearer per-caller token (issue via `/issue-auth-token`). Required.     |
 | `TITAN_TYR_ACTOR` | no       | X-Actor header. Stored as `registered_by_actor`. Useful as a paper trail of who onboarded the new agent. |
 
 If `TITAN_TYR_URL` is unset, run `/check-titan-tyr-env` first.
@@ -51,7 +51,7 @@ future operator can tell at a glance what this identity is. Good:
 
 ```sh
 curl -fsS -X POST \
-  -H "Authorization: Bearer ${TITAN_TYR_TOKEN:-sysmlv2}" \
+  -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
   -H "X-Actor: ${TITAN_TYR_ACTOR:-}" \
   -H "Content-Type: application/json" \
   --data '{
@@ -86,7 +86,7 @@ peers (the gate would be trivially bypassable otherwise).
 
 ```sh
 curl -fsS -X POST \
-  -H "Authorization: Bearer ${TITAN_TYR_TOKEN:-sysmlv2}" \
+  -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
   -H "X-Actor: <human@example.com>" \
   -H "Content-Type: application/json" \
   --data '{"rationale": "<why>"}' \

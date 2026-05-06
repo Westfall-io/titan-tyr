@@ -33,7 +33,7 @@ flow.
 | Variable          | Required | Purpose                                          |
 | ----------------- | -------- | ------------------------------------------------ |
 | `TITAN_TYR_URL`   | yes      | Base URL of the API. No trailing slash.          |
-| `TITAN_TYR_TOKEN` | no       | Bearer token. Defaults to `sysmlv2`.             |
+| `TITAN_TYR_TOKEN` | no       | Bearer per-caller token (issue via `/issue-auth-token`). Required.             |
 | `TITAN_TYR_ACTOR` | no       | Identity for the X-Actor header. Used for the `created_by_actor` backfill described below. If unset and the row is already attributed, the PUT still works — X-Actor only affects `created_by_actor` when the field is currently `null`. |
 
 If `TITAN_TYR_URL` is unset, **stop and tell the user**.

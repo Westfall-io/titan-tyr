@@ -21,7 +21,7 @@ Same env vars as the rest of the family:
 | Variable          | Required | Purpose                                          |
 | ----------------- | -------- | ------------------------------------------------ |
 | `TITAN_TYR_URL`   | yes      | Base URL of the API. No trailing slash.          |
-| `TITAN_TYR_TOKEN` | no       | Bearer token. Defaults to `sysmlv2`.             |
+| `TITAN_TYR_TOKEN` | no       | Bearer per-caller token (issue via `/issue-auth-token`). Required.             |
 | `TITAN_TYR_ACTOR` | no       | Identity for the X-Actor header. Recommended for any session that will run propose/accept/register skills. Without it, the two-party rule is unenforceable on every accept and `created_by_actor` lands null on every register. |
 
 ## Workflow
@@ -64,15 +64,15 @@ liveness probe.
 
 ```sh
 curl -fsS -o /dev/null -w "%{http_code}" \
-  -H "Authorization: Bearer ${TITAN_TYR_TOKEN:-sysmlv2}" \
+  -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
   "$TITAN_TYR_URL/templates/software"
 ```
 
 - `200` → token works. Continue.
-- `401` → bad token. Verdict **blocked**. If the user has
-  `TITAN_TYR_TOKEN` set, surface that they need to fix or unset
-  it; if unset, the default `sysmlv2` was rejected — surface that
-  the deployment requires a real token.
+- `401` → bad token. Verdict **blocked**. The user needs to issue
+  themselves a per-caller token via `/issue-auth-token` (or the
+  server-side bootstrap CLI on a fresh deploy — see `docs/auth.md`)
+  and set `TITAN_TYR_TOKEN` to its plaintext.
 
 ### 4. Check `TITAN_TYR_ACTOR` is set (recommended, not required)
 
@@ -171,7 +171,8 @@ echo "$TITAN_TYR_ACTOR"
   not an error. Anonymous operation is supported by the provider;
   the skill just makes the consequences visible so the user opts
   in deliberately rather than by oversight.
-- Per saved memory, the live stack lives on port 18000 (token
-  `sysmlv2`); 8000 is the dev/test port. If the user's
-  `TITAN_TYR_URL` looks wrong for their context, surface the
-  distinction in the verdict's `warnings`.
+- Per saved memory, the live stack lives on port 18000 and 8000
+  is the dev/test port. The token is per-caller (issued via
+  `/issue-auth-token`); the pre-#81 shared `sysmlv2` no longer
+  works. If the user's `TITAN_TYR_URL` looks wrong for their
+  context, surface the distinction in the verdict's `warnings`.

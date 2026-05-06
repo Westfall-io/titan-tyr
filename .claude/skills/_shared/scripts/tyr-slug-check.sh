@@ -19,7 +19,7 @@
 #     echo "registering foo..."
 #   fi
 #
-# Env: TITAN_TYR_URL (required), TITAN_TYR_TOKEN (default sysmlv2).
+# Env: TITAN_TYR_URL (required), TITAN_TYR_TOKEN (required per-caller token; issue via /issue-auth-token).
 
 set -euo pipefail
 
@@ -30,7 +30,7 @@ if [[ -z "${TITAN_TYR_URL:-}" ]]; then
   exit 2
 fi
 url="${TITAN_TYR_URL%/}"
-token="${TITAN_TYR_TOKEN:-sysmlv2}"
+token="${TITAN_TYR_TOKEN:?TITAN_TYR_TOKEN must be set; issue a per-caller token via /issue-auth-token}"
 
 tmp=$(mktemp)
 trap 'rm -f "$tmp"' EXIT

@@ -4,11 +4,11 @@ import re
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.auth import require_password
+from src.auth import current_actor, require_scope, require_token
 from src.db import get_session
 from src.models import (
     Contract,
@@ -71,7 +71,7 @@ from src.schemas import (
 )
 from src.versioning import Version
 
-router = APIRouter(prefix="/parts", tags=["parts"], dependencies=[Depends(require_password)])
+router = APIRouter(prefix="/parts", tags=["parts"], dependencies=[Depends(require_token)])
 
 
 async def _latest_part_version(session: AsyncSession, part_id) -> PartVersion | None:
@@ -88,7 +88,11 @@ async def _latest_part_version(session: AsyncSession, part_id) -> PartVersion | 
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
-@router.get("", response_model=PartListResponse)
+@router.get(
+    "",
+    response_model=PartListResponse,
+    dependencies=[Depends(require_scope("read"))],
+)
 async def list_parts(
     after: str | None = Query(default=None),
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
@@ -226,11 +230,16 @@ async def list_parts(
     return PartListResponse(results=items, next=next_cursor)
 
 
-@router.post("", response_model=PartCreateResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=PartCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_scope("write"))],
+)
 async def register_part(
     payload: PartCreate,
     session: AsyncSession = Depends(get_session),
-    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    x_actor: str | None = Depends(current_actor),
 ) -> PartCreateResponse:
     version = Version.parse(payload.version, allow_prerelease=False)
     # The uniqueness key on `parts.name` is partial-on-live (#76),
@@ -289,7 +298,11 @@ async def register_part(
     )
 
 
-@router.get("/{name}", response_model=PartDetail)
+@router.get(
+    "/{name}",
+    response_model=PartDetail,
+    dependencies=[Depends(require_scope("read"))],
+)
 async def get_part(
     name: str,
     include_deleted: bool = Query(default=False),
@@ -330,12 +343,16 @@ async def get_part(
     )
 
 
-@router.put("/{name}", response_model=PartUpdateResponse)
+@router.put(
+    "/{name}",
+    response_model=PartUpdateResponse,
+    dependencies=[Depends(require_scope("write"))],
+)
 async def update_part(
     name: str,
     payload: PartUpdate,
     session: AsyncSession = Depends(get_session),
-    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    x_actor: str | None = Depends(current_actor),
 ) -> PartUpdateResponse:
     part = (
         await session.execute(
@@ -410,7 +427,11 @@ async def update_part(
     )
 
 
-@router.get("/{name}/history", response_model=VersionHistoryResponse)
+@router.get(
+    "/{name}/history",
+    response_model=VersionHistoryResponse,
+    dependencies=[Depends(require_scope("read"))],
+)
 async def get_part_history(
     name: str,
     after: str | None = Query(default=None),
@@ -615,7 +636,11 @@ async def get_part_history(
     return VersionHistoryResponse(results=items, next=next_cursor)
 
 
-@router.get("/{name}/contracts", response_model=PartContractsListResponse)
+@router.get(
+    "/{name}/contracts",
+    response_model=PartContractsListResponse,
+    dependencies=[Depends(require_scope("read"))],
+)
 async def list_part_contracts(
     name: str,
     after: str | None = Query(default=None),
@@ -898,11 +923,12 @@ async def _part_shift_impact(
     "/{name}/subtype-proposals",
     response_model=PartSubtypeShiftCreateResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_scope("write"))],
 )
 async def propose_part_subtype_shift(
     name: str,
     payload: PartSubtypeShiftCreate,
-    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    x_actor: str | None = Depends(current_actor),
     session: AsyncSession = Depends(get_session),
 ) -> PartSubtypeShiftCreateResponse:
     part = (
@@ -959,6 +985,7 @@ async def propose_part_subtype_shift(
 @router.get(
     "/{name}/subtype-proposals",
     response_model=PartSubtypeShiftListResponse,
+    dependencies=[Depends(require_scope("read"))],
 )
 async def list_part_subtype_shifts(
     name: str,
@@ -1018,11 +1045,12 @@ async def list_part_subtype_shifts(
 @router.post(
     "/{name}/subtype-proposals/{proposal_id}/accept",
     response_model=PartSubtypeShiftAcceptResponse,
+    dependencies=[Depends(require_scope("write"))],
 )
 async def accept_part_subtype_shift(
     name: str,
     proposal_id: uuid.UUID,
-    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    x_actor: str | None = Depends(current_actor),
     single_operator: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
 ) -> PartSubtypeShiftAcceptResponse:
@@ -1113,11 +1141,12 @@ async def accept_part_subtype_shift(
     "/{name}/name-proposals",
     response_model=PartNameShiftCreateResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_scope("write"))],
 )
 async def propose_part_name_shift(
     name: str,
     payload: PartNameShiftCreate,
-    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    x_actor: str | None = Depends(current_actor),
     session: AsyncSession = Depends(get_session),
 ) -> PartNameShiftCreateResponse:
     part = (
@@ -1182,6 +1211,7 @@ async def propose_part_name_shift(
 @router.get(
     "/{name}/name-proposals",
     response_model=PartNameShiftListResponse,
+    dependencies=[Depends(require_scope("read"))],
 )
 async def list_part_name_shifts(
     name: str,
@@ -1229,11 +1259,12 @@ async def list_part_name_shifts(
 @router.post(
     "/{name}/name-proposals/{proposal_id}/accept",
     response_model=PartNameShiftAcceptResponse,
+    dependencies=[Depends(require_scope("write"))],
 )
 async def accept_part_name_shift(
     name: str,
     proposal_id: uuid.UUID,
-    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    x_actor: str | None = Depends(current_actor),
     single_operator: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
 ) -> PartNameShiftAcceptResponse:
@@ -1461,11 +1492,12 @@ async def _compute_part_deletion_impact(
     "/{name}/deletion-proposals",
     response_model=PartDeletionProposalCreateResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_scope("write"))],
 )
 async def propose_part_deletion(
     name: str,
     payload: PartDeletionProposalCreate,
-    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    x_actor: str | None = Depends(current_actor),
     session: AsyncSession = Depends(get_session),
 ) -> PartDeletionProposalCreateResponse:
     part = (
@@ -1504,6 +1536,7 @@ async def propose_part_deletion(
 @router.get(
     "/{name}/deletion-proposals",
     response_model=PartDeletionProposalListResponse,
+    dependencies=[Depends(require_scope("read"))],
 )
 async def list_part_deletion_proposals(
     name: str,
@@ -1550,11 +1583,12 @@ async def list_part_deletion_proposals(
 @router.post(
     "/{name}/deletion-proposals/{proposal_id}/accept",
     response_model=PartDeletionAcceptResponse,
+    dependencies=[Depends(require_scope("write"))],
 )
 async def accept_part_deletion(
     name: str,
     proposal_id: uuid.UUID,
-    x_actor: str | None = Header(default=None, alias="X-Actor"),
+    x_actor: str | None = Depends(current_actor),
     single_operator: bool = Query(default=False),
     cascade: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),

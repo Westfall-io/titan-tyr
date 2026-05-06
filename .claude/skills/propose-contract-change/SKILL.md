@@ -26,7 +26,7 @@ Same env vars as the other titan-tyr skills:
 | Variable          | Required | Purpose                                          |
 | ----------------- | -------- | ------------------------------------------------ |
 | `TITAN_TYR_URL`   | yes      | Base URL of the API. No trailing slash.          |
-| `TITAN_TYR_TOKEN` | no       | Bearer token. Defaults to `sysmlv2`.             |
+| `TITAN_TYR_TOKEN` | no       | Bearer per-caller token (issue via `/issue-auth-token`). Required.             |
 | `TITAN_TYR_ACTOR` | no       | Identity for the X-Actor header (provider v0.16.0+, #38). The provider records the proposer on the version row; the accept side enforces proposer-doesn't-accept. If unset, the proposal records `null` and any acceptor is allowed — warn the user. |
 
 If `TITAN_TYR_URL` is unset, **stop and tell the user**:
@@ -301,7 +301,7 @@ On `201`, summarise:
 > (`<contract_id>`). Status: `proposal`.
 >
 > List open proposals:
->   `curl -H 'Authorization: Bearer sysmlv2' $TITAN_TYR_URL/contracts/<contract_id>/proposals`
+>   `curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' $TITAN_TYR_URL/contracts/<contract_id>/proposals`
 
 If the proposal is RC, mention that the typical next step is iterate
 (`-rc2`, `-rc3`) until both sides agree, then propose the bare

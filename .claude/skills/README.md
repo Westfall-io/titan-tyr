@@ -36,7 +36,7 @@ variables before invoking:
 
 ```sh
 export TITAN_TYR_URL=http://localhost:8000   # required, no trailing slash
-export TITAN_TYR_TOKEN=sysmlv2               # optional; default sysmlv2
+export TITAN_TYR_TOKEN=<your per-caller token; issue via /issue-auth-token>
 ```
 
 ## Resuming work in flight

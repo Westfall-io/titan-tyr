@@ -14,13 +14,13 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from src import db as db_module
-from src.auth import PASSWORD
 from src.cors import (
     DEFAULT_ALLOW_ORIGIN_REGEX,
     InvalidCorsOrigin,
     resolve_cors_config,
 )
 from src.main import create_app
+from tests.conftest import PASSWORD
 
 
 # ---------- resolve_cors_config (pure unit) ----------
