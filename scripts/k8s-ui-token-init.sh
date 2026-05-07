@@ -2,6 +2,12 @@
 # Reference init-container script for SPA-style consumers (#81 / #82 / #84
 # follow-up).
 #
+# **Prefer `python -m src.cli k8s-init-token` (#89) for new deployments.**
+# The CLI subcommand does the same flow inside the existing titan-tyr
+# image — no separate init image, no curl/kubectl additions. This shell
+# script is kept as an alternative for deployers who want a tiny
+# alpine-based init image and don't want Python in the init container.
+#
 # **Owner: titan-archaedas (devops)**, not titan-tyr. Lives here as a
 # reference implementation that stays in sync with the API surface as
 # titan-tyr evolves; the deploying team copies + adapts in the
