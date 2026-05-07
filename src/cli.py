@@ -256,6 +256,10 @@ def _cmd_k8s_init_token(args: argparse.Namespace) -> int:
     existing = _read_file_or_none(args.existing_token_file)
     if existing and _probe(api_url, existing):
         print("[init] existing token is live; reusing.", file=sys.stderr)
+        # Contract with mimiron's nginx/12-load-handoff-token.sh
+        # (titan-mimiron#58): file holds the plaintext only, no trailing
+        # newline or whitespace. `_read_file_or_none` strips on read; we
+        # write back unmodified.
         os.makedirs(os.path.dirname(args.handoff_file) or ".", exist_ok=True)
         with open(args.handoff_file, "w") as f:
             f.write(existing)
@@ -291,6 +295,10 @@ def _cmd_k8s_init_token(args: argparse.Namespace) -> int:
     _patch_k8s_secret(namespace, args.ui_secret, "TITAN_TYR_TOKEN", plaintext)
 
     # Step 4: hand off to the main container via the shared emptyDir.
+    # Contract with mimiron's nginx/12-load-handoff-token.sh
+    # (titan-mimiron#58): file holds the plaintext only, no trailing
+    # newline or whitespace. `secrets.token_urlsafe` produces no
+    # whitespace and `f.write(plaintext)` adds none — keep it that way.
     os.makedirs(os.path.dirname(args.handoff_file) or ".", exist_ok=True)
     with open(args.handoff_file, "w") as f:
         f.write(plaintext)

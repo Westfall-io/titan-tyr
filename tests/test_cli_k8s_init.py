@@ -177,6 +177,56 @@ class TestIssueAndPatch:
         )
 
 
+class TestHandoffFileContract:
+    """The handoff file is a documented contract with the mimiron-side
+    entrypoint shim (titan-mimiron#58 / `nginx/12-load-handoff-token.sh`):
+    plaintext only, no trailing newline or whitespace. mimiron's shim
+    strips defensively, but breaking the contract on this side would
+    rotate config.json's `tyrToken` to a value containing whitespace —
+    a silent failure mode worth catching here.
+    """
+
+    def test_reused_token_no_trailing_newline(self, env, tmpdirs):
+        tmpdirs["ui_file"].write_text("old-plaintext")
+        with patch.object(cli, "_http_request", return_value=(200, b"{}")):
+            cli.main(_argv(tmpdirs))
+        content = tmpdirs["handoff_file"].read_bytes()
+        assert content == b"old-plaintext"
+        assert not content.endswith(b"\n")
+        assert not content.endswith(b" ")
+
+    def test_freshly_issued_token_no_trailing_newline(
+        self, env, tmpdirs, monkeypatch
+    ):
+        tmpdirs["admin_file"].write_text("admin-bearer")
+        sa_dir = tmpdirs["admin_file"].parent.parent / "sa"
+        sa_dir.mkdir()
+        (sa_dir / "token").write_text("sa-token")
+        (sa_dir / "ca.crt").write_text("---ca---")
+        monkeypatch.setattr(cli, "_SA_TOKEN_PATH", str(sa_dir / "token"))
+        monkeypatch.setattr(cli, "_SA_CA_PATH", str(sa_dir / "ca.crt"))
+        responses = iter([
+            (201, json.dumps({"token": "fresh-plaintext"}).encode()),
+            (200, b"{}"),
+        ])
+        with patch.object(cli, "_http_request", side_effect=lambda *a, **k: next(responses)):
+            cli.main(_argv(tmpdirs))
+        content = tmpdirs["handoff_file"].read_bytes()
+        assert content == b"fresh-plaintext"
+        assert not content.endswith(b"\n")
+
+    def test_reused_token_strips_whitespace_from_secret_mount(
+        self, env, tmpdirs
+    ):
+        # If the K8s Secret somehow ends up with a trailing newline
+        # (e.g. someone manually edited it), the read-side `.strip()`
+        # protects mimiron's shim from inheriting it.
+        tmpdirs["ui_file"].write_text("old-plaintext\n")
+        with patch.object(cli, "_http_request", return_value=(200, b"{}")):
+            cli.main(_argv(tmpdirs))
+        assert tmpdirs["handoff_file"].read_bytes() == b"old-plaintext"
+
+
 class TestErrorPaths:
     def test_missing_admin_token_file(self, env, tmpdirs, capsys):
         # Existing token is missing AND admin token file is absent.
