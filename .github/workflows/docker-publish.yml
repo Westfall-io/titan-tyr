@@ -1,0 +1,118 @@
+name: docker-publish
+
+# Builds and pushes the titan-tyr image to Docker Hub.
+#
+# Triggers:
+#   - push to main when something image-affecting changes (pyproject.toml
+#     version bump, Dockerfile change, src/ or alembic/ change). Doc-only
+#     and test-only commits don't re-burn CI.
+#   - manual dispatch, with an optional version override for rebuilding
+#     a past version (or stamping an arbitrary tag).
+#
+# Required configuration (org-level, since the repo is public):
+#   vars.DOCKERHUB_USERNAME    — Docker Hub account that owns the image
+#                                namespace (also used as the namespace
+#                                for the pushed image:
+#                                <username>/titan-tyr). Org variable so
+#                                it's visible in workflow logs.
+#   secrets.DOCKERHUB_TOKEN    — Docker Hub access token (NOT the account
+#                                password). Org secret. Create at
+#                                https://hub.docker.com/settings/security
+#                                with Read & Write scope on the
+#                                titan-tyr repo.
+#
+# Both are scoped at the Westfall-io org level so every consumer repo
+# (titan-mimiron, titan-tyr, future titans) shares the same publishing
+# identity without per-repo configuration drift. The workflow shape
+# matches titan-mimiron's intentionally so the only per-repo delta is
+# the image name + which file holds the version.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pyproject.toml'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'src/**'
+      - 'alembic/**'
+      - '.github/workflows/docker-publish.yml'
+  workflow_dispatch:
+    inputs:
+      version_override:
+        description: "Tag override (leave blank to read pyproject.toml)"
+        required: false
+        type: string
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          override="${{ github.event.inputs.version_override }}"
+          if [ -n "$override" ]; then
+            v="$override"
+          else
+            # Source of truth is pyproject.toml [project].version. Parsed
+            # with grep+sed (no TOML parser dependency) — the line shape
+            # is stable and the file lives at the repo root.
+            v="$(grep -m1 '^version = ' pyproject.toml | sed -E 's/^version = "([^"]+)".*/\1/')"
+          fi
+          if [ -z "$v" ]; then
+            echo "::error::Could not resolve a version (pyproject.toml not parsed and no override)"
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: $v"
+
+      - name: Set up QEMU (multi-arch)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+          tags: |
+            ${{ vars.DOCKERHUB_USERNAME }}/titan-tyr:${{ steps.version.outputs.version }}
+            ${{ vars.DOCKERHUB_USERNAME }}/titan-tyr:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.event.repository.html_url }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp || github.event.repository.updated_at }}
+          # GitHub Actions cache keeps subsequent builds fast without
+          # touching the registry's layer storage.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          {
+            echo "### Pushed"
+            echo ""
+            echo "- \`${{ vars.DOCKERHUB_USERNAME }}/titan-tyr:${{ steps.version.outputs.version }}\`"
+            echo "- \`${{ vars.DOCKERHUB_USERNAME }}/titan-tyr:latest\`"
+            echo ""
+            echo "Platforms: \`linux/amd64\`, \`linux/arm64\`"
+          } >> "$GITHUB_STEP_SUMMARY"
