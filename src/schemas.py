@@ -44,6 +44,10 @@ CONNECTION_TYPES: tuple[str, ...] = (
     "depends-on",
     "submodule",
     "serves-static",
+    # K8s runtime contract labels added in #92 (archaedas#9).
+    "selects",
+    "routes-to",
+    "consumed-by",
 )
 ConnectionType = Literal[
     "builds-from",
@@ -53,6 +57,9 @@ ConnectionType = Literal[
     "depends-on",
     "submodule",
     "serves-static",
+    "selects",
+    "routes-to",
+    "consumed-by",
 ]
 
 

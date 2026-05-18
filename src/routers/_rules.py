@@ -24,4 +24,14 @@ CONNECTION_RULES: dict[str, dict[str, set[str]]] = {
     "depends-on":   {"owner": {"container"},         "counterparty": {"container"}},
     "submodule":    {"owner": {"software"},          "counterparty": {"software"}},
     "serves-static":{"owner": {"software"},          "counterparty": {"software"}},
+    # K8s runtime contract labels added in #92 (archaedas#9). The
+    # current rules table can only express union-based shape
+    # constraints — so for `consumed-by` it allows any (secret |
+    # configmap) -> (deployment | statefulset | job) pair even
+    # though "configmap source mounting into job target" is the
+    # narrower real-world set. Pair-level rules vs lax-unions is
+    # tracked under issue C (container/pod semantics shift design).
+    "selects":      {"owner": {"service"},                "counterparty": {"deployment", "statefulset"}},
+    "routes-to":    {"owner": {"ingress"},                "counterparty": {"service"}},
+    "consumed-by":  {"owner": {"secret", "configmap"},    "counterparty": {"deployment", "statefulset", "job"}},
 }
