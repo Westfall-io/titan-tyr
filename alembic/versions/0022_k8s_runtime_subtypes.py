@@ -549,30 +549,40 @@ def upgrade() -> None:
     )
 
     # ---------- Phase 2: extend part_subtype_proposals.new_subtype ----
-    # Heads-up on the constraint name: migration 0011 used
-    # `CheckConstraint(name="ck_part_subtype_proposals_new_subtype_allowed")`
-    # inside `op.create_table`, which passed through the naming
-    # convention's `ck_%(table_name)s_%(constraint_name)s` and got
-    # prefixed again to
-    # `ck_part_subtype_proposals_ck_part_subtype_proposals_new_subtype_allowed`
-    # (71 chars). PostgreSQL truncates identifiers at 63 chars, so the
-    # actual stored name is
-    # `ck_part_subtype_proposals_ck_part_subtype_proposals_new_subtype`.
-    # We drop and recreate via raw SQL so the name is explicit and not
-    # subject to whether alembic's `op.create_check_constraint` applies
-    # the convention here too. The broader cleanup to align the model's
-    # `name=` kwarg with the convention is a separate
-    # naming-convention-hygiene ticket so it doesn't piggyback on the
-    # K8s subtypes work.
-    _PROPOSAL_CK = (
-        "ck_part_subtype_proposals_ck_part_subtype_proposals_new_subtype"
-    )
+    # Migration 0011 created this CHECK via `sa.CheckConstraint(
+    # name="ck_part_subtype_proposals_new_subtype_allowed")` inside
+    # `op.create_table`. The metadata naming convention then prefixed
+    # the literal name again to 71 chars, which SQLAlchemy
+    # auto-truncates with a deterministic 4-char hash suffix before
+    # sending to PostgreSQL — so the stored name is something like
+    # `ck_part_subtype_proposals_ck_part_subtype_propos_<hex4>`,
+    # unguessable without looking it up. We use the same
+    # pg_constraint definition-pattern lookup that migration 0017 used
+    # for the equivalent `connection_type` constraint on the sibling
+    # `contract_subtype_proposals` table. The recreate uses the short
+    # `new_subtype_allowed` constraint name so the convention produces
+    # a clean single-prefix
+    # `ck_part_subtype_proposals_new_subtype_allowed` (45 chars). The
+    # model's `name=` kwarg in src/models.py still asks for the
+    # doubled form; aligning that is the
+    # naming-convention-hygiene ticket and not in scope here.
+    bind = op.get_bind()
+    proposal_ck_name = bind.execute(
+        sa.text(
+            "SELECT conname FROM pg_constraint "
+            "WHERE conrelid = 'part_subtype_proposals'::regclass "
+            "  AND contype = 'c' "
+            "  AND pg_get_constraintdef(oid) LIKE "
+            "      '%new_subtype%software%compose%'"
+        )
+    ).scalar_one()
     op.execute(
-        f"ALTER TABLE part_subtype_proposals DROP CONSTRAINT {_PROPOSAL_CK}"
+        f'ALTER TABLE part_subtype_proposals DROP CONSTRAINT "{proposal_ck_name}"'
     )
-    op.execute(
-        f"ALTER TABLE part_subtype_proposals ADD CONSTRAINT {_PROPOSAL_CK} "
-        f"CHECK (new_subtype IN ({_NEW_PARTS_SUBTYPE_LIST}))"
+    op.create_check_constraint(
+        "new_subtype_allowed",
+        "part_subtype_proposals",
+        f"new_subtype IN ({_NEW_PARTS_SUBTYPE_LIST})",
     )
 
     # ---------- Phase 3: extend templates.kind allow-list ----------
@@ -639,16 +649,18 @@ def downgrade() -> None:
     )
 
     # ---------- Phase 2 reversed: restore part_subtype_proposals.new_subtype ----
-    # See upgrade phase 2 for the double-prefix-then-truncate explanation.
-    _PROPOSAL_CK = (
-        "ck_part_subtype_proposals_ck_part_subtype_proposals_new_subtype"
-    )
+    # The upgrade left this constraint at the single-prefix
+    # alembic-conventional name (since op.create_check_constraint with
+    # a short name applies the convention exactly once). Drop *that*
+    # name — not the doubled-then-hashed original 0011 created.
     op.execute(
-        f"ALTER TABLE part_subtype_proposals DROP CONSTRAINT {_PROPOSAL_CK}"
+        "ALTER TABLE part_subtype_proposals "
+        "DROP CONSTRAINT ck_part_subtype_proposals_new_subtype_allowed"
     )
-    op.execute(
-        f"ALTER TABLE part_subtype_proposals ADD CONSTRAINT {_PROPOSAL_CK} "
-        f"CHECK (new_subtype IN ({_OLD_PARTS_SUBTYPE_LIST}))"
+    op.create_check_constraint(
+        "new_subtype_allowed",
+        "part_subtype_proposals",
+        f"new_subtype IN ({_OLD_PARTS_SUBTYPE_LIST})",
     )
 
     # ---------- Phase 1 reversed: restore parts.subtype allow-list ----
