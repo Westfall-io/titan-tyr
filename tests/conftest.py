@@ -34,6 +34,16 @@ SEED_CONNECTION_TEMPLATE = "# connection template seed\n\n## What this connectio
 SEED_IMAGE_TEMPLATE = "# image template seed\n\n## Purpose\nseed body\n"
 SEED_POD_TEMPLATE = "# pod template seed\n\n## Purpose\nseed body\n"
 SEED_COMPOSE_TEMPLATE = "# compose template seed\n\n## Purpose\nseed body\n"
+# K8s runtime primitives added in #91 (archaedas#9). Placeholder
+# bodies — tests don't care about the body content, only that an
+# active v1.0.0 exists for each kind so part registration validates.
+SEED_DEPLOYMENT_TEMPLATE = "# deployment template seed\n\n## Purpose\nseed body\n"
+SEED_STATEFULSET_TEMPLATE = "# statefulset template seed\n\n## Purpose\nseed body\n"
+SEED_SERVICE_TEMPLATE = "# service template seed\n\n## Purpose\nseed body\n"
+SEED_INGRESS_TEMPLATE = "# ingress template seed\n\n## Purpose\nseed body\n"
+SEED_SECRET_TEMPLATE = "# secret template seed\n\n## Purpose\nseed body\n"
+SEED_CONFIGMAP_TEMPLATE = "# configmap template seed\n\n## Purpose\nseed body\n"
+SEED_JOB_TEMPLATE = "# job template seed\n\n## Purpose\nseed body\n"
 
 
 def _container_dsn() -> str:
@@ -96,9 +106,10 @@ async def db_session(engine) -> AsyncIterator[AsyncSession]:
         )
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with sessionmaker() as session:
-        # Seed the eight templates with placeholder v1.0.0 active rows
-        # so GET /templates/{kind} works out of the box, mirroring
-        # what migration 0002 does in production.
+        # Seed the templates with placeholder v1.0.0 active rows so
+        # `GET /templates/{kind}` works out of the box, mirroring what
+        # migrations 0002 (initial 8) and 0022 (k8s runtime additions)
+        # do in production.
         for kind, markdown in (
             ("software", SEED_SOFTWARE_TEMPLATE),
             ("container", SEED_CONTAINER_TEMPLATE),
@@ -108,6 +119,13 @@ async def db_session(engine) -> AsyncIterator[AsyncSession]:
             ("interaction", SEED_INTERACTION_TEMPLATE),
             ("binding", SEED_BINDING_TEMPLATE),
             ("connection", SEED_CONNECTION_TEMPLATE),
+            ("deployment", SEED_DEPLOYMENT_TEMPLATE),
+            ("statefulset", SEED_STATEFULSET_TEMPLATE),
+            ("service", SEED_SERVICE_TEMPLATE),
+            ("ingress", SEED_INGRESS_TEMPLATE),
+            ("secret", SEED_SECRET_TEMPLATE),
+            ("configmap", SEED_CONFIGMAP_TEMPLATE),
+            ("job", SEED_JOB_TEMPLATE),
         ):
             tpl = Template(kind=kind)
             session.add(tpl)

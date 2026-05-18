@@ -18,8 +18,17 @@ VERSION_PATTERN_ANY = r"^\d+\.\d+\.\d+(-rc\d+)?$"
 # 1-64 chars total. (Same rule that previously applied to software names.)
 PART_NAME_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 
-PART_SUBTYPES: tuple[str, ...] = ("software", "container", "image", "pod", "compose")
-PartSubtype = Literal["software", "container", "image", "pod", "compose"]
+PART_SUBTYPES: tuple[str, ...] = (
+    "software", "container", "image", "pod", "compose",
+    # K8s runtime primitives added in #91 / archaedas#9.
+    "deployment", "statefulset", "service", "ingress",
+    "secret", "configmap", "job",
+)
+PartSubtype = Literal[
+    "software", "container", "image", "pod", "compose",
+    "deployment", "statefulset", "service", "ingress",
+    "secret", "configmap", "job",
+]
 
 CONTRACT_SUBTYPES: tuple[str, ...] = ("interaction", "binding", "connection")
 ContractSubtype = Literal["interaction", "binding", "connection"]

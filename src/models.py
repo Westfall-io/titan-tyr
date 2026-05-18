@@ -50,7 +50,9 @@ class Part(Base):
     __tablename__ = "parts"
     __table_args__ = (
         CheckConstraint(
-            "subtype IN ('software', 'container', 'image', 'pod', 'compose')",
+            "subtype IN ('software', 'container', 'image', 'pod', 'compose', "
+            "'deployment', 'statefulset', 'service', 'ingress', "
+            "'secret', 'configmap', 'job')",
             name="ck_parts_subtype_allowed",
         ),
         # Partial-on-live name uniqueness (#76): soft-deleted rows are
@@ -338,7 +340,10 @@ class Template(Base):
     __tablename__ = "templates"
     __table_args__ = (
         CheckConstraint(
-            "kind IN ('software', 'container', 'image', 'pod', 'compose', 'interaction', 'binding', 'connection')",
+            "kind IN ('software', 'container', 'image', 'pod', 'compose', "
+            "'interaction', 'binding', 'connection', "
+            "'deployment', 'statefulset', 'service', 'ingress', "
+            "'secret', 'configmap', 'job')",
             name="kind_allowed",
         ),
     )
@@ -516,7 +521,9 @@ class PartSubtypeProposal(Base):
             name="ck_part_subtype_proposals_status_allowed",
         ),
         CheckConstraint(
-            "new_subtype IN ('software', 'container', 'image', 'pod', 'compose')",
+            "new_subtype IN ('software', 'container', 'image', 'pod', 'compose', "
+            "'deployment', 'statefulset', 'service', 'ingress', "
+            "'secret', 'configmap', 'job')",
             name="ck_part_subtype_proposals_new_subtype_allowed",
         ),
     )
