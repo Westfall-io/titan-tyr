@@ -1,6 +1,6 @@
 ---
 name: propose-part-subtype-shift
-description: Propose a structural subtype change for a registered part — e.g. "this was registered as software but is actually a container", "shift the payments-image part to subtype=image". Use when a part's subtype was set wrong on first registration and needs correction without losing the canonical name, version history, or existing contracts. Pre-validates the impact (which contracts would break under the new subtype, whether the body needs realignment), confirms with the user, and POSTs to /parts/{name}/subtype-proposals. Does NOT accept the proposal — acceptance is the deliberate counterpart via /accept-part-subtype-shift.
+description: Propose a structural subtype change for a registered part — e.g. "this was registered as software but is actually a container", "shift the payments-image part to subtype=image", "shift this from software to deployment", "this should be a statefulset, not a deployment". Use when a part's subtype was set wrong on first registration and needs correction without losing the canonical name, version history, or existing contracts. Targets all 12 subtypes — build/runtime (software, image, container, pod, compose) and K8s runtime added in #91 (deployment, statefulset, service, ingress, secret, configmap, job). Pre-validates the impact (which contracts would break under the new subtype, whether the body needs realignment), confirms with the user, and POSTs to /parts/{name}/subtype-proposals. Does NOT accept the proposal — acceptance is the deliberate counterpart via /accept-part-subtype-shift.
 ---
 
 # propose-part-subtype-shift
@@ -55,15 +55,22 @@ target makes sense relative to it.
 ### 3. Pick the new subtype
 
 Ask which subtype the part should shift to. Valid Part subtypes
-today (provider v0.14.0+):
+(provider v0.30.0+ after #91):
 
-| Subtype     | When this is the right shift target                                                       |
-| ----------- | ----------------------------------------------------------------------------------------- |
-| `software`  | Codebase / deployable boundary. Shift here from container/image/pod/compose if mis-classified as a runtime when it's actually a repo. |
-| `container` | Single Docker / Compose runtime instance. Shift here from software if it's actually the running thing, not the source. |
-| `image`     | Built artifact (tagged image, Helm chart, packaged binary). Shift here from software/container if it represents what's *built*, not the source or the running instance. |
-| `pod`       | K8s scheduled unit. Shift here from container if the runtime is K8s-orchestrated, not Docker / Compose. |
-| `compose`   | Docker Compose stack — metadata about a `compose.yaml`. Shift here from software/container if it represents the *stack*, not a single service. |
+| Subtype       | When this is the right shift target                                                       |
+| ------------- | ----------------------------------------------------------------------------------------- |
+| `software`    | Codebase / deployable boundary. Shift here from a runtime subtype if mis-classified as a runtime when it's actually a repo. |
+| `container`   | Single Docker / Compose runtime instance. Shift here from software if it's actually the running thing, not the source. |
+| `image`       | Built artifact (tagged image, Helm chart, packaged binary). Shift here from software/container if it represents what's *built*, not the source or the running instance. |
+| `pod`         | K8s scheduled unit. Shift here from container if the runtime is K8s-orchestrated, not Docker / Compose. |
+| `compose`     | Docker Compose stack — metadata about a `compose.yaml`. Shift here from software/container if it represents the *stack*, not a single service. |
+| `deployment`  | K8s Deployment — stateless workload controller. Common shift target from software when a manifest exists and the part should be modeled as the controller, not the codebase. (#91) |
+| `statefulset` | K8s StatefulSet — stable identity / per-pod PVC workload. Shift here from deployment when the workload needs identity (databases, brokers). (#91) |
+| `service`     | K8s Service — selector-routed traffic entrypoint. Shift here from software/container when the part is the cluster-network endpoint, not the workload behind it. (#91) |
+| `ingress`     | K8s Ingress — host/path routing at the cluster edge. (#91) |
+| `secret`      | K8s Secret — typed key/value envelope. Shift here from configmap when the contents are credentials/sensitive. (#91) |
+| `configmap`   | K8s ConfigMap — same shape as secret, no encryption semantics. Shift here from secret when the contents are non-sensitive config. (#91) |
+| `job`         | K8s Job — run-to-completion workload. Shift here from deployment when the workload is a batch / migrator / one-shot. (#91) |
 
 **No-op shifts (`new_subtype == current`) are rejected with 409.**
 If the user proposes a no-op, tell them the part is already that
