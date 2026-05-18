@@ -219,7 +219,11 @@ Field notes:
   `binding`, `connection`).
 - `contracts[].connection_type` (nullable, `connection` only) is the
   per-label sub-discriminator drawn from the closed enum
-  `{builds-from, instantiates, runs, member-of, depends-on, submodule}`.
+  `{builds-from, instantiates, runs, member-of, depends-on,
+  submodule, serves-static, selects, routes-to, consumed-by}`.
+  The last three were added in #92 for the K8s runtime parts
+  (#91): `selects` (service → deployment/statefulset), `routes-to`
+  (ingress → service), `consumed-by` (secret/configmap → workload).
 - `contracts[].markdown` is the full body of each contract's latest
   active version.
 - `open_subtype_shifts` is the list of pending shift proposals on
