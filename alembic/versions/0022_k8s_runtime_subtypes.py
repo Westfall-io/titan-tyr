@@ -549,9 +549,18 @@ def upgrade() -> None:
     )
 
     # ---------- Phase 2: extend part_subtype_proposals.new_subtype ----
+    # Heads-up: the original constraint name in prod is double-prefixed
+    # (`ck_part_subtype_proposals_ck_part_subtype_proposals_new_subtype_allowed`)
+    # because migration 0011 used `CheckConstraint(name="ck_part_subtype_...")`
+    # inside create_table, which then passed through the naming
+    # convention's `ck_%(table_name)s_%(constraint_name)s` and got
+    # prefixed again. Matching the actual prod name here; the cleanup
+    # to align the model's `name=` kwarg with the convention's
+    # expectations is left as a separate naming-convention-hygiene
+    # ticket so it doesn't piggyback on the K8s subtypes work.
     op.execute(
         "ALTER TABLE part_subtype_proposals "
-        "DROP CONSTRAINT ck_part_subtype_proposals_new_subtype_allowed"
+        "DROP CONSTRAINT ck_part_subtype_proposals_ck_part_subtype_proposals_new_subtype_allowed"
     )
     op.create_check_constraint(
         "ck_part_subtype_proposals_new_subtype_allowed",
@@ -623,9 +632,10 @@ def downgrade() -> None:
     )
 
     # ---------- Phase 2 reversed: restore part_subtype_proposals.new_subtype ----
+    # See upgrade phase 2 for the double-prefix explanation.
     op.execute(
         "ALTER TABLE part_subtype_proposals "
-        "DROP CONSTRAINT ck_part_subtype_proposals_new_subtype_allowed"
+        "DROP CONSTRAINT ck_part_subtype_proposals_ck_part_subtype_proposals_new_subtype_allowed"
     )
     op.create_check_constraint(
         "ck_part_subtype_proposals_new_subtype_allowed",
