@@ -549,23 +549,30 @@ def upgrade() -> None:
     )
 
     # ---------- Phase 2: extend part_subtype_proposals.new_subtype ----
-    # Heads-up: the original constraint name in prod is double-prefixed
-    # (`ck_part_subtype_proposals_ck_part_subtype_proposals_new_subtype_allowed`)
-    # because migration 0011 used `CheckConstraint(name="ck_part_subtype_...")`
-    # inside create_table, which then passed through the naming
+    # Heads-up on the constraint name: migration 0011 used
+    # `CheckConstraint(name="ck_part_subtype_proposals_new_subtype_allowed")`
+    # inside `op.create_table`, which passed through the naming
     # convention's `ck_%(table_name)s_%(constraint_name)s` and got
-    # prefixed again. Matching the actual prod name here; the cleanup
-    # to align the model's `name=` kwarg with the convention's
-    # expectations is left as a separate naming-convention-hygiene
-    # ticket so it doesn't piggyback on the K8s subtypes work.
-    op.execute(
-        "ALTER TABLE part_subtype_proposals "
-        "DROP CONSTRAINT ck_part_subtype_proposals_ck_part_subtype_proposals_new_subtype_allowed"
+    # prefixed again to
+    # `ck_part_subtype_proposals_ck_part_subtype_proposals_new_subtype_allowed`
+    # (71 chars). PostgreSQL truncates identifiers at 63 chars, so the
+    # actual stored name is
+    # `ck_part_subtype_proposals_ck_part_subtype_proposals_new_subtype`.
+    # We drop and recreate via raw SQL so the name is explicit and not
+    # subject to whether alembic's `op.create_check_constraint` applies
+    # the convention here too. The broader cleanup to align the model's
+    # `name=` kwarg with the convention is a separate
+    # naming-convention-hygiene ticket so it doesn't piggyback on the
+    # K8s subtypes work.
+    _PROPOSAL_CK = (
+        "ck_part_subtype_proposals_ck_part_subtype_proposals_new_subtype"
     )
-    op.create_check_constraint(
-        "ck_part_subtype_proposals_new_subtype_allowed",
-        "part_subtype_proposals",
-        f"new_subtype IN ({_NEW_PARTS_SUBTYPE_LIST})",
+    op.execute(
+        f"ALTER TABLE part_subtype_proposals DROP CONSTRAINT {_PROPOSAL_CK}"
+    )
+    op.execute(
+        f"ALTER TABLE part_subtype_proposals ADD CONSTRAINT {_PROPOSAL_CK} "
+        f"CHECK (new_subtype IN ({_NEW_PARTS_SUBTYPE_LIST}))"
     )
 
     # ---------- Phase 3: extend templates.kind allow-list ----------
@@ -632,15 +639,16 @@ def downgrade() -> None:
     )
 
     # ---------- Phase 2 reversed: restore part_subtype_proposals.new_subtype ----
-    # See upgrade phase 2 for the double-prefix explanation.
-    op.execute(
-        "ALTER TABLE part_subtype_proposals "
-        "DROP CONSTRAINT ck_part_subtype_proposals_ck_part_subtype_proposals_new_subtype_allowed"
+    # See upgrade phase 2 for the double-prefix-then-truncate explanation.
+    _PROPOSAL_CK = (
+        "ck_part_subtype_proposals_ck_part_subtype_proposals_new_subtype"
     )
-    op.create_check_constraint(
-        "ck_part_subtype_proposals_new_subtype_allowed",
-        "part_subtype_proposals",
-        f"new_subtype IN ({_OLD_PARTS_SUBTYPE_LIST})",
+    op.execute(
+        f"ALTER TABLE part_subtype_proposals DROP CONSTRAINT {_PROPOSAL_CK}"
+    )
+    op.execute(
+        f"ALTER TABLE part_subtype_proposals ADD CONSTRAINT {_PROPOSAL_CK} "
+        f"CHECK (new_subtype IN ({_OLD_PARTS_SUBTYPE_LIST}))"
     )
 
     # ---------- Phase 1 reversed: restore parts.subtype allow-list ----
