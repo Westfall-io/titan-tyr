@@ -77,6 +77,9 @@ router = APIRouter(prefix="/contracts", tags=["contracts"], dependencies=[Depend
 # that references a not-yet-implemented subtype.
 _PART_SUBTYPES_IMPLEMENTED: set[str] = {
     "software", "container", "image", "pod", "compose",
+    # K8s runtime primitives added in #91 (archaedas#9).
+    "deployment", "statefulset", "service", "ingress",
+    "secret", "configmap", "job",
 }
 
 # CONNECTION_RULES and BINDING_OWNER_SUBTYPES live in `_rules.py`

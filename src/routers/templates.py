@@ -29,6 +29,9 @@ router = APIRouter(
 VALID_KINDS = (
     "software", "container", "image", "pod", "compose",
     "interaction", "binding", "connection",
+    # K8s runtime primitives added in #91 (archaedas#9).
+    "deployment", "statefulset", "service", "ingress",
+    "secret", "configmap", "job",
 )
 
 
