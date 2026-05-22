@@ -1,6 +1,6 @@
 ---
 name: issue-auth-token
-description: Issue a per-caller auth token for a specific actor + scope set (#81 + #82 + #84). Use when onboarding a new consumer (UI, agent, human operator) or rotating an existing token. Wraps POST /auth-tokens. Requires an admin token in .env (TITAN_TYR_TOKEN). The plaintext of the freshly issued token is printed once and never recoverable — pass it to the consumer immediately. To revoke a token, see "Revoke" below.
+description: "Issue a per-caller auth token for a specific actor + scope set (#81 + #82 + #84). Use when onboarding a new consumer (UI, agent, human operator) or rotating an existing token. Wraps POST /auth-tokens. Requires an admin token in .env (TITAN_TYR_TOKEN). The plaintext of the freshly issued token is printed once and never recoverable — pass it to the consumer immediately. To revoke a token, see \"Revoke\" below."
 ---
 
 # issue-auth-token

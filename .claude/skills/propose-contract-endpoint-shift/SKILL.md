@@ -1,6 +1,6 @@
 ---
 name: propose-contract-endpoint-shift
-description: Propose a structural endpoint change for an existing contract — e.g. "this binding's owner should be a different container", "swap this connection's counterparty to the new prod service". Use when one or both endpoint parts of a contract were set wrong on registration and need correction without losing the contract id, version history, or proposal trail. Pre-validates the new endpoints against the contract's source/target rule and the widened uniqueness key from #42, then POSTs to /contracts/{contract_id}/endpoint-proposals. Does NOT accept the proposal — acceptance is the deliberate counterpart via /accept-contract-endpoint-shift.
+description: "Propose a structural endpoint change for an existing contract — e.g. \"this binding's owner should be a different container\", \"swap this connection's counterparty to the new prod service\". Use when one or both endpoint parts of a contract were set wrong on registration and need correction without losing the contract id, version history, or proposal trail. Pre-validates the new endpoints against the contract's source/target rule and the widened uniqueness key from #42, then POSTs to /contracts/{contract_id}/endpoint-proposals. Does NOT accept the proposal — acceptance is the deliberate counterpart via /accept-contract-endpoint-shift."
 ---
 
 # propose-contract-endpoint-shift
