@@ -1,14 +1,16 @@
 ---
 name: register-part
-description: Register a part with the titan-tyr API. A part is one of titan-tyr's typed nodes — currently subtype `software` (a codebase / deployable boundary), `image` (a built artifact between source and container), `container` (a running instance of an image), `pod` (the K8s sibling of container), or `compose` (a Docker Compose stack — metadata about a compose file). Use when the user wants to add a new node to WatcherVault's graph — e.g. "register this repo with titan-tyr", "register the prod payments container", "register the payments image", "register the payments pod", "register the watchervault stack", "create a part for X". Branches on subtype: fetches the matching template (`/templates/software`, `/templates/image`, `/templates/container`, `/templates/pod`, or `/templates/compose`), helps the user fill it in, then POSTs to `/parts`.
+description: Register a part with the titan-tyr API. A part is one of titan-tyr's typed nodes — subtypes split into the build/runtime primitives (`software`, `image`, `container`, `pod`, `compose`) and the K8s runtime catalog primitives added in #91 (`deployment`, `statefulset`, `service`, `ingress`, `secret`, `configmap`, `job`). Use when the user wants to add a new node to WatcherVault's graph — e.g. "register this repo with titan-tyr", "register the prod payments container", "register the payments image", "register the payments pod", "register the watchervault stack", "register the payments Deployment", "register the postgres StatefulSet", "register the api Service", "register a ConfigMap / Secret". Branches on subtype: fetches the matching template at `/templates/{subtype}`, helps the user fill it in, then POSTs to `/parts`.
 ---
 
 # register-part
 
 You are helping the user register a part with titan-tyr. **Parts** are
 the typed nodes in titan-tyr's graph; contracts (edges) connect them.
-Per #23 / #35 / #36 / #37, parts come in subtypes — currently
-`software`, `image`, `container`, `pod`, and `compose`.
+Per #23 / #35 / #36 / #37, parts come in build/runtime subtypes —
+`software`, `image`, `container`, `pod`, `compose` — and as of #91
+also in K8s runtime catalog subtypes — `deployment`, `statefulset`,
+`service`, `ingress`, `secret`, `configmap`, `job`.
 This skill walks through the **node creation** path: `POST /parts`.
 
 ## Server location
@@ -49,18 +51,26 @@ curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" "$TITAN_TYR_URL/templates/
 
 Branch on what the user is registering:
 
-| Subtype     | When to use                                                                             |
-| ----------- | --------------------------------------------------------------------------------------- |
-| `software`  | A codebase, deployable, or library. The "what does this thing do" node.                 |
-| `image`     | A built artifact (tagged Docker image, Helm chart version, packaged binary). Sits between the source repo (`software`) and the running instance (`container` / `pod`). |
-| `container` | A running instance of an image at a specific address — the live form of some software (typically a Docker / Compose runtime). |
-| `pod`       | The K8s sibling of `container` — a scheduled unit of one or more co-located containers sharing a network namespace and storage. Use this for K8s-orchestrated runtimes; use `container` for Docker / Compose. |
-| `compose`   | A Docker Compose stack — a collection of services declared in a `compose.yaml`. Metadata *about* the file; the file itself remains the source of truth. The `member-of` Connection ties container parts into this stack. |
+| Subtype       | When to use                                                                             |
+| ------------- | --------------------------------------------------------------------------------------- |
+| `software`    | A codebase, deployable, or library. The "what does this thing do" node.                 |
+| `image`       | A built artifact (tagged Docker image, Helm chart version, packaged binary). Sits between the source repo (`software`) and the running instance (`container` / `pod`). |
+| `container`   | A running instance of an image at a specific address — the live form of some software (typically a Docker / Compose runtime). |
+| `pod`         | The K8s sibling of `container` — a scheduled unit of one or more co-located containers sharing a network namespace and storage. Use this for K8s-orchestrated runtimes; use `container` for Docker / Compose. |
+| `compose`     | A Docker Compose stack — a collection of services declared in a `compose.yaml`. Metadata *about* the file; the file itself remains the source of truth. The `member-of` Connection ties container parts into this stack. |
+| `deployment`  | A K8s Deployment — stateless workload controller. (#91)                                  |
+| `statefulset` | A K8s StatefulSet — stable identity / per-pod PVC workload controller. (#91)             |
+| `service`     | A K8s Service — ClusterIP / NodePort / LoadBalancer; routes traffic to a workload via label selector. (#91) |
+| `ingress`     | A K8s Ingress — host/path → Service routing at the cluster edge. (#91)                   |
+| `secret`      | A K8s Secret — opaque or typed key/value envelope mounted/env-injected into a workload. (#91) |
+| `configmap`   | A K8s ConfigMap — same envelope shape as Secret, no encryption-at-rest semantics. (#91)  |
+| `job`         | A K8s Job — run-to-completion workload. CronJob is *not* a separate subtype yet; track its parent Job. (#91) |
 
 If the user said something ambiguous ("register this service"), ask:
 "Software (the codebase), image (the built artifact), container (a
-Docker / Compose runtime), pod (a K8s runtime), or compose (a stack
-of services)?"
+Docker / Compose runtime), pod (a K8s runtime), compose (a stack of
+services), or one of the K8s catalog primitives — deployment,
+statefulset, service, ingress, secret, configmap, job?"
 
 The subtype determines the template you fetch in step 4.
 
@@ -71,9 +81,9 @@ before the request — don't invent values:
 
 | Field               | Source                                                                                     |
 | ------------------- | ------------------------------------------------------------------------------------------ |
-| `name`              | Unique identifier across **all** parts (one namespace, software + image + container + pod + compose share it). Ask the user; suggest the repo name (for software), `<service>-image` (for images), `<image-name>-<env>` (for containers), `<service>-pod` (for pods), or `<repo>-stack` (for compose stacks). |
-| `subtype`           | From step 2: `"software"`, `"image"`, `"container"`, `"pod"`, or `"compose"`.             |
-| `repo_uri`          | Git URL. For software: read `git config --get remote.origin.url`; confirm. For image: typically the same repo as the software it builds from. For container: the repo that defines the image / compose / deploy spec. For pod: the repo that owns the K8s manifest (Helm chart, kustomize overlay, raw YAML). For compose: the repo that owns the compose file. |
+| `name`              | Unique identifier across **all** parts (one namespace shared by every subtype). Ask the user; suggest the repo name (for software), `<service>-image` (for images), `<image-name>-<env>` (for containers), `<service>-pod` (for pods), `<repo>-stack` (for compose stacks), or `<namespace>-<resource-name>` for K8s subtypes (e.g. `prod-payments-deployment`, `prod-payments-service`). |
+| `subtype`           | From step 2 — one of the 12 subtypes listed in the table above.                            |
+| `repo_uri`          | Git URL. For software: read `git config --get remote.origin.url`; confirm. For image: typically the same repo as the software it builds from. For container: the repo that defines the image / compose / deploy spec. For pod / deployment / statefulset / service / ingress / job: the repo that owns the K8s manifest (Helm chart, kustomize overlay, raw YAML). For secret / configmap: the repo that owns the manifest, or the cluster-bootstrap repo if generated outside source control. For compose: the repo that owns the compose file. |
 | `issue_tracker_uri` | Optional. Where to file tickets if not the repo's default. Must be `https://`. |
 | `aliases`           | Optional list of colloquial labels other agents may use to refer to this part (`payments`, `billing`, `front end`, `前端`, `payments-prod`). Used by `GET /parts?match=<query>` for fuzzy lookup. Per-entry: 1–128 chars, no control chars/newlines, Unicode allowed; case-preserved on storage; case-insensitive dedupe within payload. Cross-part collisions allowed. |
 | `markdown`          | The filled-in part-template body for this subtype (see step 5).                            |
