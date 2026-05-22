@@ -35,13 +35,17 @@ include = ["src*"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 testpaths = ["tests"]
-addopts = "-ra --strict-markers --cov=src --cov-report=term-missing"
+# Coverage is opt-in (CI passes --cov flags explicitly). Local `pytest`
+# runs without coverage, which is significantly faster for iteration.
+addopts = "-ra --strict-markers"
 
 [tool.coverage.run]
 branch = true
 source = ["src"]
 omit = ["src/__init__.py"]
-concurrency = ["thread", "greenlet"]
+# SQLA async uses greenlet; we don't spawn threads. Tracking the
+# unused "thread" concurrency adds measurable overhead.
+concurrency = ["greenlet"]
 
 [tool.coverage.report]
 show_missing = true

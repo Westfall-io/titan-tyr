@@ -13,7 +13,6 @@ import pytest_asyncio
 from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 
 from src import db as db_module
 from src.config import get_settings
@@ -84,7 +83,12 @@ async def engine(database_url):
     Requires `asyncio_default_fixture_loop_scope = "session"` in
     pyproject so the engine's loop matches the per-test loop.
     """
-    engine = create_async_engine(database_url, future=True, poolclass=NullPool)
+    # Pooled engine: per-test TRUNCATE already resets state, so reusing
+    # connections across tests is safe and avoids a fresh TCP+TLS
+    # handshake per query (formerly NullPool, ~500 tests × many queries).
+    engine = create_async_engine(
+        database_url, future=True, pool_size=5, max_overflow=5
+    )
     async with engine.begin() as conn:
         await conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS pgcrypto")
         await conn.run_sync(Base.metadata.create_all)
