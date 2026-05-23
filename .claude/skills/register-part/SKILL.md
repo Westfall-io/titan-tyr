@@ -1,6 +1,6 @@
 ---
 name: register-part
-description: "Register a part with the titan-tyr API. A part is one of titan-tyr's typed nodes — subtypes split into the build/runtime primitives (`software`, `image`, `container`, `pod`, `compose`) and the K8s runtime catalog primitives added in #91 (`deployment`, `statefulset`, `service`, `ingress`, `secret`, `configmap`, `job`). Use when the user wants to add a new node to WatcherVault's graph — e.g. \"register this repo with titan-tyr\", \"register the prod payments container\", \"register the payments image\", \"register the payments pod\", \"register the watchervault stack\", \"register the payments Deployment\", \"register the postgres StatefulSet\", \"register the api Service\", \"register a ConfigMap / Secret\". Branches on subtype: fetches the matching template at `/templates/{subtype}`, helps the user fill it in, then POSTs to `/parts`."
+description: "Register a part with the titan-tyr API. A part is one of titan-tyr's typed nodes — subtypes split into the build/runtime primitives (`software`, `image`, `container`, `pod`, `compose`), the K8s runtime catalog primitives added in #91 (`deployment`, `statefulset`, `service`, `ingress`, `secret`, `configmap`, `job`), and the K8s umbrella subtype `chart` added in #100 (Helm release analog of `compose`). Use when the user wants to add a new node to WatcherVault's graph — e.g. \"register this repo with titan-tyr\", \"register the prod payments container\", \"register the payments image\", \"register the payments pod\", \"register the watchervault stack\", \"register the payments Deployment\", \"register the postgres StatefulSet\", \"register the api Service\", \"register a ConfigMap / Secret\", \"register the watchervault Helm release\". Branches on subtype: fetches the matching template at `/templates/{subtype}`, helps the user fill it in, then POSTs to `/parts`."
 ---
 
 # register-part
@@ -57,7 +57,7 @@ Branch on what the user is registering:
 | `image`       | A built artifact (tagged Docker image, Helm chart version, packaged binary). Sits between the source repo (`software`) and the running instance (`container` / `pod`). |
 | `container`   | A running instance of an image at a specific address — the live form of some software (typically a Docker / Compose runtime). |
 | `pod`         | The K8s sibling of `container` — a scheduled unit of one or more co-located containers sharing a network namespace and storage. Use this for K8s-orchestrated runtimes; use `container` for Docker / Compose. |
-| `compose`     | A Docker Compose stack — a collection of services declared in a `compose.yaml`. Metadata *about* the file; the file itself remains the source of truth. The `member-of` Connection ties container parts into this stack. |
+| `compose`     | A Docker Compose stack — a collection of services declared in a `compose.yaml`. Metadata *about* the file; the file itself remains the source of truth. A `composes` Connection ties this stack to its container parts (`compose -composes-> container`). |
 | `deployment`  | A K8s Deployment — stateless workload controller. (#91)                                  |
 | `statefulset` | A K8s StatefulSet — stable identity / per-pod PVC workload controller. (#91)             |
 | `service`     | A K8s Service — ClusterIP / NodePort / LoadBalancer; routes traffic to a workload via label selector. (#91) |
@@ -65,6 +65,7 @@ Branch on what the user is registering:
 | `secret`      | A K8s Secret — opaque or typed key/value envelope mounted/env-injected into a workload. (#91) |
 | `configmap`   | A K8s ConfigMap — same envelope shape as Secret, no encryption-at-rest semantics. (#91)  |
 | `job`         | A K8s Job — run-to-completion workload. CronJob is *not* a separate subtype yet; track its parent Job. (#91) |
+| `chart`       | An installed Helm release — K8s analog of `compose`. The umbrella that names a deployed release; the per-resource parts (deployment / statefulset / service / ingress / secret / configmap / job) are tied to it via `chart -composes-> <resource>` Connections. (#100) |
 
 If the user said something ambiguous ("register this service"), ask:
 "Software (the codebase), image (the built artifact), container (a
@@ -81,9 +82,9 @@ before the request — don't invent values:
 
 | Field               | Source                                                                                     |
 | ------------------- | ------------------------------------------------------------------------------------------ |
-| `name`              | Unique identifier across **all** parts (one namespace shared by every subtype). Ask the user; suggest the repo name (for software), `<service>-image` (for images), `<image-name>-<env>` (for containers), `<service>-pod` (for pods), `<repo>-stack` (for compose stacks), or `<namespace>-<resource-name>` for K8s subtypes (e.g. `prod-payments-deployment`, `prod-payments-service`). |
-| `subtype`           | From step 2 — one of the 12 subtypes listed in the table above.                            |
-| `repo_uri`          | Git URL. For software: read `git config --get remote.origin.url`; confirm. For image: typically the same repo as the software it builds from. For container: the repo that defines the image / compose / deploy spec. For pod / deployment / statefulset / service / ingress / job: the repo that owns the K8s manifest (Helm chart, kustomize overlay, raw YAML). For secret / configmap: the repo that owns the manifest, or the cluster-bootstrap repo if generated outside source control. For compose: the repo that owns the compose file. |
+| `name`              | Unique identifier across **all** parts (one namespace shared by every subtype). Ask the user; suggest the repo name (for software), `<service>-image` (for images), `<image-name>-<env>` (for containers), `<service>-pod` (for pods), `<repo>-stack` (for compose stacks), `<release-name>` or `<release-name>-chart` (for chart releases), or `<namespace>-<resource-name>` for other K8s subtypes (e.g. `prod-payments-deployment`, `prod-payments-service`). |
+| `subtype`           | From step 2 — one of the 13 subtypes listed in the table above.                            |
+| `repo_uri`          | Git URL. For software: read `git config --get remote.origin.url`; confirm. For image: typically the same repo as the software it builds from. For container: the repo that defines the image / compose / deploy spec. For pod / deployment / statefulset / service / ingress / job: the repo that owns the K8s manifest (Helm chart, kustomize overlay, raw YAML). For secret / configmap: the repo that owns the manifest, or the cluster-bootstrap repo if generated outside source control. For compose: the repo that owns the compose file. For chart: the repo that owns `helm/<chart-name>/` (typically the same repo as the source `software` part). |
 | `issue_tracker_uri` | Optional. Where to file tickets if not the repo's default. Must be `https://`. |
 | `aliases`           | Optional list of colloquial labels other agents may use to refer to this part (`payments`, `billing`, `front end`, `前端`, `payments-prod`). Used by `GET /parts?match=<query>` for fuzzy lookup. Per-entry: 1–128 chars, no control chars/newlines, Unicode allowed; case-preserved on storage; case-insensitive dedupe within payload. Cross-part collisions allowed. |
 | `markdown`          | The filled-in part-template body for this subtype (see step 5).                            |
@@ -219,8 +220,15 @@ referenced in `instantiates` rows actually exist.
 
 For `subtype=compose`, additionally pre-flight that each container
 part listed in the body's `Services` table actually exists. The
-`member-of` Connections that wire those containers to this stack
-should follow registration (see step 10).
+`composes` Connections that wire this stack to its containers
+(direction: `compose -composes-> container`) should follow
+registration (see step 10).
+
+For `subtype=chart`, additionally pre-flight that each K8s resource
+part listed in the body's *"What this release composes"* section
+actually exists (deployment / statefulset / service / etc.). The
+`chart -composes-> <resource>` Connections that wire them to the
+release should follow registration.
 
 ### 9. Submit
 
@@ -286,8 +294,17 @@ software, runtime address), and one `instantiates` connection per
 container in the pod (image → pod). Do NOT do this automatically.
 
 For compose stacks: ask if the user wants to register one
-`member-of` connection per container service in the stack (container
-→ compose). Do NOT do this automatically.
+`composes` connection per container service in the stack
+(`compose -composes-> container` — direction is top-down per
+the post-#101 ontology). Do NOT do this automatically.
+
+For chart releases: ask if the user wants to register one
+`composes` connection per K8s resource the release deploys
+(`chart -composes-> {deployment, statefulset, job, service,
+ingress, secret, configmap}`). Do NOT do this automatically.
+Note: pods are reached transitively via the controllers
+(deployment / statefulset / job) — `chart -composes-> pod` is
+intentionally not in the pair list.
 
 For images: ask if the user wants to register the `builds-from`
 connection linking this image to the software part it is built from

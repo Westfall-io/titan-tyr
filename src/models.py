@@ -52,7 +52,7 @@ class Part(Base):
         CheckConstraint(
             "subtype IN ('software', 'container', 'image', 'pod', 'compose', "
             "'deployment', 'statefulset', 'service', 'ingress', "
-            "'secret', 'configmap', 'job')",
+            "'secret', 'configmap', 'job', 'chart')",
             name="ck_parts_subtype_allowed",
         ),
         # Partial-on-live name uniqueness (#76): soft-deleted rows are
@@ -242,7 +242,7 @@ class Contract(Base):
         CheckConstraint(
             "connection_type IS NULL OR connection_type IN "
             "('builds-from', 'instantiates', 'runs', "
-            "'member-of', 'depends-on', 'submodule', 'serves-static', "
+            "'composes', 'depends-on', 'submodule', 'serves-static', "
             "'selects', 'routes-to', 'consumed-by')",
             name="ck_contracts_connection_type_allowed",
         ),
@@ -344,7 +344,7 @@ class Template(Base):
             "kind IN ('software', 'container', 'image', 'pod', 'compose', "
             "'interaction', 'binding', 'connection', "
             "'deployment', 'statefulset', 'service', 'ingress', "
-            "'secret', 'configmap', 'job')",
+            "'secret', 'configmap', 'job', 'chart')",
             name="kind_allowed",
         ),
     )
@@ -524,7 +524,7 @@ class PartSubtypeProposal(Base):
         CheckConstraint(
             "new_subtype IN ('software', 'container', 'image', 'pod', 'compose', "
             "'deployment', 'statefulset', 'service', 'ingress', "
-            "'secret', 'configmap', 'job')",
+            "'secret', 'configmap', 'job', 'chart')",
             name="ck_part_subtype_proposals_new_subtype_allowed",
         ),
     )
@@ -587,7 +587,7 @@ class ContractSubtypeProposal(Base):
         CheckConstraint(
             "new_connection_type IS NULL OR new_connection_type IN "
             "('builds-from', 'instantiates', 'runs', "
-            "'member-of', 'depends-on', 'submodule', 'serves-static', "
+            "'composes', 'depends-on', 'submodule', 'serves-static', "
             "'selects', 'routes-to', 'consumed-by')",
             name="ck_contract_subtype_proposals_connection_type_allowed",
         ),

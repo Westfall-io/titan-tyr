@@ -1,6 +1,6 @@
 ---
 name: propose-contract-subtype-shift
-description: Propose a structural subtype change for an existing contract — e.g. "this interaction should be a binding", "shift this connection to use member-of instead of depends-on". Use when a contract's subtype (or connection_type label) was set wrong on registration and needs correction without losing the version history. Pre-validates the new subtype's source/target rule against the current endpoint parts, surfaces whether the body needs realignment, and POSTs to /contracts/{contract_id}/subtype-proposals. Does NOT accept the proposal — acceptance is the deliberate counterpart via /accept-contract-proposal (which now branches on whether an open shift is found).
+description: "Propose a structural subtype change for an existing contract — e.g. \"this interaction should be a binding\", \"shift this connection to use composes instead of depends-on\". Use when a contract's subtype (or connection_type label) was set wrong on registration and needs correction without losing the version history. Pre-validates the new subtype's source/target rule against the current endpoint parts, surfaces whether the body needs realignment, and POSTs to /contracts/{contract_id}/subtype-proposals. Does NOT accept the proposal — acceptance is the deliberate counterpart via /accept-contract-proposal (which now branches on whether an open shift is found)."
 ---
 
 # propose-contract-subtype-shift
@@ -76,28 +76,33 @@ curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
 Ask which subtype the contract should shift to. Valid contract
 subtypes: `interaction`, `binding`, `connection`. If `connection`,
 also prompt for `new_connection_type` (one of: `builds-from`,
-`instantiates`, `runs`, `member-of`, `depends-on`, `submodule`,
-`serves-static`).
+`instantiates`, `runs`, `composes`, `depends-on`, `submodule`,
+`serves-static`, `selects`, `routes-to`, `consumed-by`).
 
 The provider pre-validates the new subtype's source/target rule
-against the current endpoint parts. Walk through the rule tables
-with the user **before** POSTing so they aren't surprised by a 422:
+against the current endpoint parts. Rules are **pair-level** (#101):
+a label admits an explicit list of `(owner, counterparty)` pairs, not
+a cartesian product of two sets. Walk through the rule tables with
+the user **before** POSTing so they aren't surprised by a 422:
 
 | Subtype       | Source (owner) rule         | Target (counterparty) rule |
 | ------------- | --------------------------- | -------------------------- |
 | `interaction` | any                         | any                        |
 | `binding`     | `container` or `pod`        | `software`                 |
-| `connection`  | per-label (see below)       | per-label                  |
+| `connection`  | per-label pair list (below) | per-label pair list        |
 
-| `connection_type` | Owner part subtype  | Counterparty part subtype |
-| ----------------- | ------------------- | ------------------------- |
-| `builds-from`     | `software`          | `image`                   |
-| `instantiates`    | `image`             | `container` or `pod`      |
-| `runs`            | `container` or `pod`| `software`                |
-| `member-of`       | `container`         | `compose`                 |
-| `depends-on`      | `container`         | `container`               |
-| `submodule`       | `software`          | `software`                |
-| `serves-static`   | `software`          | `software`                |
+| `connection_type` | Admitted `(owner, counterparty)` pairs                                                                                                       |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `builds-from`     | `(software, image)`                                                                                                                            |
+| `instantiates`    | `(image, container)`, `(image, pod)`                                                                                                           |
+| `runs`            | `(container, software)`, `(pod, software)`                                                                                                     |
+| `composes`        | `(compose, container)`, `(deployment, pod)`, `(statefulset, pod)`, `(job, pod)`, `(pod, container)`, `(chart, deployment / statefulset / job / service / ingress / secret / configmap)` |
+| `depends-on`      | `(container, container)`                                                                                                                       |
+| `submodule`       | `(software, software)`                                                                                                                         |
+| `serves-static`   | `(software, software)`                                                                                                                         |
+| `selects`         | `(service, deployment)`, `(service, statefulset)`                                                                                              |
+| `routes-to`       | `(ingress, service)`                                                                                                                           |
+| `consumed-by`     | `(secret \| configmap, deployment \| statefulset \| job)` — all 6 pairs                                                                        |
 
 If the proposed shift would violate the rule, the propose endpoint
 **hard-blocks with 422** (unlike part shifts, which only soft-warn

@@ -1,6 +1,6 @@
 ---
 name: propose-part-subtype-shift
-description: "Propose a structural subtype change for a registered part — e.g. \"this was registered as software but is actually a container\", \"shift the payments-image part to subtype=image\", \"shift this from software to deployment\", \"this should be a statefulset, not a deployment\". Use when a part's subtype was set wrong on first registration and needs correction without losing the canonical name, version history, or existing contracts. Targets all 12 subtypes — build/runtime (software, image, container, pod, compose) and K8s runtime added in #91 (deployment, statefulset, service, ingress, secret, configmap, job). Pre-validates the impact (which contracts would break under the new subtype, whether the body needs realignment), confirms with the user, and POSTs to /parts/{name}/subtype-proposals. Does NOT accept the proposal — acceptance is the deliberate counterpart via /accept-part-subtype-shift."
+description: "Propose a structural subtype change for a registered part — e.g. \"this was registered as software but is actually a container\", \"shift the payments-image part to subtype=image\", \"shift this from software to deployment\", \"this should be a statefulset, not a deployment\", \"shift this from software to chart\". Use when a part's subtype was set wrong on first registration and needs correction without losing the canonical name, version history, or existing contracts. Targets all 13 subtypes — build/runtime (software, image, container, pod, compose), K8s runtime added in #91 (deployment, statefulset, service, ingress, secret, configmap, job), and the K8s umbrella `chart` added in #100. Pre-validates the impact (which contracts would break under the new subtype, whether the body needs realignment), confirms with the user, and POSTs to /parts/{name}/subtype-proposals. Does NOT accept the proposal — acceptance is the deliberate counterpart via /accept-part-subtype-shift."
 ---
 
 # propose-part-subtype-shift
@@ -55,7 +55,7 @@ target makes sense relative to it.
 ### 3. Pick the new subtype
 
 Ask which subtype the part should shift to. Valid Part subtypes
-(provider v0.30.0+ after #91):
+(provider v0.32.0+ after #100):
 
 | Subtype       | When this is the right shift target                                                       |
 | ------------- | ----------------------------------------------------------------------------------------- |
@@ -71,6 +71,7 @@ Ask which subtype the part should shift to. Valid Part subtypes
 | `secret`      | K8s Secret — typed key/value envelope. Shift here from configmap when the contents are credentials/sensitive. (#91) |
 | `configmap`   | K8s ConfigMap — same shape as secret, no encryption semantics. Shift here from secret when the contents are non-sensitive config. (#91) |
 | `job`         | K8s Job — run-to-completion workload. Shift here from deployment when the workload is a batch / migrator / one-shot. (#91) |
+| `chart`       | Installed Helm release — K8s analog of `compose`. Shift here from software when the part represents a *deployed* Helm release (a specific chart-version + values-overlay installed under a release-name), not the chart source bytes. (#100) |
 
 **No-op shifts (`new_subtype == current`) are rejected with 409.**
 If the user proposes a no-op, tell them the part is already that

@@ -76,19 +76,31 @@ If the user says "contract" without qualifying, default to `interaction`
 If the user picked `connection`, also pick the **connection_type** —
 one of seven labels:
 
-| `connection_type` | Owner part subtype  | Counterparty part subtype | What it records                                     |
-| ----------------- | ------------------- | ------------------------- | --------------------------------------------------- |
-| `builds-from`     | `software`          | `image`                   | Repository builds into image (Dockerfile + CI)      |
-| `instantiates`    | `image`             | `container` or `pod`      | Image is run as a container or pod                  |
-| `runs`            | `container` or `pod`| `software`                | Runtime hosts a specific software process            |
-| `member-of`       | `container`         | `compose`                 | Container is a service entry in a compose stack     |
-| `depends-on`      | `container`         | `container`               | Startup ordering within a compose stack              |
-| `submodule`       | `software`          | `software`                | One repository includes another via `.gitmodules`   |
-| `serves-static`   | `software`          | `software`                | Owner serves counterparty's compiled / static artifacts at runtime (e.g. nginx serving an SPA bundle). Distinct from `submodule` (source-tree composition) and `depends-on` (container startup ordering). v0.25.0+ (#62). |
+Rules are **pair-level** (#101): each label admits an explicit list
+of `(owner, counterparty)` pairs, not a cartesian product of two
+sets. Both subtypes individually appearing in the union doesn't
+imply the specific pair is admitted.
 
-All seven labels work end-to-end after #37 + #62. The router still
-has a deferred-subtype guard for any future rule that references a
-not-yet-implemented Part subtype, but no current rule trips it.
+| `connection_type` | Admitted `(owner, counterparty)` pairs                                                                                                       | What it records                                     |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `builds-from`     | `(software, image)`                                                                                                                            | Repository builds into image (Dockerfile + CI)      |
+| `instantiates`    | `(image, container)`, `(image, pod)`                                                                                                           | Image is run as a container or pod                  |
+| `runs`            | `(container, software)`, `(pod, software)`                                                                                                     | Runtime hosts a specific software process            |
+| `composes`        | `(compose, container)`, `(deployment / statefulset / job, pod)`, `(pod, container)`, `(chart, deployment / statefulset / job / service / ingress / secret / configmap)` | Top-down spec containment — parent spec composes its children. Replaces `member-of` (#101). For chart, see #100. |
+| `depends-on`      | `(container, container)`                                                                                                                       | Startup ordering within a compose stack              |
+| `submodule`       | `(software, software)`                                                                                                                         | One repository includes another via `.gitmodules`   |
+| `serves-static`   | `(software, software)`                                                                                                                         | Owner serves counterparty's compiled / static artifacts at runtime (e.g. nginx serving an SPA bundle). v0.25.0+ (#62). |
+| `selects`         | `(service, deployment)`, `(service, statefulset)`                                                                                              | K8s Service label-selector binding to controller (#92) |
+| `routes-to`       | `(ingress, service)`                                                                                                                           | K8s Ingress routes traffic to a Service (#92)        |
+| `consumed-by`     | all 6 `(secret \| configmap, deployment \| statefulset \| job)` pairs                                                                          | K8s env/volume mount from envelope into workload (#92) |
+
+All labels work end-to-end. The router still has a deferred-subtype
+guard for any future rule that references a not-yet-implemented Part
+subtype, but no current rule trips it.
+
+**`member-of` was removed in #101.** The pre-#101 shape was `container
+-member-of-> compose`; replaced by `compose -composes-> container`
+(direction flipped to match the top-down spec-containment paradigm).
 
 The subtype determines which template you fetch in step 7 and shapes
 the validation in step 4.

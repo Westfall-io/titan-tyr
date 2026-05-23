@@ -319,9 +319,11 @@ class TestBindingSubtype:
 class TestConnectionSubtype:
     """Connection contracts (#32): structural binding with no data flow.
 
-    All seven labels (`depends-on`, `submodule`, `builds-from`,
-    `instantiates`, `runs`, `member-of`, `serves-static`) work
-    end-to-end after #37 + #62. The router still has a
+    Labels after the #101 refactor: `builds-from`, `instantiates`,
+    `runs`, `composes` (replaces former `member-of`), `depends-on`,
+    `submodule`, `serves-static`, plus K8s contract labels from #92
+    (`selects`, `routes-to`, `consumed-by`). All pair-level rules
+    enforced via CONNECTION_RULES; the router still has a
     deferred-subtype guard for any future rule that references a
     not-yet-implemented Part subtype, but no current rule trips it.
     """
@@ -593,57 +595,138 @@ class TestConnectionSubtype:
         assert "container" in detail
         assert "pod" in detail
 
-    async def test_member_of_container_to_compose(self, client):
-        # `member-of` is container → compose. Unblocked by #37.
-        await _register_part(client, "payments-prod", subtype="container")
+    async def test_composes_compose_to_container(self, client):
+        # `composes` is compose → container (formerly `member-of` with
+        # direction flipped, per #101). Replaces the pre-C `container
+        # -member-of-> compose` shape with the top-down ontology.
         await _register_part(client, "watchervault-stack", subtype="compose")
+        await _register_part(client, "payments-prod", subtype="container")
         r = await client.post(
             "/contracts",
             json={
-                "owner_part": "payments-prod",
-                "counterparty_part": "watchervault-stack",
+                "owner_part": "watchervault-stack",
+                "counterparty_part": "payments-prod",
                 "subtype": "connection",
-                "connection_type": "member-of",
+                "connection_type": "composes",
                 "markdown": "m",
             },
         )
         assert r.status_code == 201, r.text
-        assert r.json()["connection_type"] == "member-of"
+        assert r.json()["connection_type"] == "composes"
 
-    async def test_member_of_counterparty_must_be_compose(self, client):
-        # Container → container with member-of is rejected.
-        await _register_part(client, "ctr", subtype="container")
-        await _register_part(client, "other", subtype="container")
+    async def test_composes_compose_counterparty_must_be_container(self, client):
+        # compose -composes-> compose is rejected; the valid composes
+        # pair for `compose` owner requires a `container` counterparty.
+        await _register_part(client, "stack-a", subtype="compose")
+        await _register_part(client, "stack-b", subtype="compose")
         r = await client.post(
             "/contracts",
             json={
-                "owner_part": "ctr",
-                "counterparty_part": "other",
+                "owner_part": "stack-a",
+                "counterparty_part": "stack-b",
                 "subtype": "connection",
-                "connection_type": "member-of",
-                "markdown": "m",
-            },
-        )
-        assert r.status_code == 422
-        assert "compose" in r.json()["detail"]
-
-    async def test_member_of_owner_must_be_container(self, client):
-        # Software → compose with member-of is rejected; owner must
-        # be a container.
-        await _register_part(client, "svc", subtype="software")
-        await _register_part(client, "stack", subtype="compose")
-        r = await client.post(
-            "/contracts",
-            json={
-                "owner_part": "svc",
-                "counterparty_part": "stack",
-                "subtype": "connection",
-                "connection_type": "member-of",
+                "connection_type": "composes",
                 "markdown": "m",
             },
         )
         assert r.status_code == 422
         assert "container" in r.json()["detail"]
+
+    async def test_composes_pair_check_rejects_invalid_cross_pair(self, client):
+        # `composes` pair-level rule (#101): both subtypes individually
+        # appear in the union of valid composes pairs, but this specific
+        # pair isn't admitted. `compose -composes-> service` is rejected
+        # even though `compose` and `service` each show up in the
+        # pair list separately.
+        await _register_part(client, "stack-x", subtype="compose")
+        await _register_part(client, "svc-x", subtype="service")
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "stack-x",
+                "counterparty_part": "svc-x",
+                "subtype": "connection",
+                "connection_type": "composes",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 422
+        # `compose` is in the owners union (chart-side composes) and
+        # `service` is in the counterparties union (chart-side composes),
+        # but `compose -> service` isn't an admitted pair. The pair
+        # check fires with the "valid pairs" hint.
+        detail = r.json()["detail"]
+        assert "pair" in detail.lower() or "container" in detail
+
+    async def test_composes_chart_to_deployment(self, client):
+        # `chart -composes-> deployment` is the umbrella pair added by
+        # #100. Other chart->* pairs cover the remaining K8s primitives.
+        await _register_part(client, "watchervault", subtype="chart")
+        await _register_part(client, "wv-tyr-deploy", subtype="deployment")
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "watchervault",
+                "counterparty_part": "wv-tyr-deploy",
+                "subtype": "connection",
+                "connection_type": "composes",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["connection_type"] == "composes"
+
+    async def test_composes_deployment_to_pod(self, client):
+        # K8s controllers compose pods (the #101 chain reads
+        # `deployment / statefulset / job -> pod -> container`).
+        await _register_part(client, "wv-deploy", subtype="deployment")
+        await _register_part(client, "wv-pod", subtype="pod")
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "wv-deploy",
+                "counterparty_part": "wv-pod",
+                "subtype": "connection",
+                "connection_type": "composes",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 201, r.text
+
+    async def test_composes_pod_to_container(self, client):
+        # Multi-container pods (sidecars / init) become expressible
+        # under #101's pod-as-bundling-node semantics.
+        await _register_part(client, "wv-pod-x", subtype="pod")
+        await _register_part(client, "wv-ctr", subtype="container")
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "wv-pod-x",
+                "counterparty_part": "wv-ctr",
+                "subtype": "connection",
+                "connection_type": "composes",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 201, r.text
+
+    async def test_member_of_is_no_longer_a_valid_connection_type(self, client):
+        # `member-of` was removed in #101. Schema-level Literal
+        # validation should reject the value before the rules table
+        # ever sees it.
+        await _register_part(client, "ctr-z", subtype="container")
+        await _register_part(client, "stack-z", subtype="compose")
+        r = await client.post(
+            "/contracts",
+            json={
+                "owner_part": "ctr-z",
+                "counterparty_part": "stack-z",
+                "subtype": "connection",
+                "connection_type": "member-of",
+                "markdown": "m",
+            },
+        )
+        assert r.status_code == 422
 
     async def test_serves_static_software_to_software(self, client):
         # `serves-static` is software → software (#62): the owner
@@ -932,17 +1015,17 @@ class TestSubtypeAwareUniqueness:
         assert r1.status_code == 201, r1.text
 
         # `runs` requires counterparty subtype `software`, so use a
-        # second valid combo: a separate pair where two connection_types
-        # both apply. `depends-on` and `member-of` both have container
-        # owners; member-of needs a compose counterparty.
+        # second valid combo on a separate pair: compose -composes->
+        # container (the post-#101 replacement for the former
+        # container -member-of-> compose shape).
         await _register_part(client, "stack", subtype="compose")
         r2 = await client.post(
             "/contracts",
             json={
-                "owner_part": "c1",
-                "counterparty_part": "stack",
+                "owner_part": "stack",
+                "counterparty_part": "c1",
                 "subtype": "connection",
-                "connection_type": "member-of",
+                "connection_type": "composes",
                 "markdown": "m",
             },
         )
