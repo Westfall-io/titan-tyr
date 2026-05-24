@@ -45,17 +45,36 @@ curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
 - `401` → wrong token. Stop.
 - Connection refused → wrong URL or server down. Stop.
 
-Ask which template the user wants to accept against. Eight kinds
-today, one per part subtype and one per contract subtype:
+Ask which template the user wants to accept against. **16 kinds**
+today, one per part subtype + one per contract subtype:
+
+Build/runtime part templates:
 
 - **`software`** — for software parts (codebases / deployables)
 - **`container`** — for container parts (Docker / Compose runtimes)
 - **`image`** — for image parts (built artifacts between source and runtime)
 - **`pod`** — for pod parts (K8s scheduled units of one or more containers)
 - **`compose`** — for compose parts (Docker Compose stacks)
+
+Contract templates:
+
 - **`interaction`** — for interaction contracts (env-agnostic, any pair, runtime data flows)
 - **`binding`** — for binding contracts (container or pod → software, env-specific runtime address)
 - **`connection`** — for connection contracts (structural binding, no runtime data flow)
+
+K8s runtime part templates (#91, archaedas#9):
+
+- **`deployment`** — K8s Deployment (stateless workload controller)
+- **`statefulset`** — K8s StatefulSet (stable identity / per-pod PVC)
+- **`service`** — K8s Service (label-selector traffic entrypoint)
+- **`ingress`** — K8s Ingress (host/path routing at the cluster edge)
+- **`secret`** — K8s Secret (typed key/value envelope; catalog stores key names only)
+- **`configmap`** — K8s ConfigMap (same shape as secret, no encryption semantics)
+- **`job`** — K8s Job (run-to-completion workload)
+
+K8s umbrella template (#100):
+
+- **`chart`** — for chart parts (Helm release; K8s analog of `compose`)
 
 (The legacy `contract` kind was renamed to `interaction` in v0.10.0
 and is no longer accepted.)
@@ -186,6 +205,14 @@ Pick the audit recipe based on the kind that just landed:
 | `image`         | `GET $TITAN_TYR_URL/parts?subtype=image&limit=100`                                                                      | Same — `GET /parts/{name}`, check stamp.                                                          |
 | `pod`           | `GET $TITAN_TYR_URL/parts?subtype=pod&limit=100`                                                                        | Same — `GET /parts/{name}`, check stamp.                                                          |
 | `compose`       | `GET $TITAN_TYR_URL/parts?subtype=compose&limit=100`                                                                    | Same — `GET /parts/{name}`, check stamp.                                                          |
+| `deployment`    | `GET $TITAN_TYR_URL/parts?subtype=deployment&limit=100`                                                                 | Same — `GET /parts/{name}`, check stamp. (#91)                                                    |
+| `statefulset`   | `GET $TITAN_TYR_URL/parts?subtype=statefulset&limit=100`                                                                | Same — `GET /parts/{name}`, check stamp. (#91)                                                    |
+| `service`       | `GET $TITAN_TYR_URL/parts?subtype=service&limit=100`                                                                    | Same — `GET /parts/{name}`, check stamp. (#91)                                                    |
+| `ingress`       | `GET $TITAN_TYR_URL/parts?subtype=ingress&limit=100`                                                                    | Same — `GET /parts/{name}`, check stamp. (#91)                                                    |
+| `secret`        | `GET $TITAN_TYR_URL/parts?subtype=secret&limit=100`                                                                     | Same — `GET /parts/{name}`, check stamp. (#91)                                                    |
+| `configmap`     | `GET $TITAN_TYR_URL/parts?subtype=configmap&limit=100`                                                                  | Same — `GET /parts/{name}`, check stamp. (#91)                                                    |
+| `job`           | `GET $TITAN_TYR_URL/parts?subtype=job&limit=100`                                                                        | Same — `GET /parts/{name}`, check stamp. (#91)                                                    |
+| `chart`         | `GET $TITAN_TYR_URL/parts?subtype=chart&limit=100`                                                                      | Same — `GET /parts/{name}`, check stamp. (#100)                                                   |
 | `interaction`   | `GET $TITAN_TYR_URL/contracts?subtype=interaction&limit=100`                                                            | `GET /contracts/{contract_id}`, check stamp on line 1 of `markdown`.                              |
 | `binding`       | `GET $TITAN_TYR_URL/contracts?subtype=binding&limit=100`                                                                | `GET /contracts/{contract_id}`, check stamp.                                                      |
 | `connection`    | `GET $TITAN_TYR_URL/contracts?subtype=connection&limit=100`                                                             | `GET /contracts/{contract_id}`, check stamp.                                                      |
