@@ -35,7 +35,7 @@ Don't guess. Don't default to localhost silently.
 | Input     | Required | Purpose                                                                                                                                                                                                |
 | --------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `query`   | yes      | The colloquial label or partial name to resolve. 1–128 chars. Case-insensitive substring match.                                                                                                        |
-| `subtype` | no       | Restrict results to a single part subtype: one of `software`, `image`, `container`, `pod`, or `compose`. Use when the caller already knows which dimension they want — e.g. "the payments software" vs "the payments-prod container" vs "the payments image". Unknown values → `422`. |
+| `subtype` | no       | Restrict results to a single part subtype: one of the 13 admitted values — build/runtime (`software`, `image`, `container`, `pod`, `compose`), K8s runtime (`deployment`, `statefulset`, `service`, `ingress`, `secret`, `configmap`, `job` — #91), or K8s umbrella (`chart` — #100). Use when the caller already knows which dimension they want — e.g. "the payments software" vs "the payments-prod container" vs "the payments image" vs "the watchervault chart". Unknown values → `422`. |
 
 ## Workflow
 
