@@ -173,8 +173,10 @@ Field notes:
 - `contract.subtype` is the discriminator (one of `interaction`,
   `binding`, `connection`). For `connection`, `connection_type` is
   the per-label sub-discriminator (one of `builds-from`,
-  `instantiates`, `runs`, `member-of`, `depends-on`, `submodule`,
-  `serves-static`). For other subtypes, `connection_type` is `null`.
+  `instantiates`, `runs`, `composes`, `depends-on`, `submodule`,
+  `serves-static`, `selects`, `routes-to`, `consumed-by`). For
+  other subtypes, `connection_type` is `null`. `member-of` was
+  removed in #101 (replaced by `composes` with direction flipped).
 - `contract.subtype_shifted_from` / `subtype_shifted_at` (nullable,
   provider v0.15.0+) surface the most recent accepted subtype
   shift. `null` if the contract has never been shifted. Calling

@@ -23,11 +23,14 @@ PART_SUBTYPES: tuple[str, ...] = (
     # K8s runtime primitives added in #91 / archaedas#9.
     "deployment", "statefulset", "service", "ingress",
     "secret", "configmap", "job",
+    # K8s umbrella subtype — analog of `compose` for Helm releases (#100).
+    "chart",
 )
 PartSubtype = Literal[
     "software", "container", "image", "pod", "compose",
     "deployment", "statefulset", "service", "ingress",
     "secret", "configmap", "job",
+    "chart",
 ]
 
 CONTRACT_SUBTYPES: tuple[str, ...] = ("interaction", "binding", "connection")
@@ -40,7 +43,9 @@ CONNECTION_TYPES: tuple[str, ...] = (
     "builds-from",
     "instantiates",
     "runs",
-    "member-of",
+    # `composes` (#101) replaces `member-of` — direction now flows
+    # parent → child to match the top-down spec-containment paradigm.
+    "composes",
     "depends-on",
     "submodule",
     "serves-static",
@@ -53,7 +58,7 @@ ConnectionType = Literal[
     "builds-from",
     "instantiates",
     "runs",
-    "member-of",
+    "composes",
     "depends-on",
     "submodule",
     "serves-static",

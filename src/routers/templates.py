@@ -32,6 +32,8 @@ VALID_KINDS = (
     # K8s runtime primitives added in #91 (archaedas#9).
     "deployment", "statefulset", "service", "ingress",
     "secret", "configmap", "job",
+    # K8s umbrella subtype — chart, Helm release analog of compose (#100).
+    "chart",
 )
 
 

@@ -44,6 +44,10 @@ SEED_INGRESS_TEMPLATE = "# ingress template seed\n\n## Purpose\nseed body\n"
 SEED_SECRET_TEMPLATE = "# secret template seed\n\n## Purpose\nseed body\n"
 SEED_CONFIGMAP_TEMPLATE = "# configmap template seed\n\n## Purpose\nseed body\n"
 SEED_JOB_TEMPLATE = "# job template seed\n\n## Purpose\nseed body\n"
+# K8s umbrella subtype added in #100 (archaedas#9). Placeholder body —
+# tests only need an active v1.0.0 row to exist so chart part
+# registration validates.
+SEED_CHART_TEMPLATE = "# chart template seed\n\n## Purpose\nseed body\n"
 
 
 def _container_dsn() -> str:
@@ -126,6 +130,7 @@ async def db_session(engine) -> AsyncIterator[AsyncSession]:
             ("secret", SEED_SECRET_TEMPLATE),
             ("configmap", SEED_CONFIGMAP_TEMPLATE),
             ("job", SEED_JOB_TEMPLATE),
+            ("chart", SEED_CHART_TEMPLATE),
         ):
             tpl = Template(kind=kind)
             session.add(tpl)

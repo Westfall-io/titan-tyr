@@ -28,7 +28,13 @@ from src.pagination import (
     validate_limit,
 )
 from src.routers._projects import resolve_project_slug
-from src.routers._rules import BINDING_OWNER_SUBTYPES, CONNECTION_RULES
+from src.routers._rules import (
+    BINDING_OWNER_SUBTYPES,
+    allowed_counterparty_subtypes,
+    allowed_owner_subtypes,
+    format_allowed_pairs,
+    is_pair_allowed,
+)
 from src.routers._subtype_helpers import (
     body_realign_required,
     enforce_human_confirmation,
@@ -883,18 +889,25 @@ async def _part_shift_impact(
                     f"counterparty subtype would be {cp_st!r}"
                 )
         elif c.subtype == "connection" and c.connection_type:
-            rule = CONNECTION_RULES[c.connection_type]
-            if owner_st not in rule["owner"]:
+            owners = allowed_owner_subtypes(c.connection_type)
+            counterparties = allowed_counterparty_subtypes(c.connection_type)
+            if owner_st not in owners:
                 violation = (
                     f"connection_type {c.connection_type!r} owner must be in "
-                    f"{sorted(rule['owner'])}; new owner subtype would be "
+                    f"{sorted(owners)}; new owner subtype would be "
                     f"{owner_st!r}"
                 )
-            elif cp_st not in rule["counterparty"]:
+            elif cp_st not in counterparties:
                 violation = (
                     f"connection_type {c.connection_type!r} counterparty must be in "
-                    f"{sorted(rule['counterparty'])}; new counterparty subtype "
+                    f"{sorted(counterparties)}; new counterparty subtype "
                     f"would be {cp_st!r}"
+                )
+            elif not is_pair_allowed(c.connection_type, owner_st, cp_st):
+                violation = (
+                    f"connection_type {c.connection_type!r} does not admit "
+                    f"the pair ({owner_st!r}, {cp_st!r}); valid pairs: "
+                    f"{format_allowed_pairs(c.connection_type)}"
                 )
         # interaction: no rule, never violated
 

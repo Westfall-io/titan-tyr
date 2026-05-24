@@ -402,14 +402,15 @@ class TestProposeContractShift:
             subtype="connection",
             connection_type="depends-on",
         )
-        # Both depends-on and member-of expect container owner; only
-        # member-of needs compose counterparty (which c2 isn't), so
-        # use depends-on→depends-on as the no-op proof, then a real
-        # label-only shift like depends-on→depends-on… is no-op. So
-        # change endpoints by registering a compose stack and
-        # member-of shift instead. Skip — exercise via the unknown-
-        # label path below.
-        pytest.skip("label-only shifts need a member-of-compatible counterparty")
+        # No two connection_type labels admit the same (owner, cp)
+        # subtype pair under the post-#101 pair-level rules table —
+        # `depends-on` is the only label for (container, container);
+        # `composes` is the only label for (pod, container) /
+        # (compose, container) / etc.; no overlap exists. So a
+        # label-only shift has no co-applicable target on any pair.
+        # Exercise the broader shift flow via the unknown-label path
+        # below.
+        pytest.skip("no two connection_type labels share a pair under the #101 pair-level rules")
 
 
 class TestAcceptContractShift:

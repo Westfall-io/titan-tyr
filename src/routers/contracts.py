@@ -29,7 +29,13 @@ from src.pagination import (
     validate_limit,
 )
 from src.routers._projects import resolve_project_slug
-from src.routers._rules import BINDING_OWNER_SUBTYPES, CONNECTION_RULES
+from src.routers._rules import (
+    BINDING_OWNER_SUBTYPES,
+    allowed_counterparty_subtypes,
+    allowed_owner_subtypes,
+    format_allowed_pairs,
+    is_pair_allowed,
+)
 from src.routers._subtype_helpers import (
     body_realign_required,
     enforce_two_party,
@@ -80,6 +86,8 @@ _PART_SUBTYPES_IMPLEMENTED: set[str] = {
     # K8s runtime primitives added in #91 (archaedas#9).
     "deployment", "statefulset", "service", "ingress",
     "secret", "configmap", "job",
+    # K8s umbrella subtype — chart (#100).
+    "chart",
 }
 
 # CONNECTION_RULES and BINDING_OWNER_SUBTYPES live in `_rules.py`
@@ -190,27 +198,42 @@ async def register_contract(
                 ),
             )
     elif payload.subtype == "connection":
-        rule = CONNECTION_RULES[payload.connection_type]
-        _check_part_subtype_implemented("owner", owner.name, rule["owner"])
-        _check_part_subtype_implemented(
-            "counterparty", counterparty.name, rule["counterparty"]
-        )
-        if owner.subtype not in rule["owner"]:
+        owners = allowed_owner_subtypes(payload.connection_type)
+        counterparties = allowed_counterparty_subtypes(payload.connection_type)
+        _check_part_subtype_implemented("owner", owner.name, owners)
+        _check_part_subtype_implemented("counterparty", counterparty.name, counterparties)
+        if owner.subtype not in owners:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=(
                     f"connection_type {payload.connection_type!r} requires "
-                    f"owner_part subtype in {sorted(rule['owner'])}; "
+                    f"owner_part subtype in {sorted(owners)}; "
                     f"{owner.name!r} is {owner.subtype!r}"
                 ),
             )
-        if counterparty.subtype not in rule["counterparty"]:
+        if counterparty.subtype not in counterparties:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=(
                     f"connection_type {payload.connection_type!r} requires "
-                    f"counterparty_part subtype in {sorted(rule['counterparty'])}; "
+                    f"counterparty_part subtype in {sorted(counterparties)}; "
                     f"{counterparty.name!r} is {counterparty.subtype!r}"
+                ),
+            )
+        # Pair-level check (#101): both subtypes individually admitted by
+        # the union of the pair list, but this specific pair may not be.
+        # E.g. compose -composes-> service is invalid even though `compose`
+        # is in the owners set and `service` is in the counterparties set.
+        if not is_pair_allowed(
+            payload.connection_type, owner.subtype, counterparty.subtype
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"connection_type {payload.connection_type!r} does not admit "
+                    f"the pair ({owner.subtype!r}, {counterparty.subtype!r}); "
+                    f"valid pairs: "
+                    f"{format_allowed_pairs(payload.connection_type)}"
                 ),
             )
 
@@ -817,16 +840,23 @@ def _check_contract_shift_source_target(
             )
         return "pass", None
     # connection
-    rule = CONNECTION_RULES[new_connection_type]
-    if owner_subtype not in rule["owner"]:
+    owners = allowed_owner_subtypes(new_connection_type)
+    counterparties = allowed_counterparty_subtypes(new_connection_type)
+    if owner_subtype not in owners:
         return "fail", (
             f"connection_type {new_connection_type!r} requires owner subtype in "
-            f"{sorted(rule['owner'])}; current owner is {owner_subtype!r}"
+            f"{sorted(owners)}; current owner is {owner_subtype!r}"
         )
-    if counterparty_subtype not in rule["counterparty"]:
+    if counterparty_subtype not in counterparties:
         return "fail", (
             f"connection_type {new_connection_type!r} requires counterparty subtype in "
-            f"{sorted(rule['counterparty'])}; current counterparty is {counterparty_subtype!r}"
+            f"{sorted(counterparties)}; current counterparty is {counterparty_subtype!r}"
+        )
+    if not is_pair_allowed(new_connection_type, owner_subtype, counterparty_subtype):
+        return "fail", (
+            f"connection_type {new_connection_type!r} does not admit the pair "
+            f"({owner_subtype!r}, {counterparty_subtype!r}); valid pairs: "
+            f"{format_allowed_pairs(new_connection_type)}"
         )
     return "pass", None
 
@@ -1163,18 +1193,27 @@ def _check_endpoint_shift_source_target(
             )
         return "pass", None
     # connection
-    rule = CONNECTION_RULES[contract.connection_type]
-    if new_owner_subtype not in rule["owner"]:
+    owners = allowed_owner_subtypes(contract.connection_type)
+    counterparties = allowed_counterparty_subtypes(contract.connection_type)
+    if new_owner_subtype not in owners:
         return "fail", (
             f"connection_type {contract.connection_type!r} requires owner "
-            f"subtype in {sorted(rule['owner'])}; new owner is "
+            f"subtype in {sorted(owners)}; new owner is "
             f"{new_owner_subtype!r}"
         )
-    if new_cp_subtype not in rule["counterparty"]:
+    if new_cp_subtype not in counterparties:
         return "fail", (
             f"connection_type {contract.connection_type!r} requires "
-            f"counterparty subtype in {sorted(rule['counterparty'])}; "
+            f"counterparty subtype in {sorted(counterparties)}; "
             f"new counterparty is {new_cp_subtype!r}"
+        )
+    if not is_pair_allowed(
+        contract.connection_type, new_owner_subtype, new_cp_subtype
+    ):
+        return "fail", (
+            f"connection_type {contract.connection_type!r} does not admit "
+            f"the pair ({new_owner_subtype!r}, {new_cp_subtype!r}); valid "
+            f"pairs: {format_allowed_pairs(contract.connection_type)}"
         )
     return "pass", None
 
