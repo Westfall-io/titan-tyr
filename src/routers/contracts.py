@@ -317,6 +317,7 @@ async def list_or_search_contracts(
     subtype: str | None = Query(default=None),
     connection_type: str | None = Query(default=None),
     project: str | None = Query(default=None, max_length=64),
+    created_by_actor: str | None = Query(default=None, max_length=64),
     after: str | None = Query(default=None),
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     include_deleted: bool = Query(default=False),
@@ -378,6 +379,7 @@ async def list_or_search_contracts(
             connection_type=connection_type,
             project_filter_id=project_filter_id,
             project_filter_unprojected=project_filter_unprojected,
+            created_by_actor=created_by_actor,
             include_deleted=include_deleted,
         )
         return ContractListResponse(results=items, next=next_cursor)
@@ -402,6 +404,8 @@ async def list_or_search_contracts(
         stmt = stmt.where(Contract.subtype == subtype)
     if connection_type is not None:
         stmt = stmt.where(Contract.connection_type == connection_type)
+    if created_by_actor is not None:
+        stmt = stmt.where(Contract.created_by_actor == created_by_actor)
     if not include_deleted:
         stmt = stmt.where(Contract.deleted_at.is_(None))
     if project_filter_unprojected:
@@ -415,8 +419,8 @@ async def list_or_search_contracts(
         latest = await _latest_active_contract_version(session, c.id)
         if latest is None:
             continue
-        owner_name = (await session.get(Part, c.owner_part_id)).name
-        cp_name = (await session.get(Part, c.counterparty_part_id)).name
+        owner_part = await session.get(Part, c.owner_part_id)
+        cp_part = await session.get(Part, c.counterparty_part_id)
         project_name = None
         if c.project_id is not None:
             proj = await session.get(Project, c.project_id)
@@ -424,14 +428,16 @@ async def list_or_search_contracts(
         results.append(
             ContractSearchResult(
                 contract_id=c.id,
-                owner=owner_name,
-                counterparty=cp_name,
+                owner=owner_part.name,
+                counterparty=cp_part.name,
                 subtype=c.subtype,
                 connection_type=c.connection_type,
                 version=str(Version(latest.version_major, latest.version_minor, latest.version_patch)),
                 markdown=latest.markdown,
                 updated_at=latest.accepted_at or latest.created_at,
                 created_by_actor=c.created_by_actor,
+                owner_actor=owner_part.created_by_actor,
+                counterparty_actor=cp_part.created_by_actor,
                 project=project_name,
             )
         )

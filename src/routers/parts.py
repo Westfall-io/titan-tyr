@@ -105,6 +105,7 @@ async def list_parts(
     match: str | None = Query(default=None, max_length=128),
     subtype: str | None = Query(default=None),
     project: str | None = Query(default=None, max_length=64),
+    created_by_actor: str | None = Query(default=None, max_length=64),
     include_deleted: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
 ) -> PartListResponse:
@@ -176,6 +177,9 @@ async def list_parts(
         stmt = stmt.where(Part.project_id.is_(None))
     elif project_filter_id is not None:
         stmt = stmt.where(Part.project_id == project_filter_id)
+
+    if created_by_actor is not None:
+        stmt = stmt.where(Part.created_by_actor == created_by_actor)
 
     if match is not None:
         # Case-insensitive substring match against name OR any alias. The U+001F
@@ -651,6 +655,7 @@ async def list_part_contracts(
     name: str,
     after: str | None = Query(default=None),
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    created_by_actor: str | None = Query(default=None, max_length=64),
     include_deleted: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
 ) -> PartContractsListResponse:
@@ -670,6 +675,7 @@ async def list_part_contracts(
         after=after,
         limit=limit,
         touching_part_id=part.id,
+        created_by_actor=created_by_actor,
         include_deleted=include_deleted,
     )
     return PartContractsListResponse(part=part.name, results=items, next=next_cursor)
@@ -685,6 +691,7 @@ async def _list_active_contracts(
     connection_type: str | None = None,
     project_filter_id=None,
     project_filter_unprojected: bool = False,
+    created_by_actor: str | None = None,
     include_deleted: bool = False,
 ) -> tuple[list[ContractListItem], str | None]:
     """Paginated listing of contracts with their latest active version.
@@ -737,6 +744,8 @@ async def _list_active_contracts(
             Contract.deleted_at,
             owner_alias.c.name.label("owner_name"),
             cp_alias.c.name.label("cp_name"),
+            owner_alias.c.created_by_actor.label("owner_actor"),
+            cp_alias.c.created_by_actor.label("cp_actor"),
             Project.name.label("project_name"),
             latest_active.c.cv_major,
             latest_active.c.cv_minor,
@@ -763,6 +772,9 @@ async def _list_active_contracts(
 
     if connection_type is not None:
         stmt = stmt.where(Contract.connection_type == connection_type)
+
+    if created_by_actor is not None:
+        stmt = stmt.where(Contract.created_by_actor == created_by_actor)
 
     if not include_deleted:
         stmt = stmt.where(Contract.deleted_at.is_(None))
@@ -798,7 +810,7 @@ async def _list_active_contracts(
     last_id = None
     for (
         c_id, c_subtype, c_conn_type, c_creator, c_deleted_at,
-        owner_name, cp_name, project_name,
+        owner_name, cp_name, owner_actor, cp_actor, project_name,
         vmaj, vmin, vpat, vts, accepted_at,
     ) in rows:
         items.append(
@@ -811,6 +823,8 @@ async def _list_active_contracts(
                 version=str(Version(vmaj, vmin, vpat)),
                 updated_at=accepted_at or vts,
                 created_by_actor=c_creator,
+                owner_actor=owner_actor,
+                counterparty_actor=cp_actor,
                 project=project_name,
                 deleted_at=c_deleted_at,
             )
