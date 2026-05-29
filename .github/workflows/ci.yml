@@ -77,7 +77,22 @@ jobs:
       - uses: actions/checkout@v4
       - name: No unquoted ' #NN' in SKILL.md descriptions
         run: |
-          if grep -rnE '^description: [^"].* #[0-9]' .claude/skills/; then
+          if grep -rnE '^description: [^"].* #[0-9]' skills/; then
             echo "::error::SKILL.md description contains an unquoted ' #NN' token. YAML treats ' #' as a line comment, which truncates the description in the Claude Code skill loader. Quote the description with double quotes (escape embedded \") or rephrase to avoid ' #NN'."
             exit 1
           fi
+      - name: SKILL.md descriptions must be ≤300 chars (#106)
+        run: |
+          fail=0
+          for f in skills/*/SKILL.md; do
+            # Pull the description line; strip 'description: ' prefix and
+            # surrounding quotes if present.
+            desc=$(awk '/^description:/ { sub(/^description: */, ""); print; exit }' "$f")
+            desc="${desc#\"}"; desc="${desc%\"}"
+            len=${#desc}
+            if [ "$len" -gt 300 ]; then
+              echo "::error file=$f::description is $len chars; cap is 300. Trim to ≤200 with front-loaded keywords; move long-tail guidance into the SKILL.md body (free until invoked)."
+              fail=1
+            fi
+          done
+          exit $fail

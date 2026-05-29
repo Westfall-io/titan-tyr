@@ -77,7 +77,7 @@ every scope explicitly.
 ### Via the skill (preferred)
 
 ```sh
-.claude/skills/issue-auth-token/scripts/issue-auth-token.sh \
+skills/issue-auth-token/scripts/issue-auth-token.sh \
     --actor agent-foo \
     --description "build pipeline agent for foo project" \
     --scopes write
@@ -121,7 +121,7 @@ consumer side, revoke the old one.
 
 ```sh
 # 1. Issue a replacement, same actor + scopes
-NEW=$(.claude/skills/issue-auth-token/scripts/issue-auth-token.sh \
+NEW=$(skills/issue-auth-token/scripts/issue-auth-token.sh \
         --actor agent-foo --description "rotated 2026-Q4" --scopes write \
       | tail -1)
 

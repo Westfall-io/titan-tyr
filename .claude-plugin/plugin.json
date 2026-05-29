@@ -1,0 +1,6 @@
+{
+  "name": "watchervault",
+  "version": "1.0.0",
+  "description": "WatcherVault catalog skills — parts, contracts, templates, proposals, deletions, shifts, projects, auth tokens. Wraps the titan-tyr API.",
+  "author": "Westfall (chris.cox@westfall.io)"
+}

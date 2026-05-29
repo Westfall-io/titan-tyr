@@ -157,10 +157,55 @@ docs/               getting-started, api reference (also see DESIGN.md)
 
 ## Claude Code skills
 
-Project-level skills under [`.claude/skills/`](./.claude/skills/) are
-auto-available in Claude Code when run from this repo. Invoke with
-`/<skill-name>`. They expect `TITAN_TYR_URL` (and optionally
-`TITAN_TYR_TOKEN`) in the environment.
+The titan-tyr skill catalog ships as a **Claude Code plugin**. The
+canonical source lives under [`skills/`](./skills/) at the repo root,
+with the plugin manifest at [`.claude-plugin/plugin.json`](./.claude-plugin/plugin.json)
+and the marketplace listing at [`.claude-plugin/marketplace.json`](./.claude-plugin/marketplace.json).
+
+**One-line bootstrap** (preferred — fully non-interactive):
+
+```
+bash <(curl -fsSL https://raw.githubusercontent.com/Westfall-io/titan-tyr/main/scripts/install.sh)
+```
+
+(Will eventually be served from `https://watchervault.digitalforge.app/install.sh` once the mimiron-side endpoint lands.)
+
+**Manual install** (equivalent, if you'd rather see each step):
+
+```
+/plugin marketplace add Westfall-io/titan-tyr
+/plugin install watchervault
+```
+
+The plugin is named `watchervault` (the catalog wraps the broader
+WatcherVault system, not just titan-tyr's surface — naming the plugin
+after the product rather than the repo leaves room for future additions
+without a confusing rename). Skills become namespaced as
+`/watchervault:<skill-name>` (e.g. `/watchervault:register-part`).
+Pin to a specific release with `#watchervault-vX.Y.Z` on the
+marketplace add command.
+
+Working **in this repo** (titan-tyr itself), the skills live at
+[`skills/`](./skills/) but Claude Code's project-local auto-discovery
+looks at `.claude/skills/` — which we no longer populate. To exercise
+the skills from a tyr-dev session, install the plugin from the local
+checkout:
+
+```
+/plugin marketplace add .
+/plugin install watchervault
+```
+
+Once installed (either from local or from `Westfall-io/titan-tyr`),
+skills are addressable **only** as `/watchervault:<skill-name>` — the
+bare `/<skill-name>` form does not work post-plugin. Skills expect
+`TITAN_TYR_URL` (and a per-caller `TITAN_TYR_TOKEN`) in the
+environment.
+
+**Legacy install path** (deprecated, still functional during the
+transition) is the [`/update-skills`](./skills/update-skills/) script,
+which git-pulls the catalog into a consumer's `.claude/skills/`
+directory. Prefer the plugin install above for new consumers.
 
 - `/register-part` — walk through registering a part (software or
   container subtype) against a running titan-tyr. Branches on subtype
