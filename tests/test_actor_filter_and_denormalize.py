@@ -103,10 +103,15 @@ class TestContractsActorFilter:
         assert results[0]["created_by_actor"] == "alice"
 
     async def test_search_mode_filters_to_named_actor(self, client):
-        await _register_part(client, "a", actor="alice")
-        await _register_part(client, "b", actor="bob")
-        # Two contracts on the same pair, distinguished by actor and subtype
-        # (interaction + binding can coexist on same pair).
+        await _register_part(client, "a", actor="alice")  # software (default)
+        # `b` must be container or pod for the binding row below to satisfy
+        # the binding source/target rule (container/pod → software).
+        await _register_part(client, "b", subtype="container", actor="bob")
+        # Two contracts on the (a, b) pair, distinguished by actor and
+        # subtype: interaction (a → b) by alice + binding (b → a) by bob.
+        # Search mode walks both directions of the (owner, counterparty)
+        # pair, so the actor filter narrowing the result to alice's row
+        # is the assertion.
         await _register_contract(client, "a", "b", actor="alice")
         r = await client.post(
             "/contracts",
