@@ -157,10 +157,31 @@ docs/               getting-started, api reference (also see DESIGN.md)
 
 ## Claude Code skills
 
-Project-level skills under [`.claude/skills/`](./.claude/skills/) are
-auto-available in Claude Code when run from this repo. Invoke with
-`/<skill-name>`. They expect `TITAN_TYR_URL` (and optionally
-`TITAN_TYR_TOKEN`) in the environment.
+The titan-tyr skill catalog ships as a **Claude Code plugin**. The
+canonical source lives under [`skills/`](./skills/) at the repo root,
+with the plugin manifest at [`.claude-plugin/plugin.json`](./.claude-plugin/plugin.json)
+and the marketplace listing at [`.claude-plugin/marketplace.json`](./.claude-plugin/marketplace.json).
+
+**Install into a fresh Claude Code session:**
+
+```
+/plugin marketplace add Westfall-io/titan-tyr
+/plugin install titan-tyr
+```
+
+Skills become namespaced as `/titan-tyr:<skill-name>` (e.g. `/titan-tyr:register-part`).
+Pin to a specific release with `#skills-vX.Y.Z` on the marketplace add command.
+
+Working **in this repo** (titan-tyr itself), Claude Code reads
+[`skills/`](./skills/) directly and skills are addressable both as
+`/<name>` (auto-discovered local) and `/titan-tyr:<name>` (plugin form).
+Skills expect `TITAN_TYR_URL` (and a per-caller `TITAN_TYR_TOKEN`) in
+the environment.
+
+**Legacy install path** (deprecated, still functional during the
+transition) is the [`/update-skills`](./skills/update-skills/) script,
+which git-pulls the catalog into a consumer's `.claude/skills/`
+directory. Prefer the plugin install above for new consumers.
 
 - `/register-part` — walk through registering a part (software or
   container subtype) against a running titan-tyr. Branches on subtype

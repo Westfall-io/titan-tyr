@@ -54,7 +54,7 @@ commit_parser = "emoji"
 build_command = ""
 upload_to_pypi = false
 upload_to_release = true
-tag_format = "v{version}"
+tag_format = "tyr-v{version}"
 
 # Maps the repo's gitmoji-style commit prefixes to semver bumps.
 # Anything not listed here is treated as no bump.
