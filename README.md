@@ -166,15 +166,20 @@ and the marketplace listing at [`.claude-plugin/marketplace.json`](./.claude-plu
 
 ```
 /plugin marketplace add Westfall-io/titan-tyr
-/plugin install titan-tyr
+/plugin install watchervault
 ```
 
-Skills become namespaced as `/titan-tyr:<skill-name>` (e.g. `/titan-tyr:register-part`).
-Pin to a specific release with `#skills-vX.Y.Z` on the marketplace add command.
+The plugin is named `watchervault` (the catalog wraps the broader
+WatcherVault system, not just titan-tyr's surface — naming the plugin
+after the product rather than the repo leaves room for future additions
+without a confusing rename). Skills become namespaced as
+`/watchervault:<skill-name>` (e.g. `/watchervault:register-part`).
+Pin to a specific release with `#watchervault-vX.Y.Z` on the
+marketplace add command.
 
 Working **in this repo** (titan-tyr itself), Claude Code reads
 [`skills/`](./skills/) directly and skills are addressable both as
-`/<name>` (auto-discovered local) and `/titan-tyr:<name>` (plugin form).
+`/<name>` (auto-discovered local) and `/watchervault:<name>` (plugin form).
 Skills expect `TITAN_TYR_URL` (and a per-caller `TITAN_TYR_TOKEN`) in
 the environment.
 

@@ -187,5 +187,5 @@ else
   echo "Reminder: the preferred install path going forward is the"
   echo "plugin marketplace, not this script. To migrate:"
   echo "  /plugin marketplace add ${repo}"
-  echo "  /plugin install titan-tyr"
+  echo "  /plugin install watchervault"
 fi

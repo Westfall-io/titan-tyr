@@ -1,27 +1,28 @@
 name: skill-release
 
-# Independent release stream for the titan-tyr skill catalog plugin
-# (#110). Fires on tags of the form `skills-vMAJOR.MINOR.PATCH`. The
-# plugin itself doesn't need a build step — the marketplace clones the
-# repo at the tag and reads `.claude-plugin/plugin.json` +
+# Independent release stream for the WatcherVault skill catalog plugin
+# (#110). Fires on tags of the form `watchervault-vMAJOR.MINOR.PATCH`.
+# The plugin itself doesn't need a build step — the marketplace clones
+# the repo at the tag and reads `.claude-plugin/plugin.json` +
 # `skills/` directly. This workflow's job is consistency-check + a
 # GitHub Release for changelog visibility.
 #
-# Tag convention:
-#   skills-vX.Y.Z   plugin releases   → this workflow
-#   tyr-vX.Y.Z      app releases      → docker-publish workflow
+# Tag convention (both prefixes coexist in the same repo):
+#   watchervault-vX.Y.Z   plugin releases   → this workflow
+#   tyr-vX.Y.Z            app releases      → docker-publish workflow
 #
 # Bump discipline (manual):
 #   patch  doc-only / skill description sweep
 #   minor  new skill added
-#   major  skill removed or renamed (public-surface change post-plugin)
+#   major  skill removed or renamed (public-surface change post-plugin
+#          since names become namespaced as `/watchervault:<name>`)
 #
 # Cut the tag manually on merge to main after bumping
 # .claude-plugin/plugin.json's version.
 
 on:
   push:
-    tags: ['skills-v*']
+    tags: ['watchervault-v*']
 
 jobs:
   release:
@@ -33,7 +34,7 @@ jobs:
 
       - name: Verify plugin.json version matches tag
         run: |
-          tag="${GITHUB_REF#refs/tags/skills-v}"
+          tag="${GITHUB_REF#refs/tags/watchervault-v}"
           jq_version=$(jq -r .version .claude-plugin/plugin.json)
           if [ "$tag" != "$jq_version" ]; then
             echo "::error::tag $tag does not match plugin.json version $jq_version. Bump the version file before tagging."
