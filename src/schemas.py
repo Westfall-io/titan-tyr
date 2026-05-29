@@ -353,6 +353,12 @@ class ContractListItem(BaseModel):
     version: str
     updated_at: datetime
     created_by_actor: str | None = None
+    # Denormalized from `parts[owner|counterparty].created_by_actor` (#112)
+    # so consumers can classify edges by ownership boundary without an
+    # extra round-trip per endpoint. NULL when the endpoint part has no
+    # recorded actor (anonymous-legacy row).
+    owner_actor: str | None = None
+    counterparty_actor: str | None = None
     project: str | None = None
     # Populated on soft-deleted rows surfaced via `?include_deleted=true`
     # (#69). NULL on live rows; non-NULL marks the row as soft-deleted.
@@ -466,6 +472,9 @@ class ContractSearchResult(BaseModel):
     markdown: str
     updated_at: datetime
     created_by_actor: str | None = None
+    # Denormalized from `parts[owner|counterparty].created_by_actor` (#112).
+    owner_actor: str | None = None
+    counterparty_actor: str | None = None
     project: str | None = None
 
 
