@@ -177,11 +177,22 @@ without a confusing rename). Skills become namespaced as
 Pin to a specific release with `#watchervault-vX.Y.Z` on the
 marketplace add command.
 
-Working **in this repo** (titan-tyr itself), Claude Code reads
-[`skills/`](./skills/) directly and skills are addressable both as
-`/<name>` (auto-discovered local) and `/watchervault:<name>` (plugin form).
-Skills expect `TITAN_TYR_URL` (and a per-caller `TITAN_TYR_TOKEN`) in
-the environment.
+Working **in this repo** (titan-tyr itself), the skills live at
+[`skills/`](./skills/) but Claude Code's project-local auto-discovery
+looks at `.claude/skills/` — which we no longer populate. To exercise
+the skills from a tyr-dev session, install the plugin from the local
+checkout:
+
+```
+/plugin marketplace add .
+/plugin install watchervault
+```
+
+Once installed (either from local or from `Westfall-io/titan-tyr`),
+skills are addressable **only** as `/watchervault:<skill-name>` — the
+bare `/<skill-name>` form does not work post-plugin. Skills expect
+`TITAN_TYR_URL` (and a per-caller `TITAN_TYR_TOKEN`) in the
+environment.
 
 **Legacy install path** (deprecated, still functional during the
 transition) is the [`/update-skills`](./skills/update-skills/) script,
