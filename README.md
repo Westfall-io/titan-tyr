@@ -162,7 +162,15 @@ canonical source lives under [`skills/`](./skills/) at the repo root,
 with the plugin manifest at [`.claude-plugin/plugin.json`](./.claude-plugin/plugin.json)
 and the marketplace listing at [`.claude-plugin/marketplace.json`](./.claude-plugin/marketplace.json).
 
-**Install into a fresh Claude Code session:**
+**One-line bootstrap** (preferred — fully non-interactive):
+
+```
+bash <(curl -fsSL https://raw.githubusercontent.com/Westfall-io/titan-tyr/main/scripts/install.sh)
+```
+
+(Will eventually be served from `https://watchervault.digitalforge.app/install.sh` once the mimiron-side endpoint lands.)
+
+**Manual install** (equivalent, if you'd rather see each step):
 
 ```
 /plugin marketplace add Westfall-io/titan-tyr
