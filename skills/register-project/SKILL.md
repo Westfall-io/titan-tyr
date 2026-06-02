@@ -16,7 +16,7 @@ membership is metadata that lives on the part / contract row.
 | ----------------- | -------- | ---------------------------------------- |
 | `TITAN_TYR_URL`   | yes      | Base URL. No trailing slash.             |
 | `TITAN_TYR_TOKEN` | no       | Bearer per-caller token (issue via `/issue-auth-token`). Required.     |
-| `TITAN_TYR_ACTOR` | no       | X-Actor header. Stored as `created_by_actor` on the new project row. If unset the paper trail goes blank — warn the user. |
+| `TITAN_TYR_ACTOR` | no       | X-Actor header. Stored as `owner_actor` on the new project row. If unset the paper trail goes blank — warn the user. |
 
 If `TITAN_TYR_URL` is unset, run `/check-titan-tyr-env` first.
 
@@ -49,7 +49,7 @@ curl -fsS -X POST \
   "$TITAN_TYR_URL/projects"
 ```
 
-201 → `{name, description, created_at, created_by_actor}`.
+201 → `{name, description, created_at, owner_actor}`.
 
 ### 3. Errors
 

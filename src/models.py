@@ -43,7 +43,7 @@ class Project(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    created_by_actor: Mapped[str | None] = mapped_column(String, nullable=True)
+    owner_actor: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class Part(Base):
@@ -105,7 +105,7 @@ class Part(Base):
     # POST /parts time. Nullable because pre-v0.16.0 rows have no
     # value, and because callers can register without setting the
     # header (rule unenforceable, paper trail just goes blank).
-    created_by_actor: Mapped[str | None] = mapped_column(String, nullable=True)
+    owner_actor: Mapped[str | None] = mapped_column(String, nullable=True)
     # Project tag (#44). NULL = unprojected (the legacy default).
     project_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True, index=True
@@ -278,7 +278,7 @@ class Contract(Base):
     )
     # Initial-creation attribution (#39). The X-Actor recorded at
     # POST /contracts time. Nullable for the same reasons as on parts.
-    created_by_actor: Mapped[str | None] = mapped_column(String, nullable=True)
+    owner_actor: Mapped[str | None] = mapped_column(String, nullable=True)
     # Project tag (#44). Independent of the endpoints' projects: a
     # contract can cross-cut projects, in which case it's tagged with
     # whichever project owns the relationship rather than auto-inheriting

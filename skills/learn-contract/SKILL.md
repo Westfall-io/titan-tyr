@@ -133,7 +133,7 @@ caller can follow up with `/learn-part`.
     "markdown": "...",
     "subtype_shifted_from": null,
     "subtype_shifted_at": null,
-    "created_by_actor": "alice",
+    "owner_actor": "alice",
     "updated_at": "..."
   },
   "open_content_proposals": [
@@ -182,7 +182,7 @@ Field notes:
   shift. `null` if the contract has never been shifted. Calling
   agents should surface this so users know the discriminator was
   corrected post-registration.
-- `contract.created_by_actor` (nullable, provider v0.16.0+) is the
+- `contract.owner_actor` (nullable, provider v0.16.0+) is the
   X-Actor recorded at `POST /contracts` time. Pre-v0.16.0
   contracts have `null`.
 - `open_content_proposals` is the list of pending body proposals
@@ -273,7 +273,7 @@ return value is the contract.
   what the caller asked about. If the caller needs endpoint detail,
   follow up with `/learn-part target=<owner>` or
   `/learn-part target=<counterparty>`.
-- Pre-v0.16.0 servers may not surface `created_by_actor` on the
+- Pre-v0.16.0 servers may not surface `owner_actor` on the
   contract response or actor fields on content-proposal listings.
   Degrade gracefully — render missing fields as `null`.
 - `next_step` strings name skills, not raw curl commands, because

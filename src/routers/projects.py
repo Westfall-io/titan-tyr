@@ -85,7 +85,7 @@ async def create_project(
     proj = Project(
         name=payload.name,
         description=payload.description,
-        created_by_actor=x_actor,
+        owner_actor=x_actor,
     )
     session.add(proj)
     await session.commit()
@@ -94,7 +94,7 @@ async def create_project(
         name=proj.name,
         description=proj.description,
         created_at=proj.created_at,
-        created_by_actor=proj.created_by_actor,
+        owner_actor=proj.owner_actor,
     )
 
 
@@ -136,7 +136,7 @@ async def list_projects(
                 name=proj.name,
                 description=proj.description,
                 created_at=proj.created_at,
-                created_by_actor=proj.created_by_actor,
+                owner_actor=proj.owner_actor,
                 part_count=part_count,
                 contract_count=contract_count,
             )
@@ -169,7 +169,7 @@ async def get_project(
         name=proj.name,
         description=proj.description,
         created_at=proj.created_at,
-        created_by_actor=proj.created_by_actor,
+        owner_actor=proj.owner_actor,
         part_count=part_count,
         contract_count=contract_count,
     )
@@ -204,7 +204,7 @@ async def update_project(
         name=proj.name,
         description=proj.description,
         created_at=proj.created_at,
-        created_by_actor=proj.created_by_actor,
+        owner_actor=proj.owner_actor,
         part_count=part_count,
         contract_count=contract_count,
     )

@@ -73,7 +73,7 @@ class TestResponseShape:
         "version",
         "markdown",
         "updated_at",
-        "created_by_actor",
+        "owner_actor",
         "project",
     }
 
@@ -97,7 +97,7 @@ class TestResponseShape:
         assert body["version"] == "1.2.3"
         assert body["repo_uri"] == "https://example.com/repo"
         assert body["markdown"] == "# echo-post\n\nbody"
-        assert body["created_by_actor"] == "alice"
+        assert body["owner_actor"] == "alice"
         assert body["project"] is None
         assert body["aliases"] == []
         assert body["issue_tracker_uri"] is None

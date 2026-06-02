@@ -39,7 +39,7 @@ Response shape:
       "name": "watchervault",
       "description": "WatcherVault platform — titan-tyr, titan-mimiron, archaedas, postgres",
       "created_at": "2026-05-04T03:00:00Z",
-      "created_by_actor": "chris.cox@westfall.io",
+      "owner_actor": "chris.cox@westfall.io",
       "part_count": 8,
       "contract_count": 14
     },
@@ -50,7 +50,7 @@ Response shape:
 ```
 
 Surface a compact table by default (name, description, counts);
-include the timestamps and `created_by_actor` on request.
+include the timestamps and `owner_actor` on request.
 
 If the list is empty, tell the user no projects are registered yet
 and that they can either run `/register-project` or leave parts

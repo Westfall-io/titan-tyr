@@ -51,7 +51,7 @@ import json, os
 d = json.loads(os.environ["BODY"])
 slug = os.environ["SLUG"]
 subtype = d.get("subtype", "?")
-created_by = d.get("created_by_actor") or "(no actor recorded)"
+created_by = d.get("owner_actor") or "(no actor recorded)"
 project = d.get("project") or "(none)"
 updated = (d.get("updated_at") or "?")[:10]
 print(

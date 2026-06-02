@@ -46,6 +46,8 @@ from src.schemas import (
     CONTRACT_SUBTYPES,
     PROJECT_NONE_SENTINEL,
     ContractCreate,
+    OwnerReassignCreate,
+    OwnerReassignResponse,
     ContractCreateResponse,
     ContractDeletionAcceptResponse,
     ContractDeletionImpact,
@@ -276,7 +278,7 @@ async def register_contract(
         counterparty_part_id=counterparty.id,
         subtype=payload.subtype,
         connection_type=payload.connection_type,
-        created_by_actor=x_actor,
+        owner_actor=x_actor,
         project_id=project_id,
     )
     session.add(contract)
@@ -317,7 +319,7 @@ async def list_or_search_contracts(
     subtype: str | None = Query(default=None),
     connection_type: str | None = Query(default=None),
     project: str | None = Query(default=None, max_length=64),
-    created_by_actor: str | None = Query(default=None, max_length=64),
+    owner_actor: str | None = Query(default=None, max_length=64),
     after: str | None = Query(default=None),
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     include_deleted: bool = Query(default=False),
@@ -379,7 +381,7 @@ async def list_or_search_contracts(
             connection_type=connection_type,
             project_filter_id=project_filter_id,
             project_filter_unprojected=project_filter_unprojected,
-            created_by_actor=created_by_actor,
+            owner_actor=owner_actor,
             include_deleted=include_deleted,
         )
         return ContractListResponse(results=items, next=next_cursor)
@@ -404,8 +406,8 @@ async def list_or_search_contracts(
         stmt = stmt.where(Contract.subtype == subtype)
     if connection_type is not None:
         stmt = stmt.where(Contract.connection_type == connection_type)
-    if created_by_actor is not None:
-        stmt = stmt.where(Contract.created_by_actor == created_by_actor)
+    if owner_actor is not None:
+        stmt = stmt.where(Contract.owner_actor == owner_actor)
     if not include_deleted:
         stmt = stmt.where(Contract.deleted_at.is_(None))
     if project_filter_unprojected:
@@ -435,9 +437,7 @@ async def list_or_search_contracts(
                 version=str(Version(latest.version_major, latest.version_minor, latest.version_patch)),
                 markdown=latest.markdown,
                 updated_at=latest.accepted_at or latest.created_at,
-                created_by_actor=c.created_by_actor,
-                owner_actor=owner_part.created_by_actor,
-                counterparty_actor=cp_part.created_by_actor,
+                owner_actor=c.owner_actor,
                 project=project_name,
             )
         )
@@ -477,7 +477,7 @@ async def get_contract(
         version=str(Version(latest.version_major, latest.version_minor, latest.version_patch)),
         markdown=latest.markdown,
         updated_at=latest.accepted_at or latest.created_at,
-        created_by_actor=contract.created_by_actor,
+        owner_actor=contract.owner_actor,
         project=project_name,
         deleted_at=contract.deleted_at,
         deleted_by_proposer_actor=contract.deleted_by_proposer_actor,
@@ -499,13 +499,9 @@ async def update_contract(
 ) -> ContractUpdateResponse:
     """Soft-metadata PATCH on contracts (#52, #53).
 
-    Today this is `project` (omit / value / null) plus the
-    `created_by_actor` first-write-wins backfill from `X-Actor` (#54):
-    when the row's current `created_by_actor` is `NULL`, an `X-Actor`
-    on PUT claims the row; once set, the field is immutable on PUT
-    (subsequent X-Actor values are silently ignored on this field —
-    the proposer / acceptor of a content change is the place to
-    record per-write attribution).
+    Today this is `project` (omit / value / null). The legacy
+    `owner_actor` first-write-wins backfill (#54) was removed in #119:
+    ownership is now mutable via PUT /contracts/{id}/owner.
 
     Body / version / subtype / connection_type / endpoints all flow
     through their dedicated propose-accept endpoints; this PUT does
@@ -523,13 +519,6 @@ async def update_contract(
 
     if "project" in payload.model_fields_set:
         contract.project_id = await resolve_project_slug(session, payload.project)
-
-    # First-write-wins backfill (#54). Honor X-Actor only when the
-    # current value is NULL, so legacy rows can be claimed by their
-    # original creator without permitting identity-spoofing of rows
-    # that already carry attribution.
-    if x_actor is not None and contract.created_by_actor is None:
-        contract.created_by_actor = x_actor
 
     await session.commit()
     await session.refresh(contract)
@@ -558,8 +547,51 @@ async def update_contract(
         ),
         markdown=latest.markdown,
         updated_at=latest.accepted_at or latest.created_at,
-        created_by_actor=contract.created_by_actor,
+        owner_actor=contract.owner_actor,
         project=project_name,
+    )
+
+
+@router.put(
+    "/{contract_id}/owner",
+    response_model=OwnerReassignResponse,
+    dependencies=[Depends(require_scope("write"))],
+)
+async def reassign_contract_owner(
+    contract_id: uuid.UUID,
+    payload: OwnerReassignCreate,
+    x_actor: str | None = Depends(current_actor),
+    session: AsyncSession = Depends(get_session),
+) -> OwnerReassignResponse:
+    """Reassign a contract's `owner_actor` (#119).
+
+    Single-write reassignment — no two-party rule. The acting actor
+    (`x_actor`, derived from the bearer token) gets recorded as
+    `reassigned_by_actor` on the response; the previous owner is
+    captured for the history audit. Overwrite is allowed (no
+    first-write-wins).
+    """
+    contract = (
+        await session.execute(
+            select(Contract).where(Contract.id == contract_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if contract is None or contract.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found"
+        )
+
+    previous = contract.owner_actor
+    contract.owner_actor = payload.new_owner_actor
+    reassigned_at = datetime.now(timezone.utc)
+    await session.commit()
+
+    return OwnerReassignResponse(
+        previous_owner_actor=previous,
+        new_owner_actor=payload.new_owner_actor,
+        reassigned_by_actor=x_actor,
+        reassigned_at=reassigned_at,
+        rationale=payload.rationale,
     )
 
 

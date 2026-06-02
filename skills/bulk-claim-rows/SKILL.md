@@ -7,7 +7,7 @@ disable-model-invocation: true
 # bulk-claim-rows
 
 You are running a one-pass sweep over every part and contract in the
-catalog, setting `project` and/or claiming `created_by_actor` on each
+catalog, setting `project` and/or claiming `owner_actor` on each
 row that matches the filter. The mechanics — paging, filtering,
 dry-run table, confirmation gate, summary — live in
 `.claude/skills/bulk-claim-rows/scripts/bulk-claim-rows.sh`. Your
@@ -43,7 +43,7 @@ Ask the user:
 - **`--project <slug>`** — set every touched row's project tag to this
   slug. `__none__` clears the tag. Omit if the sweep is actor-only.
 - **`--actor <identity>`** — sent as `X-Actor` on every PUT. Only
-  affects rows where `created_by_actor` IS NULL (first-write-wins,
+  affects rows where `owner_actor` IS NULL (first-write-wins,
   #54). Omit if the sweep is project-only.
 
 At least one of these must be set or the script refuses.
@@ -57,7 +57,7 @@ Ask the user whether they want to narrow the scope:
   (the common backfill case: "tag everything that isn't tagged
   yet"). Cheap; uses the server-side `?project=` filter.
 - **`--current-actor <identity | __none__>`** — only operate on rows
-  whose current `created_by_actor` matches. `__none__` selects
+  whose current `owner_actor` matches. `__none__` selects
   unattributed rows. Filtered client-side after pagination.
 - **`--kind parts|contracts|both`** — default `both`. Narrow if the
   user only cares about one side of the graph.
@@ -71,7 +71,7 @@ The most common combinations:
 | Move one project's rows wholesale to another        | `--project <new> --current-project <old>`                            |
 | Rename actor on every row a person owns (won't work) | not supported — first-write-wins protects already-attributed rows.   |
 
-The last row is a real gotcha: once `created_by_actor` is set on a
+The last row is a real gotcha: once `owner_actor` is set on a
 row, no PUT can change it. To re-attribute an already-claimed row
 you'd need a content-proposal flow, not this sweep.
 
