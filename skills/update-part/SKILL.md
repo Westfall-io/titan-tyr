@@ -5,18 +5,16 @@ description: Append a new version to a part already registered with titan-tyr. D
 
 # update-part
 
-> **POST-#119 NOTE.** This skill body mentions `owner_actor`
-> first-write-wins backfill on `PUT /parts/{name}` (see step 8). That
-> behavior was removed: `PUT /parts/{name}` no longer touches
-> `owner_actor`. To reassign ownership, use the dedicated
-> `PUT /parts/{name}/owner` endpoint (single write, no two-party rule,
-> overwrite allowed). The body/version flow described below is
-> unchanged.
-
 You are appending a new version to a part that already exists
 in titan-tyr. The endpoint is `PUT /parts/{name}`. Each call adds
 one row to that part's `*_versions` history; reads always return
 the latest.
+
+Ownership (`owner_actor`) is **not** touched by this PUT. To reassign
+ownership, use `/reassign-part-owner` (wraps `PUT /parts/{name}/owner`
+— single write, no two-party rule, overwrite allowed). The
+first-write-wins backfill that this PUT used to perform was removed
+in #119.
 
 There are two reasons to update:
 
@@ -180,16 +178,6 @@ replacement, not a merge — to *add* one, fetch the existing list
 first and resubmit with the addition appended. `project` must
 reference an existing project from `GET /projects` (use
 `/list-projects` to discover slugs); the API 422s on unknown slugs.
-
-> **`X-Actor` and `owner_actor`** (provider v0.21.0+, #54).
-> If the part's `owner_actor` is currently `null` (the row was
-> registered before X-Actor existed, or the registrant didn't set
-> it), an `X-Actor: <identity>` on this PUT will **claim** the row —
-> first-write-wins. Once `owner_actor` is set, subsequent PUTs
-> ignore X-Actor on this field (no identity-spoofing of attributed
-> rows). Per-version actor lives on the proposal/accept rows of
-> `/parts/{name}/proposals` (none for parts today — parts have no
-> content-proposal flow), not on the version row.
 
 ### 6. Choose a new software version
 

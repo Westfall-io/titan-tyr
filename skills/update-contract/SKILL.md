@@ -1,23 +1,19 @@
 ---
 name: update-contract
-description: Update soft metadata on an existing contract (project tag). Does NOT change body — use /propose-contract-change. Does NOT change ownership — use PUT /contracts/{id}/owner (#119).
+description: Update soft metadata on an existing contract (project tag). Does NOT change body — use /propose-contract-change. Does NOT change ownership — use /reassign-contract-owner.
 ---
 
 # update-contract
 
-> **POST-#119 NOTE.** This skill body still describes the legacy
-> `owner_actor` first-write-wins backfill behavior on `PUT /contracts/{id}`.
-> That semantic was removed: `PUT /contracts/{id}` no longer touches
-> `owner_actor` at all. To reassign ownership, use the dedicated
-> `PUT /contracts/{contract_id}/owner` endpoint (single write, no
-> two-party rule, overwrite allowed). The rest of this skill (project
-> tag PATCH semantics) is still accurate. Full body rewrite pending.
-
 You are PUT-ing soft metadata on an existing contract. This is the
 parallel to `/update-part` for contracts, scoped tightly: the only
-field this PUT touches today is `project` (optional tag). Ownership
-changes go through `PUT /contracts/{contract_id}/owner` (added in
-#119).
+field this PUT touches today is `project` (optional tag).
+
+Ownership (`owner_actor`) is **not** touched by this PUT. To reassign
+ownership, use `/reassign-contract-owner` (wraps `PUT
+/contracts/{contract_id}/owner` — single write, no two-party rule,
+overwrite allowed). The first-write-wins backfill this PUT used to
+perform was removed in #119.
 
 Use cases:
 - **Tag a contract to a project.** The `project` field on
@@ -26,23 +22,17 @@ Use cases:
   this surface.
 - **Re-project a contract.** Move it between projects, or clear the
   tag back to unprojected.
-- **Backfill `owner_actor`.** Send the original creator's
-  `X-Actor` to claim a row that was registered before X-Actor
-  existed (or before the registrant set it). First-write-wins:
-  once `owner_actor` is set, this PUT silently ignores X-Actor
-  for that field — no identity-spoofing of attributed rows.
 
 This skill **does not** propose body changes, shift subtypes, shift
-endpoints, or rename anything. Each of those has its own dedicated
-flow.
+endpoints, rename anything, or change ownership. Each has its own
+dedicated flow.
 
 ## Server location
 
 | Variable          | Required | Purpose                                          |
 | ----------------- | -------- | ------------------------------------------------ |
 | `TITAN_TYR_URL`   | yes      | Base URL of the API. No trailing slash.          |
-| `TITAN_TYR_TOKEN` | no       | Bearer per-caller token (issue via `/issue-auth-token`). Required.             |
-| `TITAN_TYR_ACTOR` | no       | Identity for the X-Actor header. Used for the `owner_actor` backfill described below. If unset and the row is already attributed, the PUT still works — X-Actor only affects `owner_actor` when the field is currently `null`. |
+| `TITAN_TYR_TOKEN` | yes      | Bearer per-caller token (issue via `/issue-auth-token`). |
 
 If `TITAN_TYR_URL` is unset, **stop and tell the user**.
 
@@ -90,8 +80,7 @@ curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
   "$TITAN_TYR_URL/contracts/{contract_id}"
 ```
 
-Surface its current `project` and `owner_actor` so the user can
-see the starting state.
+Surface its current `project` so the user can see the starting state.
 
 ### 3. Decide what's changing
 
@@ -101,15 +90,9 @@ PATCH semantics on `project`:
 | --------- | ------------------------- | -------------------------------------------- | -------------------------------- |
 | `project` | Existing tag unchanged.   | Reassigns to that project (422 if unknown).  | Clears tag (move to unprojected). |
 
-If the user wants to claim attribution on a `owner_actor: null`
-row, no payload field is needed — just send `X-Actor` on the request.
-The backfill is automatic and one-shot. If `owner_actor` is
-already set, this PUT will not touch it (no error; the field is
-silently left alone).
-
-If the user wants neither — no project change, no actor backfill —
-**stop**. There's nothing to do; the PUT would be a no-op on the
-data side and that's not a useful call to make.
+If the user wants no project change — **stop**. There's nothing to do;
+this PUT would be a no-op. If they want to reassign ownership instead,
+route them to `/reassign-contract-owner`.
 
 ### 4. Validate the project slug
 
@@ -130,7 +113,6 @@ create the project first.
 curl -fsS -X PUT \
   -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
   -H "Content-Type: application/json" \
-  -H "X-Actor: $TITAN_TYR_ACTOR" \
   --data '{"project": "<slug>"}' \
   "$TITAN_TYR_URL/contracts/{contract_id}"
 ```
@@ -140,14 +122,6 @@ Or to clear the project tag:
 ```sh
   --data '{"project": null}' \
 ```
-
-Or to backfill `owner_actor` only (no project change):
-
-```sh
-  --data '{}' \
-```
-
-(Empty body is valid; the X-Actor header is what carries the claim.)
 
 The response is the full persisted row (same shape as
 `GET /contracts/{contract_id}` — see #47), so no follow-up GET is
@@ -162,18 +136,11 @@ Updated contract <contract_id>:
   owner / counterparty: <owner> → <counterparty>
   subtype: <subtype>[/<connection_type>]
   project: <new project tag, or "unprojected">
-  owner_actor: <echoed value> [if backfilled, note "claimed via X-Actor on this PUT"]
   version: <unchanged>
 
 Verify (optional, the response above is authoritative):
   curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' $TITAN_TYR_URL/contracts/<contract_id>
 ```
-
-If `X-Actor` was sent and `owner_actor` was previously `null`,
-note that the claim landed (compare the `owner_actor` in the
-response to the value the user sent). If `owner_actor` was
-already set, mention that the X-Actor was ignored for that field
-(the backfill is one-shot).
 
 ## Error handling
 
@@ -184,18 +151,13 @@ already set, mention that the X-Actor was ignored for that field
 
 ## Notes
 
-- **Body / version / subtype / connection_type / endpoints don't
-  belong here.** Use the dedicated propose/accept flows for those:
+- **Body / version / subtype / connection_type / endpoints / ownership
+  don't belong here.** Use the dedicated flows:
   `/propose-contract-change` (body), `/propose-contract-subtype-shift`
   (subtype + connection_type), `/propose-contract-endpoint-shift`
-  (endpoints), `/accept-contract-proposal` /
-  `/accept-contract-subtype-shift` /
-  `/accept-contract-endpoint-shift` for acceptance. This PUT is for
-  metadata that has no semantic effect on the agreement.
-- **`owner_actor` backfill is first-write-wins.** Once set,
-  this PUT will not change it. The flag exists so original
-  registrants of pre-X-Actor rows can claim them, not so any caller
-  can rewrite history.
+  (endpoints), `/reassign-contract-owner` (ownership), plus the
+  matching `/accept-*` skills for the propose/accept flows. This PUT
+  is exclusively for the `project` tag.
 - **No two-party rule on this endpoint.** Soft metadata changes
   don't carry a propose/accept handshake — there's nothing to gate.
   Per-write attribution for *content* changes lives on the
@@ -203,5 +165,4 @@ already set, mention that the X-Actor was ignored for that field
 - **Per-version actor on history.** The history endpoint
   (`GET /contracts/{contract_id}/history`) surfaces
   `proposer_actor` / `acceptor_actor` / `single_operator_override`
-  on each entry (provider v0.21.0+, #54) — useful for auditing who
-  drove which past change.
+  on each entry — useful for auditing who drove which past change.
