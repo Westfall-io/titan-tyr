@@ -3,7 +3,7 @@
 Per-caller bearer tokens, hashed at rest, scoped to a fixed enum
 (`read` ⊂ `write` ⊂ `revoke-agent`). Each token carries an actor
 identity which the API derives at request time and stamps onto
-audit columns (`created_by_actor`, `proposer_actor`, etc).
+audit columns (`owner_actor`, `proposer_actor`, etc).
 
 The legacy single-shared-bearer (`sysmlv2`) path is preserved
 during the cutover but defaults to off; a deployer can re-enable
@@ -155,7 +155,7 @@ matters. Order:
    change effective on the next request — no propagation delay.
 2. **Audit recent activity** for that actor. Filter
    `GET /parts?match=` and the various history endpoints by
-   `created_by_actor` / `proposer_actor` for the leaked actor's
+   `owner_actor` / `proposer_actor` for the leaked actor's
    identity. Anything you don't recognize, treat as suspect.
 3. **Issue a replacement** if the consumer still needs one. Same
    actor, same scopes; different token row, different prefix.

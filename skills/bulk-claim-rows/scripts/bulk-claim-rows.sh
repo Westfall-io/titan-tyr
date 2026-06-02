@@ -2,7 +2,7 @@
 # Bulk-tag/claim parts and contracts in one pass (#59).
 #
 # The skills update one row at a time. After landing a new project (#44)
-# or after a created_by_actor backfill (#54) every consumer needs the
+# or after a owner_actor backfill (#54) every consumer needs the
 # same sweep: walk the catalog, set project and/or X-Actor on each row.
 # This script centralises the loop, the filter, the dry-run table, and
 # the confirmation gate so it stops being reinvented per consumer.
@@ -15,7 +15,7 @@
 #                                  __none__ clears the tag.
 #                                  Omit to leave project unchanged.
 #   --actor <identity>             Sent as X-Actor on every PUT. Claims
-#                                  rows where created_by_actor IS NULL
+#                                  rows where owner_actor IS NULL
 #                                  (first-write-wins, #54). Falls back
 #                                  to TITAN_TYR_ACTOR if unset.
 #   --kind parts|contracts|both    Default: both.
@@ -25,7 +25,7 @@
 #                                  filter; cheap.
 #   --current-actor <identity | __none__>
 #                                  Only touch rows whose
-#                                  created_by_actor matches. __none__
+#                                  owner_actor matches. __none__
 #                                  selects unattributed rows. Filtered
 #                                  client-side after pagination.
 #   --yes                          Skip the confirmation gate. Use only
@@ -166,7 +166,7 @@ def list_all(resource):
 def matches_actor_filter(row):
     if not CURRENT_ACTOR_SET:
         return True
-    cur = row.get("created_by_actor")
+    cur = row.get("owner_actor")
     if CURRENT_ACTOR == NONE:
         return cur is None
     return cur == CURRENT_ACTOR
@@ -187,13 +187,13 @@ def project_change_for(row):
 
 
 def actor_change_for(row):
-    """X-Actor only takes effect on rows where created_by_actor is null
+    """X-Actor only takes effect on rows where owner_actor is null
     (first-write-wins). Returns (will_claim, new_value)."""
     if not ACTOR:
-        return False, row.get("created_by_actor")
-    if row.get("created_by_actor") is None:
+        return False, row.get("owner_actor")
+    if row.get("owner_actor") is None:
         return True, ACTOR
-    return False, row.get("created_by_actor")
+    return False, row.get("owner_actor")
 
 
 def plan(kind, rows):
@@ -231,7 +231,7 @@ def render_table(kind, touch):
         proj_cell = (
             f"{cur_proj} → {new_proj}" if t["proj_change"] else cur_proj
         )
-        cur_actor = r.get("created_by_actor") or "-"
+        cur_actor = r.get("owner_actor") or "-"
         new_actor = t["actor_new"] or "-"
         actor_cell = (
             f"{cur_actor} → {new_actor}" if t["actor_change"] else cur_actor

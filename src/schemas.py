@@ -172,7 +172,7 @@ class ProjectCreateResponse(BaseModel):
     name: str
     description: str | None
     created_at: datetime
-    created_by_actor: str | None = None
+    owner_actor: str | None = None
 
 
 class ProjectUpdate(BaseModel):
@@ -185,7 +185,7 @@ class ProjectDetail(BaseModel):
     name: str
     description: str | None
     created_at: datetime
-    created_by_actor: str | None = None
+    owner_actor: str | None = None
     part_count: int = 0
     contract_count: int = 0
 
@@ -241,7 +241,7 @@ class PartCreateResponse(BaseModel):
     version: str
     markdown: str
     updated_at: datetime
-    created_by_actor: str | None = None
+    owner_actor: str | None = None
     project: str | None = None
     # Soft-delete fields mirror PartDetail (#76) so the round-trip
     # POST→GET stays identical. POST returns nulls (a freshly
@@ -290,7 +290,7 @@ class PartUpdateResponse(BaseModel):
     version: str
     markdown: str
     updated_at: datetime
-    created_by_actor: str | None = None
+    owner_actor: str | None = None
     project: str | None = None
     # Soft-delete fields mirror PartDetail (#76) so the PUT-then-GET
     # round-trip stays identical. PUT 404s on soft-deleted parts, so
@@ -313,7 +313,7 @@ class PartDetail(BaseModel):
     version: str
     markdown: str
     updated_at: datetime
-    created_by_actor: str | None = None
+    owner_actor: str | None = None
     project: str | None = None
     # Soft-delete fields surfaced via `?include_deleted=true` (#76).
     # NULL on live rows.
@@ -332,7 +332,7 @@ class PartListItem(BaseModel):
     aliases: list[str]
     version: str
     updated_at: datetime
-    created_by_actor: str | None = None
+    owner_actor: str | None = None
     project: str | None = None
     # Populated on soft-deleted rows surfaced via `?include_deleted=true`
     # (#76). NULL on live rows.
@@ -352,13 +352,7 @@ class ContractListItem(BaseModel):
     connection_type: ConnectionType | None = None
     version: str
     updated_at: datetime
-    created_by_actor: str | None = None
-    # Denormalized from `parts[owner|counterparty].created_by_actor` (#112)
-    # so consumers can classify edges by ownership boundary without an
-    # extra round-trip per endpoint. NULL when the endpoint part has no
-    # recorded actor (anonymous-legacy row).
     owner_actor: str | None = None
-    counterparty_actor: str | None = None
     project: str | None = None
     # Populated on soft-deleted rows surfaced via `?include_deleted=true`
     # (#69). NULL on live rows; non-NULL marks the row as soft-deleted.
@@ -424,7 +418,7 @@ class ContractUpdate(BaseModel):
     Today: `project` only. Future fields can land here under the same
     PATCH shape (omit/value/null) without a route change.
 
-    `created_by_actor` is intentionally NOT a payload field — the
+    `owner_actor` is intentionally NOT a payload field — the
     backfill semantics for it (first-write-wins from X-Actor on PUT
     when the row's current value is NULL) live in the route, not the
     schema, so callers can't pass an arbitrary actor string.
@@ -450,7 +444,7 @@ class ContractUpdateResponse(BaseModel):
     version: str
     markdown: str
     updated_at: datetime
-    created_by_actor: str | None = None
+    owner_actor: str | None = None
     project: str | None = None
     # Soft-delete fields mirror ContractDetail (#69) so the PUT-then-GET
     # round-trip stays identical. PUT 404s on soft-deleted rows, so
@@ -471,10 +465,7 @@ class ContractSearchResult(BaseModel):
     version: str
     markdown: str
     updated_at: datetime
-    created_by_actor: str | None = None
-    # Denormalized from `parts[owner|counterparty].created_by_actor` (#112).
     owner_actor: str | None = None
-    counterparty_actor: str | None = None
     project: str | None = None
 
 
@@ -496,7 +487,7 @@ class ContractDetail(BaseModel):
     version: str
     markdown: str
     updated_at: datetime
-    created_by_actor: str | None = None
+    owner_actor: str | None = None
     project: str | None = None
     # Populated on soft-deleted rows surfaced via `?include_deleted=true`
     # (#69). NULL on live rows.
@@ -1214,3 +1205,31 @@ class AuthTokenRevoke(BaseModel):
     rationale: str = Field(min_length=1, max_length=2000)
 
 
+
+
+# ---------- Ownership reassignment (#119) ----------
+
+
+class OwnerReassignCreate(BaseModel):
+    """Body shape for PUT /parts/{name}/owner + PUT /contracts/{id}/owner.
+
+    Per #119: ownership is mutable. Replaces the immutable
+    first-write-wins backfill semantic of the legacy
+    `created_by_actor` field. Both endpoints accept this same shape.
+    """
+    new_owner_actor: str = Field(min_length=1, max_length=64)
+    rationale: str = Field(min_length=1, max_length=2000)
+
+
+class OwnerReassignResponse(BaseModel):
+    """Response shape for PUT /parts/{name}/owner + PUT /contracts/{id}/owner.
+
+    Records both sides of the handoff: the previous owner, the new
+    owner, and the actor that performed the reassignment. History
+    surfaces this as `kind: "owner_shift"`.
+    """
+    previous_owner_actor: str | None
+    new_owner_actor: str
+    reassigned_by_actor: str | None
+    reassigned_at: datetime
+    rationale: str

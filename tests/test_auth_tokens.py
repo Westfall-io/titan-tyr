@@ -191,7 +191,7 @@ class TestPerCallerActorDerivation:
             ) as ac:
                 ac.headers.update(_bearer_headers(body["token"]))
                 # Send a misleading X-Actor; the token's actor should
-                # be recorded as `created_by_actor`, not the header.
+                # be recorded as `owner_actor`, not the header.
                 r = await ac.post(
                     "/parts",
                     headers={"X-Actor": "alice-pretender@example.com"},
@@ -203,7 +203,7 @@ class TestPerCallerActorDerivation:
                     },
                 )
                 assert r.status_code == 201, r.text
-                assert r.json()["created_by_actor"] == "agent-a"
+                assert r.json()["owner_actor"] == "agent-a"
 
 
 # ---------- Scope enforcement ----------

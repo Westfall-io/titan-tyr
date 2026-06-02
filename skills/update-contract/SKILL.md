@@ -1,15 +1,23 @@
 ---
 name: update-contract
-description: Update soft metadata on an existing contract (project tag, created_by_actor backfill). Does NOT change body — that goes through /propose-contract-change.
+description: Update soft metadata on an existing contract (project tag). Does NOT change body — use /propose-contract-change. Does NOT change ownership — use PUT /contracts/{id}/owner (#119).
 ---
 
 # update-contract
 
+> **POST-#119 NOTE.** This skill body still describes the legacy
+> `owner_actor` first-write-wins backfill behavior on `PUT /contracts/{id}`.
+> That semantic was removed: `PUT /contracts/{id}` no longer touches
+> `owner_actor` at all. To reassign ownership, use the dedicated
+> `PUT /contracts/{contract_id}/owner` endpoint (single write, no
+> two-party rule, overwrite allowed). The rest of this skill (project
+> tag PATCH semantics) is still accurate. Full body rewrite pending.
+
 You are PUT-ing soft metadata on an existing contract. This is the
 parallel to `/update-part` for contracts, scoped tightly: the only
-fields this PUT touches today are `project` (optional tag) and
-`created_by_actor` (first-write-wins backfill from the X-Actor
-header).
+field this PUT touches today is `project` (optional tag). Ownership
+changes go through `PUT /contracts/{contract_id}/owner` (added in
+#119).
 
 Use cases:
 - **Tag a contract to a project.** The `project` field on
@@ -18,10 +26,10 @@ Use cases:
   this surface.
 - **Re-project a contract.** Move it between projects, or clear the
   tag back to unprojected.
-- **Backfill `created_by_actor`.** Send the original creator's
+- **Backfill `owner_actor`.** Send the original creator's
   `X-Actor` to claim a row that was registered before X-Actor
   existed (or before the registrant set it). First-write-wins:
-  once `created_by_actor` is set, this PUT silently ignores X-Actor
+  once `owner_actor` is set, this PUT silently ignores X-Actor
   for that field — no identity-spoofing of attributed rows.
 
 This skill **does not** propose body changes, shift subtypes, shift
@@ -34,7 +42,7 @@ flow.
 | ----------------- | -------- | ------------------------------------------------ |
 | `TITAN_TYR_URL`   | yes      | Base URL of the API. No trailing slash.          |
 | `TITAN_TYR_TOKEN` | no       | Bearer per-caller token (issue via `/issue-auth-token`). Required.             |
-| `TITAN_TYR_ACTOR` | no       | Identity for the X-Actor header. Used for the `created_by_actor` backfill described below. If unset and the row is already attributed, the PUT still works — X-Actor only affects `created_by_actor` when the field is currently `null`. |
+| `TITAN_TYR_ACTOR` | no       | Identity for the X-Actor header. Used for the `owner_actor` backfill described below. If unset and the row is already attributed, the PUT still works — X-Actor only affects `owner_actor` when the field is currently `null`. |
 
 If `TITAN_TYR_URL` is unset, **stop and tell the user**.
 
@@ -82,7 +90,7 @@ curl -fsS -H "Authorization: Bearer $TITAN_TYR_TOKEN" \
   "$TITAN_TYR_URL/contracts/{contract_id}"
 ```
 
-Surface its current `project` and `created_by_actor` so the user can
+Surface its current `project` and `owner_actor` so the user can
 see the starting state.
 
 ### 3. Decide what's changing
@@ -93,9 +101,9 @@ PATCH semantics on `project`:
 | --------- | ------------------------- | -------------------------------------------- | -------------------------------- |
 | `project` | Existing tag unchanged.   | Reassigns to that project (422 if unknown).  | Clears tag (move to unprojected). |
 
-If the user wants to claim attribution on a `created_by_actor: null`
+If the user wants to claim attribution on a `owner_actor: null`
 row, no payload field is needed — just send `X-Actor` on the request.
-The backfill is automatic and one-shot. If `created_by_actor` is
+The backfill is automatic and one-shot. If `owner_actor` is
 already set, this PUT will not touch it (no error; the field is
 silently left alone).
 
@@ -133,7 +141,7 @@ Or to clear the project tag:
   --data '{"project": null}' \
 ```
 
-Or to backfill `created_by_actor` only (no project change):
+Or to backfill `owner_actor` only (no project change):
 
 ```sh
   --data '{}' \
@@ -154,16 +162,16 @@ Updated contract <contract_id>:
   owner / counterparty: <owner> → <counterparty>
   subtype: <subtype>[/<connection_type>]
   project: <new project tag, or "unprojected">
-  created_by_actor: <echoed value> [if backfilled, note "claimed via X-Actor on this PUT"]
+  owner_actor: <echoed value> [if backfilled, note "claimed via X-Actor on this PUT"]
   version: <unchanged>
 
 Verify (optional, the response above is authoritative):
   curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' $TITAN_TYR_URL/contracts/<contract_id>
 ```
 
-If `X-Actor` was sent and `created_by_actor` was previously `null`,
-note that the claim landed (compare the `created_by_actor` in the
-response to the value the user sent). If `created_by_actor` was
+If `X-Actor` was sent and `owner_actor` was previously `null`,
+note that the claim landed (compare the `owner_actor` in the
+response to the value the user sent). If `owner_actor` was
 already set, mention that the X-Actor was ignored for that field
 (the backfill is one-shot).
 
@@ -184,7 +192,7 @@ already set, mention that the X-Actor was ignored for that field
   `/accept-contract-subtype-shift` /
   `/accept-contract-endpoint-shift` for acceptance. This PUT is for
   metadata that has no semantic effect on the agreement.
-- **`created_by_actor` backfill is first-write-wins.** Once set,
+- **`owner_actor` backfill is first-write-wins.** Once set,
   this PUT will not change it. The flag exists so original
   registrants of pre-X-Actor rows can claim them, not so any caller
   can rewrite history.

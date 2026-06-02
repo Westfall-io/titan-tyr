@@ -399,12 +399,12 @@ curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
 ```
 
 `X-Actor` (optional, provider v0.16.0+, #39) is recorded as the
-part's `created_by_actor`. There is no propose/accept dance on
+part's `owner_actor`. There is no propose/accept dance on
 initial creation — this is a one-shot active write — so the
 `X-Actor` is the only attribution the row will ever carry until it
 gets its first body bump or subtype shift. Subsequent changes carry
 their own proposer/acceptor actors. Pre-v0.16.0 rows have
-`created_by_actor: null`.
+`owner_actor: null`.
 
 `subtype` is **required** and must be one of `software`, `image`,
 `container`, `pod`, `compose`. It is set at registration time and
@@ -443,7 +443,7 @@ same shape as `GET /parts/{name}`:
   "version": "1.0.0",
   "markdown": "# payments-service\n...",
   "updated_at": "2026-04-29T14:30:00Z",
-  "created_by_actor": "alice@example.com",
+  "owner_actor": "alice@example.com",
   "project": null
 }
 ```
@@ -531,10 +531,10 @@ as on register (1–128 chars, no control characters, case-preserved,
 case-insensitive per-payload dedupe). Setting an empty list (`[]`) is
 equivalent to setting `null` — both clear.
 
-> **`X-Actor` and `created_by_actor`** (provider v0.21.0+, #54).
-> If the part's `created_by_actor` is currently `null`, an
+> **`X-Actor` and `owner_actor`** (provider v0.21.0+, #54).
+> If the part's `owner_actor` is currently `null`, an
 > `X-Actor: <identity>` header on this PUT will **claim** the row —
-> first-write-wins. Once `created_by_actor` is set, subsequent PUTs
+> first-write-wins. Once `owner_actor` is set, subsequent PUTs
 > ignore X-Actor on this field (no identity-spoofing of attributed
 > rows).
 
@@ -555,7 +555,7 @@ straight from the PUT response.
   "version": "2.1.0",
   "markdown": "...",
   "updated_at": "2026-04-29T14:30:00Z",
-  "created_by_actor": "alice@example.com",
+  "owner_actor": "alice@example.com",
   "project": null
 }
 ```
@@ -718,11 +718,11 @@ curl -H 'Authorization: Bearer $TITAN_TYR_TOKEN' \
 ```
 
 `X-Actor` (optional, provider v0.16.0+, #39) is recorded as the
-contract's `created_by_actor`. Same posture as `POST /parts` — a
+contract's `owner_actor`. Same posture as `POST /parts` — a
 one-shot active create with no propose/accept handshake; this is
 the only attribution the row gets until it acquires its first
 content proposal or subtype shift. Pre-v0.16.0 rows have
-`created_by_actor: null`.
+`owner_actor: null`.
 
 `subtype` is **required** and must be one of `interaction`, `binding`,
 `connection`.
@@ -925,12 +925,12 @@ PATCH semantics on `project` (mirrors `PUT /parts/{name}`):
 | `project` | Existing tag unchanged.   | Reassigns to that project (422 if unknown).   | Clears tag (move to unprojected). |
 
 An empty body (`{}`) is valid — it makes no field change but still
-runs the `created_by_actor` backfill below if `X-Actor` is sent.
+runs the `owner_actor` backfill below if `X-Actor` is sent.
 
-> **`X-Actor` and `created_by_actor`** (provider v0.21.0+, #54).
-> If the contract's `created_by_actor` is currently `null`, an
+> **`X-Actor` and `owner_actor`** (provider v0.21.0+, #54).
+> If the contract's `owner_actor` is currently `null`, an
 > `X-Actor: <identity>` header on this PUT will **claim** the row —
-> first-write-wins. Once `created_by_actor` is set, subsequent PUTs
+> first-write-wins. Once `owner_actor` is set, subsequent PUTs
 > ignore X-Actor on this field (no identity-spoofing of attributed
 > rows). Per-version actor (proposer / acceptor of body changes,
 > shift acceptances) lives on the proposal/accept rows and now

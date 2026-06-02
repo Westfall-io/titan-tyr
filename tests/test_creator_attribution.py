@@ -23,19 +23,19 @@ class TestPartCreatorAttribution:
         await _register_part(client, "svc", actor="alice")
         r = await client.get("/parts/svc")
         assert r.status_code == 200
-        assert r.json()["created_by_actor"] == "alice"
+        assert r.json()["owner_actor"] == "alice"
 
     async def test_post_parts_anonymous_records_null(self, client):
         await _register_part(client, "svc")
         r = await client.get("/parts/svc")
-        assert r.json()["created_by_actor"] is None
+        assert r.json()["owner_actor"] is None
 
     async def test_listing_includes_creator(self, client):
         await _register_part(client, "svc1", actor="alice")
         await _register_part(client, "svc2")
         r = await client.get("/parts?limit=10")
         assert r.status_code == 200
-        by_name = {p["name"]: p["created_by_actor"] for p in r.json()["results"]}
+        by_name = {p["name"]: p["owner_actor"] for p in r.json()["results"]}
         assert by_name["svc1"] == "alice"
         assert by_name["svc2"] is None
 
@@ -59,7 +59,7 @@ class TestContractCreatorAttribution:
 
         r = await client.get(f"/contracts/{cid}")
         assert r.status_code == 200
-        assert r.json()["created_by_actor"] == "carol"
+        assert r.json()["owner_actor"] == "carol"
 
     async def test_post_contracts_anonymous_records_null(self, client):
         await _register_part(client, "a")
@@ -75,7 +75,7 @@ class TestContractCreatorAttribution:
         )
         cid = r.json()["contract_id"]
         r = await client.get(f"/contracts/{cid}")
-        assert r.json()["created_by_actor"] is None
+        assert r.json()["owner_actor"] is None
 
     async def test_part_touching_listing_includes_creator(self, client):
         await _register_part(client, "a")
@@ -94,4 +94,4 @@ class TestContractCreatorAttribution:
         assert r.status_code == 200
         results = r.json()["results"]
         assert len(results) == 1
-        assert results[0]["created_by_actor"] == "carol"
+        assert results[0]["owner_actor"] == "carol"

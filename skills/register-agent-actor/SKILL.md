@@ -39,7 +39,7 @@ Examples that exist today:
 - `archaedas` — titan-archaedas DevOps agent (note: not `titan-archaedas`)
 - `mimiron` — titan-mimiron UI agent
 
-If you're unsure what the agent is sending, check `created_by_actor`
+If you're unsure what the agent is sending, check `owner_actor`
 on a recent part or contract it created (`GET /parts?limit=10`).
 
 ### 2. Write a description

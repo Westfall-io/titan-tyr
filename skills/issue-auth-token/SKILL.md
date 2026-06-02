@@ -40,7 +40,7 @@ follow the instructions verbatim.
 ### 1. Decide the actor + scopes
 
 The actor is an X-Actor slug — the value the consumer's writes will
-appear under in `created_by_actor` columns. Same slug rule as part
+appear under in `owner_actor` columns. Same slug rule as part
 names: lowercase letters / digits / hyphens; 1–64 chars; no leading
 or trailing hyphen.
 

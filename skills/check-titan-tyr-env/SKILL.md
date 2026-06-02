@@ -23,7 +23,7 @@ Same env vars as the rest of the family:
 | ----------------- | -------- | ------------------------------------------------ |
 | `TITAN_TYR_URL`   | yes      | Base URL of the API. No trailing slash.          |
 | `TITAN_TYR_TOKEN` | no       | Bearer per-caller token (issue via `/issue-auth-token`). Required.             |
-| `TITAN_TYR_ACTOR` | no       | Identity for the X-Actor header. Recommended for any session that will run propose/accept/register skills. Without it, the two-party rule is unenforceable on every accept and `created_by_actor` lands null on every register. |
+| `TITAN_TYR_ACTOR` | no       | Identity for the X-Actor header. Recommended for any session that will run propose/accept/register skills. Without it, the two-party rule is unenforceable on every accept and `owner_actor` lands null on every register. |
 
 ## Workflow
 
@@ -98,7 +98,7 @@ echo "$TITAN_TYR_ACTOR"
   >   allows the accept to proceed (rule unenforceable), but the
   >   audit trail records `null` for `acceptor_actor`.
   > - **Register-side skills** (`/register-part`,
-  >   `/register-contract`) record `created_by_actor: null` on
+  >   `/register-contract`) record `owner_actor: null` on
   >   the new row. No paper trail.
   >
   > To set it for this shell session:

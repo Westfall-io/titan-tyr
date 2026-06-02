@@ -124,7 +124,7 @@ class TestProjectsCRUD:
             headers={"X-Actor": "alice@example.com"},
         )
         assert r.status_code == 201
-        assert r.json()["created_by_actor"] == "alice@example.com"
+        assert r.json()["owner_actor"] == "alice@example.com"
 
 
 class TestPartProjectTagging:

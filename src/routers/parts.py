@@ -45,6 +45,8 @@ from src.schemas import (
     PART_SUBTYPES,
     PROJECT_NONE_SENTINEL,
     ContractListItem,
+    OwnerReassignCreate,
+    OwnerReassignResponse,
     PartContractsListResponse,
     PartCreate,
     PartCreateResponse,
@@ -105,7 +107,7 @@ async def list_parts(
     match: str | None = Query(default=None, max_length=128),
     subtype: str | None = Query(default=None),
     project: str | None = Query(default=None, max_length=64),
-    created_by_actor: str | None = Query(default=None, max_length=64),
+    owner_actor: str | None = Query(default=None, max_length=64),
     include_deleted: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
 ) -> PartListResponse:
@@ -155,7 +157,7 @@ async def list_parts(
             Part.repo_uri,
             Part.issue_tracker_uri,
             Part.aliases,
-            Part.created_by_actor,
+            Part.owner_actor,
             Part.deleted_at,
             Project.name.label("project_name"),
             latest_versions.c.pv_major,
@@ -178,8 +180,8 @@ async def list_parts(
     elif project_filter_id is not None:
         stmt = stmt.where(Part.project_id == project_filter_id)
 
-    if created_by_actor is not None:
-        stmt = stmt.where(Part.created_by_actor == created_by_actor)
+    if owner_actor is not None:
+        stmt = stmt.where(Part.owner_actor == owner_actor)
 
     if match is not None:
         # Case-insensitive substring match against name OR any alias. The U+001F
@@ -229,7 +231,7 @@ async def list_parts(
                 aliases=list(p_aliases or []),
                 version=str(Version(vmaj, vmin, vpat)),
                 updated_at=vts,
-                created_by_actor=p_creator,
+                owner_actor=p_creator,
                 project=p_project,
                 deleted_at=p_deleted_at,
             )
@@ -274,7 +276,7 @@ async def register_part(
         repo_uri=payload.repo_uri,
         issue_tracker_uri=payload.issue_tracker_uri,
         aliases=payload.aliases,
-        created_by_actor=x_actor,
+        owner_actor=x_actor,
         project_id=project_id,
     )
     session.add(part)
@@ -303,7 +305,7 @@ async def register_part(
         version=str(version),
         markdown=pv.markdown,
         updated_at=pv.created_at,
-        created_by_actor=part.created_by_actor,
+        owner_actor=part.owner_actor,
         project=project_name,
     )
 
@@ -344,7 +346,7 @@ async def get_part(
         version=str(version),
         markdown=latest.markdown,
         updated_at=latest.created_at,
-        created_by_actor=part.created_by_actor,
+        owner_actor=part.owner_actor,
         project=project_name,
         deleted_at=part.deleted_at,
         deleted_by_proposer_actor=part.deleted_by_proposer_actor,
@@ -400,13 +402,9 @@ async def update_part(
     if "project" in payload.model_fields_set:
         part.project_id = await resolve_project_slug(session, payload.project)
 
-    # First-write-wins backfill of created_by_actor (#54). Honor X-Actor
-    # only when the current value is NULL — this lets the original
-    # registrant claim a legacy row (registered before X-Actor existed,
-    # or before they had it set) without permitting subsequent PUTs to
-    # silently overwrite an already-attributed row's identity.
-    if x_actor is not None and part.created_by_actor is None:
-        part.created_by_actor = x_actor
+    # First-write-wins backfill removed in #119: owner_actor is now
+    # mutable via PUT /parts/{name}/owner. PUT /parts/{name} no longer
+    # touches ownership — content-only writes are body/metadata.
 
     pv = PartVersion(
         part_id=part.id,
@@ -432,8 +430,51 @@ async def update_part(
         version=str(new_version),
         markdown=pv.markdown,
         updated_at=pv.created_at,
-        created_by_actor=part.created_by_actor,
+        owner_actor=part.owner_actor,
         project=project_name,
+    )
+
+
+@router.put(
+    "/{name}/owner",
+    response_model=OwnerReassignResponse,
+    dependencies=[Depends(require_scope("write"))],
+)
+async def reassign_part_owner(
+    name: str,
+    payload: OwnerReassignCreate,
+    x_actor: str | None = Depends(current_actor),
+    session: AsyncSession = Depends(get_session),
+) -> OwnerReassignResponse:
+    """Reassign a part's `owner_actor` (#119).
+
+    Single-write reassignment — no two-party rule. The acting actor
+    (`x_actor`, derived from the bearer token) gets recorded as
+    `reassigned_by_actor` on the response; the previous owner is
+    captured for the history audit. Overwrite is allowed (no
+    first-write-wins).
+    """
+    part = (
+        await session.execute(
+            select(Part).where(Part.name == name).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if part is None or part.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Part {name!r} not found"
+        )
+
+    previous = part.owner_actor
+    part.owner_actor = payload.new_owner_actor
+    reassigned_at = datetime.now(timezone.utc)
+    await session.commit()
+
+    return OwnerReassignResponse(
+        previous_owner_actor=previous,
+        new_owner_actor=payload.new_owner_actor,
+        reassigned_by_actor=x_actor,
+        reassigned_at=reassigned_at,
+        rationale=payload.rationale,
     )
 
 
@@ -655,7 +696,7 @@ async def list_part_contracts(
     name: str,
     after: str | None = Query(default=None),
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
-    created_by_actor: str | None = Query(default=None, max_length=64),
+    owner_actor: str | None = Query(default=None, max_length=64),
     include_deleted: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
 ) -> PartContractsListResponse:
@@ -675,7 +716,7 @@ async def list_part_contracts(
         after=after,
         limit=limit,
         touching_part_id=part.id,
-        created_by_actor=created_by_actor,
+        owner_actor=owner_actor,
         include_deleted=include_deleted,
     )
     return PartContractsListResponse(part=part.name, results=items, next=next_cursor)
@@ -691,7 +732,7 @@ async def _list_active_contracts(
     connection_type: str | None = None,
     project_filter_id=None,
     project_filter_unprojected: bool = False,
-    created_by_actor: str | None = None,
+    owner_actor: str | None = None,
     include_deleted: bool = False,
 ) -> tuple[list[ContractListItem], str | None]:
     """Paginated listing of contracts with their latest active version.
@@ -740,12 +781,10 @@ async def _list_active_contracts(
             Contract.id,
             Contract.subtype,
             Contract.connection_type,
-            Contract.created_by_actor,
+            Contract.owner_actor,
             Contract.deleted_at,
             owner_alias.c.name.label("owner_name"),
             cp_alias.c.name.label("cp_name"),
-            owner_alias.c.created_by_actor.label("owner_actor"),
-            cp_alias.c.created_by_actor.label("cp_actor"),
             Project.name.label("project_name"),
             latest_active.c.cv_major,
             latest_active.c.cv_minor,
@@ -773,8 +812,8 @@ async def _list_active_contracts(
     if connection_type is not None:
         stmt = stmt.where(Contract.connection_type == connection_type)
 
-    if created_by_actor is not None:
-        stmt = stmt.where(Contract.created_by_actor == created_by_actor)
+    if owner_actor is not None:
+        stmt = stmt.where(Contract.owner_actor == owner_actor)
 
     if not include_deleted:
         stmt = stmt.where(Contract.deleted_at.is_(None))
@@ -809,8 +848,8 @@ async def _list_active_contracts(
     last_t = None
     last_id = None
     for (
-        c_id, c_subtype, c_conn_type, c_creator, c_deleted_at,
-        owner_name, cp_name, owner_actor, cp_actor, project_name,
+        c_id, c_subtype, c_conn_type, c_owner, c_deleted_at,
+        owner_name, cp_name, project_name,
         vmaj, vmin, vpat, vts, accepted_at,
     ) in rows:
         items.append(
@@ -822,9 +861,7 @@ async def _list_active_contracts(
                 connection_type=c_conn_type,
                 version=str(Version(vmaj, vmin, vpat)),
                 updated_at=accepted_at or vts,
-                created_by_actor=c_creator,
-                owner_actor=owner_actor,
-                counterparty_actor=cp_actor,
+                owner_actor=c_owner,
                 project=project_name,
                 deleted_at=c_deleted_at,
             )
