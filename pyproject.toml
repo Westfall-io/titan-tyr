@@ -1,6 +1,6 @@
 [project]
 name = "titan-tyr"
-version = "0.34.0"
+version = "0.35.0"
 description = "WatcherVault REST API — typed parts (software, image, container, pod, compose) + typed contracts (interaction, binding, connection) as a versioned graph."
 requires-python = ">=3.11"
 dependencies = [
@@ -11,6 +11,8 @@ dependencies = [
     "alembic>=1.13",
     "pydantic>=2.7",
     "pydantic-settings>=2.2",
+    "pyjwt[crypto]>=2.8",
+    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]

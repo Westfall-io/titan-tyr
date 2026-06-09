@@ -23,6 +23,22 @@ class Settings(BaseSettings):
         default="", validation_alias="TITAN_TYR_BEARER_PASSWORD"
     )
 
+    # OIDC pass-through (#124). When `keycloak_issuer` is set, JWT-shaped
+    # bearers are validated against the issuer's JWKS instead of looked
+    # up in `auth_tokens`. Per-caller tokens still work unchanged. Empty
+    # issuer → OIDC path is off and a JWT-shaped bearer falls through to
+    # the per-caller-token DB lookup (which will 401, since hash misses).
+    # See #118 for the design (3-tier model, OIDC pass-through).
+    keycloak_issuer: str = Field(
+        default="", validation_alias="TITAN_TYR_KEYCLOAK_ISSUER"
+    )
+    keycloak_audience: str = Field(
+        default="", validation_alias="TITAN_TYR_KEYCLOAK_AUDIENCE"
+    )
+    keycloak_jwks_ttl_seconds: int = Field(
+        default=3600, validation_alias="TITAN_TYR_KEYCLOAK_JWKS_TTL_SECONDS"
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:
