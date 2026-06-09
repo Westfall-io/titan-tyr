@@ -1,13 +1,21 @@
-"""Per-caller token auth + scope checks (#81 + #82 + #84).
+"""Per-caller token auth + scope checks (#81 + #82 + #84 + #124).
 
-Two paths through this module:
+Three paths through this module:
 
-1. **Per-caller token (preferred).** The bearer is hashed (sha256)
+1. **OIDC pass-through (#124).** When the bearer is JWT-shaped and
+   `KEYCLOAK_ISSUER` is configured, the JWT is validated against the
+   issuer's JWKS (`src/oidc.py`). On success, the actor comes from
+   `preferred_username` (or `sub`), and the request is granted ALL
+   scopes — per-endpoint role gating is deferred (see #124's "out of
+   scope" + #118 for the three-tier model). A malformed/expired JWT
+   is a hard 401; we do not fall through to the per-caller path.
+
+2. **Per-caller token (preferred).** The bearer is hashed (sha256)
    and looked up in `auth_tokens`. On hit, the row's `actor` and
    `scopes` are stamped onto `request.state` for downstream
    handlers; the legacy `X-Actor` header is ignored.
 
-2. **Legacy shared bearer (back-compat, transitional).** The bearer
+3. **Legacy shared bearer (back-compat, transitional).** The bearer
    is compared against `Settings.bearer_password` (env-loaded; empty
    default → all rejected, so the legacy path is fail-closed unless
    a deployer opts in by setting `TITAN_TYR_BEARER_PASSWORD`). On
@@ -37,6 +45,7 @@ from src.auth_tokens import constant_time_eq, hash_token
 from src.config import get_settings
 from src.db import get_session
 from src.models import AuthToken
+from src.oidc import looks_like_jwt, validate_oidc_token
 from src.schemas import AUTH_TOKEN_SCOPES, expand_scopes
 
 _bearer = HTTPBearer(auto_error=False)
@@ -47,6 +56,13 @@ _bearer = HTTPBearer(auto_error=False)
 # a future scope addition prompts a deliberate review.
 _LEGACY_SCOPES: frozenset[str] = frozenset(AUTH_TOKEN_SCOPES)
 
+# Scope set granted to a valid OIDC bearer (#124). Same as the legacy
+# path for now — admin humans coming through mimiron's pass-through get
+# full scopes. Per-endpoint role-based gating (e.g. requiring the
+# `admin` realm role for `revoke-agent`) is a future ticket; see #124
+# "out of scope" + #118 design discussion.
+_OIDC_SCOPES: frozenset[str] = frozenset(AUTH_TOKEN_SCOPES)
+
 
 async def require_token(
     request: Request,
@@ -56,9 +72,9 @@ async def require_token(
 ) -> None:
     """Authenticate the request and stamp actor + scopes onto request.state.
 
-    Try per-caller-token lookup first; fall back to the legacy
-    shared-bearer comparison only if the env var is set. 401 on
-    miss, 401 with reason on revoked/expired.
+    Resolution order: OIDC (#124) if JWT-shaped + configured, then
+    per-caller token, then legacy shared bearer. 401 on miss, 401 with
+    reason on revoked/expired.
     """
     if credentials is None:
         raise HTTPException(
@@ -67,6 +83,19 @@ async def require_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
     bearer = credentials.credentials
+    settings = get_settings()
+
+    # OIDC pass-through (#124). Only engage when both the bearer shape
+    # and the configuration look right; otherwise fall through silently
+    # so a per-caller token that happens to contain dots isn't mistaken
+    # for a JWT. A JWT-shaped bearer with KEYCLOAK_ISSUER set, however,
+    # commits to the OIDC path — invalid sig/aud/iss is a hard 401.
+    if settings.keycloak_issuer and looks_like_jwt(bearer):
+        actor = await validate_oidc_token(bearer)
+        request.state.actor = actor
+        request.state.scopes = _OIDC_SCOPES
+        request.state.token_id = None
+        return
 
     # Per-caller token path. Hash + index lookup; partial-on-live
     # index ensures revoked rows can't match.
@@ -105,7 +134,7 @@ async def require_token(
 
     # Legacy shared-bearer path. Off by default — env-loaded value
     # of empty string fails closed.
-    legacy = get_settings().bearer_password
+    legacy = settings.bearer_password
     if legacy and constant_time_eq(bearer, legacy):
         request.state.actor = x_actor_header
         request.state.scopes = _LEGACY_SCOPES
